@@ -368,20 +368,26 @@ body {
   font-size: 12px;
 }
 
-.state-open {
-  color: var(--state-open);
+.state-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 
-.state-closed {
-  color: var(--state-closed);
+.state-icon.state-open {
+  filter: invert(62%) sepia(72%) saturate(459%) hue-rotate(82deg) brightness(95%) contrast(90%);
 }
 
-.state-merged {
-  color: var(--state-merged);
+.state-icon.state-closed {
+  filter: invert(42%) sepia(93%) saturate(1352%) hue-rotate(338deg) brightness(95%) contrast(101%);
 }
 
-.state-draft {
-  color: var(--state-draft);
+.state-icon.state-merged {
+  filter: invert(55%) sepia(52%) saturate(1095%) hue-rotate(227deg) brightness(97%) contrast(96%);
+}
+
+.state-icon.state-draft {
+  filter: invert(60%) sepia(8%) saturate(467%) hue-rotate(176deg) brightness(95%) contrast(89%);
 }
 
 .item-repo {

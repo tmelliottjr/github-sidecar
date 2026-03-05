@@ -22,31 +22,36 @@ function timeAgo(dateStr: string): string {
   return `${months}mo ago`;
 }
 
-export function ItemCard({ item }: ItemCardProps) {
-  const repo = repoFromUrl(item.repository_url);
+function StateIcon({ item }: { item: GitHubIssueItem }) {
   const isPR = !!item.pull_request;
   const isMerged = isPR && item.pull_request?.merged_at;
-  const isDraft = item.draft;
 
-  let stateClass = 'state-open';
-  let stateIcon = '●';
-  if (item.state === 'closed') {
+  if (isPR) {
     if (isMerged) {
-      stateClass = 'state-merged';
-      stateIcon = '⊕';
-    } else {
-      stateClass = 'state-closed';
-      stateIcon = '●';
+      return <img src="/icons/git-pull-request-closed-16.svg" alt="Merged" className="state-icon state-merged" />;
     }
-  } else if (isDraft) {
-    stateClass = 'state-draft';
-    stateIcon = '○';
+    if (item.draft) {
+      return <img src="/icons/git-pull-request-draft-16.svg" alt="Draft" className="state-icon state-draft" />;
+    }
+    if (item.state === 'closed') {
+      return <img src="/icons/git-pull-request-closed-16.svg" alt="Closed" className="state-icon state-closed" />;
+    }
+    return <img src="/icons/git-pull-request-16.svg" alt="Open" className="state-icon state-open" />;
   }
+
+  if (item.state === 'closed') {
+    return <img src="/icons/issue-closed-16.svg" alt="Closed" className="state-icon state-closed" />;
+  }
+  return <img src="/icons/issue-opened-16.svg" alt="Open" className="state-icon state-open" />;
+}
+
+export function ItemCard({ item }: ItemCardProps) {
+  const repo = repoFromUrl(item.repository_url);
 
   return (
     <a href={item.html_url} target="_blank" rel="noreferrer" className="item-card">
       <div className="item-card-header">
-        <span className={`item-state ${stateClass}`}>{stateIcon}</span>
+        <StateIcon item={item} />
         <span className="item-repo">{repo}</span>
         <span className="item-number">#{item.number}</span>
       </div>

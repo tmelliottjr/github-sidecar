@@ -1,5 +1,5 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import type { GitHubIssueItem, GitHubSearchResponse, FilterState, TabType } from '../../types';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import type { GitHubSearchResponse, FilterState, TabType } from '../../types';
 
 const PER_PAGE = 30;
 
@@ -25,75 +25,61 @@ function buildQuery(tab: TabType, filters: FilterState, username: string): strin
   return parts.join(' ');
 }
 
+async function fetchSearchPage(
+  token: string,
+  query: string,
+  sort: string,
+  order: string,
+  page: number,
+  signal?: AbortSignal,
+): Promise<GitHubSearchResponse> {
+  const url = `https://api.github.com/search/issues?q=${encodeURIComponent(query)}&sort=${sort}&order=${order}&per_page=${PER_PAGE}&page=${page}`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github.v3+json',
+    },
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || `GitHub API error: ${res.status}`);
+  }
+
+  return res.json();
+}
+
 export function useGitHubSearch(token: string | null, username: string, tab: TabType, filters: FilterState) {
-  const [items, setItems] = useState<GitHubIssueItem[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const abortRef = useRef<AbortController | null>(null);
+  const q = buildQuery(tab, filters, username);
 
-  const fetchPage = useCallback(async (pageNum: number, append: boolean) => {
-    if (!token) return;
-
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setLoading(true);
-    setError(null);
-
-    const q = buildQuery(tab, filters, username);
-    const url = `https://api.github.com/search/issues?q=${encodeURIComponent(q)}&sort=${filters.sort}&order=${filters.order}&per_page=${PER_PAGE}&page=${pageNum}`;
-
-    try {
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github.v3+json',
-        },
-        signal: controller.signal,
-      });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.message || `GitHub API error: ${res.status}`);
+  const query = useInfiniteQuery({
+    queryKey: ['github-search', tab, q, filters.sort, filters.order],
+    queryFn: async ({ pageParam, signal }) => {
+      return fetchSearchPage(token!, q, filters.sort, filters.order, pageParam, signal);
+    },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const totalFetched = allPages.reduce((sum, p) => sum + p.items.length, 0);
+      if (lastPage.items.length < PER_PAGE || totalFetched >= lastPage.total_count) {
+        return undefined;
       }
+      return allPages.length + 1;
+    },
+    enabled: !!token,
+  });
 
-      const data: GitHubSearchResponse = await res.json();
-      setTotalCount(data.total_count);
-      setItems((prev) => append ? [...prev, ...data.items] : data.items);
-      setHasMore(data.items.length === PER_PAGE && (append ? items.length + data.items.length : data.items.length) < data.total_count);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
-      setError(err instanceof Error ? err.message : 'Failed to fetch');
-    } finally {
-      setLoading(false);
-    }
-  }, [token, tab, filters, username, items.length]);
+  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  const totalCount = query.data?.pages[0]?.total_count ?? 0;
 
-  // Reset and fetch first page when filters/tab change
-  useEffect(() => {
-    setItems([]);
-    setPage(1);
-    setHasMore(true);
-    fetchPage(1, false);
-  }, [token, tab, filters.state, filters.repo, filters.sort, filters.order, username]);
-
-  const loadMore = useCallback(() => {
-    if (loading || !hasMore) return;
-    const nextPage = page + 1;
-    setPage(nextPage);
-    fetchPage(nextPage, true);
-  }, [loading, hasMore, page, fetchPage]);
-
-  const refresh = useCallback(() => {
-    setItems([]);
-    setPage(1);
-    setHasMore(true);
-    fetchPage(1, false);
-  }, [fetchPage]);
-
-  return { items, totalCount, loading, error, hasMore, loadMore, refresh };
+  return {
+    items,
+    totalCount,
+    loading: query.isLoading || query.isFetchingNextPage,
+    error: query.error?.message ?? null,
+    hasMore: query.hasNextPage,
+    loadMore: query.fetchNextPage,
+    refresh: query.refetch,
+  };
 }

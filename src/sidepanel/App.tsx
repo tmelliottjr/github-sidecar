@@ -14,7 +14,7 @@ export function App() {
     return (
       <div className="app">
         <header className="app-header">
-          <h1>GitHub Sidepanel</h1>
+          <h1>GH Sidecar</h1>
           {isAuthenticated && (
             <button className="icon-btn" onClick={() => setShowSettings(false)} title="Back">
               ←

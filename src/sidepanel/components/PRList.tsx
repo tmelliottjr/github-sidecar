@@ -51,10 +51,10 @@ export function PRList({ token, username }: PRListProps) {
             <div className="spinner" />
           </div>
         )}
-        {!loading && items.length === 0 && (
+        {!loading && items.length === 0 && !error && (
           <div className="empty-state">
             <p>No pull requests found</p>
-            <button onClick={refresh} className="btn btn-secondary">Refresh</button>
+            <button onClick={() => refresh()} className="btn btn-secondary">Refresh</button>
           </div>
         )}
         <div ref={sentinelRef} className="scroll-sentinel" />

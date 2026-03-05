@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import type { FilterState, ItemState, SortOption, SortOrder, TabType } from '../../types';
 
 interface FiltersProps {
@@ -8,6 +9,23 @@ interface FiltersProps {
 }
 
 export function Filters({ filters, onChange, tab, totalCount }: FiltersProps) {
+  const [repoInput, setRepoInput] = useState(filters.repo);
+
+  // Debounce repo filter
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (repoInput !== filters.repo) {
+        onChange({ ...filters, repo: repoInput });
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [repoInput]);
+
+  // Sync if filters change externally
+  useEffect(() => {
+    setRepoInput(filters.repo);
+  }, [filters.repo]);
+
   const update = (patch: Partial<FilterState>) => onChange({ ...filters, ...patch });
 
   return (
@@ -25,8 +43,8 @@ export function Filters({ filters, onChange, tab, totalCount }: FiltersProps) {
 
         <input
           type="text"
-          value={filters.repo}
-          onChange={(e) => update({ repo: e.target.value })}
+          value={repoInput}
+          onChange={(e) => setRepoInput(e.target.value)}
           placeholder="owner/repo"
           className="filter-input"
         />
