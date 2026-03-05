@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "GitHub Sidepanel",
+  "description": "View your GitHub issues and pull requests in a convenient sidepanel",
+  "version": "1.0.0",
+  "permissions": ["sidePanel", "storage"],
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "action": {
+    "default_title": "Open GitHub Sidepanel",
+    "default_icon": {
+      "16": "public/icons/icon16.png",
+      "48": "public/icons/icon48.png",
+      "128": "public/icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "public/icons/icon16.png",
+    "48": "public/icons/icon48.png",
+    "128": "public/icons/icon128.png"
+  }
+}
