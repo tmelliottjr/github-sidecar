@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GitHub Sidecar",
-  "description": "View your GitHub issues and pull requests in a convenient sidepanel",
+  "description": "View your GitHub issues and pull requests in a convenient side panel",
   "version": "1.0.0",
   "permissions": ["sidePanel", "storage"],
   "background": {
@@ -12,7 +12,7 @@
     "default_path": "src/sidepanel/index.html"
   },
   "action": {
-    "default_title": "Open GitHub Sidepanel",
+    "default_title": "Open GitHub Sidecar",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

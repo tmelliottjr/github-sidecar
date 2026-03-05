@@ -1,8 +1,14 @@
-import type { GitHubIssueItem } from '../../types';
+import type { GitHubIssueItem, GitHubLabel } from '../../types';
+import { usePRCheckStatus } from '../hooks/usePRCheckStatus';
+import { CommentsHovercard } from './CommentsHovercard';
+import { Hovercard } from './Hovercard';
 
 interface ItemCardProps {
   item: GitHubIssueItem;
+  token?: string;
 }
+
+const MAX_VISIBLE_LABELS = 2;
 
 function repoFromUrl(url: string): string {
   const match = url.match(/repos\/(.+)/);
@@ -45,8 +51,126 @@ function StateIcon({ item }: { item: GitHubIssueItem }) {
   return <img src="/icons/issue-opened-16.svg" alt="Open" className="state-icon state-open" />;
 }
 
-export function ItemCard({ item }: ItemCardProps) {
+function getLabelColors(hexColor: string) {
+  const r = parseInt(hexColor.slice(0, 2), 16);
+  const g = parseInt(hexColor.slice(2, 4), 16);
+  const b = parseInt(hexColor.slice(4, 6), 16);
+  // Muted background at 15% opacity
+  const bg = `rgba(${r}, ${g}, ${b}, 0.15)`;
+  // Lighter tinted text for dark backgrounds
+  const textR = Math.min(255, Math.round(r * 0.6 + 120));
+  const textG = Math.min(255, Math.round(g * 0.6 + 120));
+  const textB = Math.min(255, Math.round(b * 0.6 + 120));
+  const text = `rgb(${textR}, ${textG}, ${textB})`;
+  const border = `rgba(${r}, ${g}, ${b}, 0.3)`;
+  return { bg, text, border };
+}
+
+function LabelBadge({ label }: { label: GitHubLabel }) {
+  const colors = getLabelColors(label.color);
+  return (
+    <span
+      className="label-badge"
+      style={{
+        backgroundColor: colors.bg,
+        color: colors.text,
+        borderColor: colors.border,
+      }}
+    >
+      {label.name}
+    </span>
+  );
+}
+
+function Labels({ labels }: { labels: GitHubLabel[] }) {
+  const visible = labels.slice(0, MAX_VISIBLE_LABELS);
+  const overflow = labels.slice(MAX_VISIBLE_LABELS);
+
+  return (
+    <div className="item-labels">
+      {visible.map((label) => (
+        <LabelBadge key={label.id} label={label} />
+      ))}
+      {overflow.length > 0 && (
+        <Hovercard
+          trigger={
+            <span className="label-overflow-count" aria-label={`${overflow.length} more labels`}>
+              +{overflow.length}
+            </span>
+          }
+          popoverWidth={260}
+          showDelay={300}
+          hideDelay={200}
+          className="label-overflow-popover"
+        >
+          {() => (
+            <div className="label-overflow-content">
+              {overflow.map((label) => (
+                <LabelBadge key={label.id} label={label} />
+              ))}
+            </div>
+          )}
+        </Hovercard>
+      )}
+    </div>
+  );
+}
+
+function parseRepo(repoUrl: string): { owner: string; repo: string } {
+  const match = repoUrl.match(/repos\/([^/]+)\/([^/]+)/);
+  return match ? { owner: match[1], repo: match[2] } : { owner: '', repo: '' };
+}
+
+function CIStatus({ token, owner, repo, pullNumber }: { token: string; owner: string; repo: string; pullNumber: number }) {
+  const { data: summary, isLoading, isError } = usePRCheckStatus(token, owner, repo, pullNumber, !!owner && !!repo);
+
+  if (isError) {
+    return (
+      <span className="pr-status-indicators">
+        <span className="ci-status ci-status-neutral" title="Unable to load checks">–</span>
+        <span className="merge-status-slot" />
+      </span>
+    );
+  }
+  if (isLoading || !summary) {
+    return (
+      <span className="pr-status-indicators">
+        <span className="ci-status ci-status-loading" title="Loading checks…">●</span>
+        <span className="merge-status-slot" />
+      </span>
+    );
+  }
+
+  const ciIcons: Record<string, string> = {
+    success: '✓',
+    failure: '✗',
+    pending: '●',
+  };
+
+  const hasConflict = summary.mergeable === false;
+
+  return (
+    <span className="pr-status-indicators">
+      {summary.status !== 'neutral' ? (
+        <span className={`ci-status ci-status-${summary.status}`} title={`${summary.success} passed, ${summary.failure} failed, ${summary.pending} pending`}>
+          {ciIcons[summary.status]}
+        </span>
+      ) : (
+        <span className="ci-status-slot" />
+      )}
+      {hasConflict ? (
+        <span className="merge-status merge-status-conflict" title="Has merge conflicts">⚠</span>
+      ) : (
+        <span className="merge-status-slot" />
+      )}
+    </span>
+  );
+}
+
+export function ItemCard({ item, token }: ItemCardProps) {
   const repo = repoFromUrl(item.repository_url);
+  const { owner, repo: repoName } = parseRepo(item.repository_url);
+  const isPR = !!item.pull_request;
 
   return (
     <a href={item.html_url} target="_blank" rel="noreferrer" className="item-card">
@@ -54,35 +178,23 @@ export function ItemCard({ item }: ItemCardProps) {
         <StateIcon item={item} />
         <span className="item-repo">{repo}</span>
         <span className="item-number">#{item.number}</span>
+        {isPR && token && <CIStatus token={token} owner={owner} repo={repoName} pullNumber={item.number} />}
       </div>
       <div className="item-title">{item.title}</div>
       <div className="item-meta">
-        {item.labels.length > 0 && (
-          <div className="item-labels">
-            {item.labels.map((label) => (
-              <span
-                key={label.id}
-                className="label-badge"
-                style={{ backgroundColor: `#${label.color}`, color: getLabelTextColor(label.color) }}
-              >
-                {label.name}
-              </span>
-            ))}
-          </div>
-        )}
+        {item.labels.length > 0 && <Labels labels={item.labels} />}
         <div className="item-info">
+          <img src={item.user.avatar_url} alt={item.user.login} className="item-author-avatar" title={item.user.login} />
           <span>{timeAgo(item.updated_at)}</span>
-          {item.comments > 0 && <span className="comment-count">💬 {item.comments}</span>}
+          {item.comments > 0 && (
+            token ? (
+              <CommentsHovercard token={token} owner={owner} repo={repoName} issueNumber={item.number} commentCount={item.comments} />
+            ) : (
+              <span className="comment-count">💬 {item.comments}</span>
+            )
+          )}
         </div>
       </div>
     </a>
   );
-}
-
-function getLabelTextColor(bgColor: string): string {
-  const r = parseInt(bgColor.slice(0, 2), 16);
-  const g = parseInt(bgColor.slice(2, 4), 16);
-  const b = parseInt(bgColor.slice(4, 6), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance > 0.5 ? '#000' : '#fff';
 }

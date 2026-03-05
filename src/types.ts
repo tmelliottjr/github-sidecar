@@ -11,6 +11,31 @@ export interface GitHubLabel {
   color: string;
 }
 
+export interface GitHubComment {
+  id: number;
+  html_url: string;
+  body: string;
+  user: GitHubUser;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GitHubCheckRun {
+  id: number;
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion: string | null;
+}
+
+export interface PRCheckSummary {
+  total: number;
+  success: number;
+  failure: number;
+  pending: number;
+  status: 'success' | 'failure' | 'pending' | 'neutral';
+  mergeable: boolean | null;
+}
+
 export interface GitHubIssueItem {
   id: number;
   number: number;
@@ -37,14 +62,24 @@ export interface GitHubSearchResponse {
   items: GitHubIssueItem[];
 }
 
+export interface SavedView {
+  id: string;
+  name: string;
+  queryType: QueryType;
+  filters: FilterState;
+  order: number;
+}
+
+export type QueryType = 'issues' | 'prs' | 'reviews';
 export type ItemState = 'open' | 'closed' | 'all';
 export type SortOption = 'created' | 'updated' | 'comments';
 export type SortOrder = 'asc' | 'desc';
-export type TabType = 'issues' | 'prs';
+export type TabType = QueryType;
 
 export interface FilterState {
   state: ItemState;
   repo: string;
   sort: SortOption;
   order: SortOrder;
+  rawQuery?: string;
 }

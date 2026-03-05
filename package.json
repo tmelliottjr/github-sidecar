@@ -1,5 +1,5 @@
 {
-  "name": "github-chrome-tmp",
+  "name": "github-sidecar",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,9 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tanstack/react-form": "^1.28.4",
     "@tanstack/react-query": "^5.90.21",
+    "@tanstack/react-virtual": "^3.13.20",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.3.0",
