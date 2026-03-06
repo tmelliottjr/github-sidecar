@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Sun, Moon, Sparkles, MoreHorizontal, Plus, Pencil, ArrowUp, ArrowDown, Trash2, ArrowLeft } from 'lucide-react';
+import { Sun, Moon, Sparkles, MoreHorizontal, Plus, Pencil, ArrowUp, ArrowDown, Trash2, ArrowLeft, ChevronDown } from 'lucide-react';
+import { motion, AnimatePresence, type MotionProps } from 'motion/react';
 import { useAuth } from './hooks/useAuth';
 import { useSavedViews } from './hooks/useSavedViews';
 import { useReviewCount } from './hooks/useGitHubSearch';
@@ -8,9 +9,17 @@ import { Settings } from './components/Settings';
 import { ViewList } from './components/ViewList';
 import { ViewEditor } from './components/ViewEditor';
 import { SavedRepos } from './components/SavedRepos';
+import { Tooltip } from './components/Tooltip';
 import type { SavedView, QueryType, FilterState } from '../types';
 
 const MAX_VISIBLE_TABS = 3;
+
+const dropdownMotion: MotionProps = {
+  initial: { opacity: 0, y: -4, scale: 0.97 },
+  animate: { opacity: 1, y: 0, scale: 1 },
+  exit: { opacity: 0, y: -4, scale: 0.97 },
+  transition: { duration: 0.12, ease: 'easeOut' },
+};
 
 const REVIEWS_VIEW: SavedView = {
   id: '__reviews__',
@@ -22,17 +31,18 @@ const REVIEWS_VIEW: SavedView = {
 
 function ThemeToggle({ resolvedTheme, onToggle }: { resolvedTheme: 'light' | 'dark'; onToggle: () => void }) {
   return (
-    <button
-      onClick={onToggle}
-      className="bg-transparent border-none text-text-secondary cursor-pointer p-1 rounded-md flex items-center justify-center hover:text-text-primary hover:bg-bg-tertiary transition-colors"
-      title={`Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} mode`}
-    >
-      {resolvedTheme === 'dark' ? (
-        <Sun size={16} />
-      ) : (
-        <Moon size={16} />
-      )}
-    </button>
+    <Tooltip content={`Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} mode`}>
+      <button
+        onClick={onToggle}
+        className="bg-transparent border-none text-text-secondary cursor-pointer p-1 rounded-md flex items-center justify-center hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+      >
+        {resolvedTheme === 'dark' ? (
+          <Sun size={16} />
+        ) : (
+          <Moon size={16} />
+        )}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -106,78 +116,114 @@ function TabBar({
   const viewForContext = contextMenu ? views.find((v) => v.id === contextMenu.id) : null;
   const contextIdx = viewForContext ? views.indexOf(viewForContext) : -1;
 
-  const tabBase = 'bg-transparent border-0 border-solid border-b-2 text-text-secondary text-xs font-medium px-3 cursor-pointer transition-[color,border-color] duration-150 whitespace-nowrap overflow-hidden text-ellipsis max-w-[120px] hover:text-text-primary self-stretch flex items-center';
-  const tabActive = 'text-text-primary border-b-[#f78166]';
-  const tabInactive = 'border-b-transparent';
+  const tabBase = 'relative bg-transparent border-0 border-solid border-b-2 border-b-transparent text-text-secondary text-xs font-medium px-3 cursor-pointer transition-colors duration-150 whitespace-nowrap self-stretch flex items-center hover:text-text-primary';
+  const tabTextActive = 'text-text-primary';
+
+  const truncate = (name: string, max = 20) => name.length > max ? name.slice(0, max) + '…' : name;
+  const activeOverflow = overflowTabs.find((v) => v.id === activeId);
+
+  const activeIndicator = (
+    <motion.div
+      layoutId="tab-indicator"
+      className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#f78166]"
+      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+    />
+  );
 
   return (
     <nav className="flex items-stretch flex-1 min-w-0 relative h-full">
       <div className="flex items-stretch min-w-0">
         {visibleTabs.map((view) => (
-          <button
-            key={view.id}
-            className={`${tabBase} ${activeId === view.id ? tabActive : tabInactive}`}
-            onClick={() => onSelect(view.id)}
-            onContextMenu={(e) => handleContextMenu(e, view.id)}
-            title={view.name}
-          >
-            {view.name}
-          </button>
+          <Tooltip content={view.name} key={view.id}>
+            <button
+              className={`${tabBase} ${activeId === view.id ? tabTextActive : ''}`}
+              onClick={() => onSelect(view.id)}
+              onContextMenu={(e) => handleContextMenu(e, view.id)}
+            >
+              {truncate(view.name)}
+              {activeId === view.id && activeIndicator}
+            </button>
+          </Tooltip>
         ))}
 
         {overflowTabs.length > 0 && (
-          <div className="relative shrink-0" ref={overflowRef}>
+          <div className="relative shrink-0 self-stretch flex items-stretch" ref={overflowRef}>
             <button
-              className={`${tabBase} max-w-none text-base tracking-widest ${overflowTabs.some((v) => v.id === activeId) ? tabActive : tabInactive}`}
+              className={`${tabBase} gap-1 ${activeOverflow ? tabTextActive : ''}`}
               onClick={() => setShowOverflow(!showOverflow)}
             >
-              <MoreHorizontal size={14} />
+              {activeOverflow ? (
+                <>
+                  {truncate(activeOverflow.name, 16)}
+                  <motion.span animate={{ rotate: showOverflow ? 180 : 0 }} transition={{ duration: 0.15 }}>
+                    <ChevronDown size={12} />
+                  </motion.span>
+                </>
+              ) : (
+                <>
+                  <MoreHorizontal size={14} />
+                  <motion.span animate={{ rotate: showOverflow ? 180 : 0 }} transition={{ duration: 0.15 }}>
+                    <ChevronDown size={10} />
+                  </motion.span>
+                </>
+              )}
+              {activeOverflow && activeIndicator}
             </button>
-            {showOverflow && (
-              <div className="absolute top-[calc(100%+2px)] right-0 bg-bg-secondary border border-border rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.4)] z-[200] min-w-[140px] max-w-[220px] overflow-hidden animate-slide-in">
-                {overflowTabs.map((view) => (
-                  <button
-                    key={view.id}
-                    className={`block w-full bg-transparent border-none border-b border-b-border text-text-primary py-2 px-3 text-xs text-left cursor-pointer transition-colors duration-100 last:border-b-0 hover:bg-bg-tertiary ${activeId === view.id ? 'text-text-link' : ''}`}
-                    onClick={() => { onSelect(view.id); setShowOverflow(false); }}
-                    onContextMenu={(e) => handleContextMenu(e, view.id)}
-                  >
-                    {view.name}
-                  </button>
-                ))}
-              </div>
-            )}
+            <AnimatePresence>
+              {showOverflow && (
+                <motion.div
+                  {...dropdownMotion}
+                  className="absolute top-[calc(100%+2px)] right-0 bg-bg-secondary border border-border rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.4)] z-[200] min-w-[140px] max-w-[220px] overflow-hidden"
+                >
+                  {overflowTabs.map((view) => (
+                    <button
+                      key={view.id}
+                      className={`block w-full bg-transparent border-none border-b border-b-border text-text-primary py-2 px-3 text-xs text-left cursor-pointer transition-colors duration-100 last:border-b-0 hover:bg-bg-tertiary ${activeId === view.id ? 'text-text-link' : ''}`}
+                      onClick={() => { onSelect(view.id); setShowOverflow(false); }}
+                      onContextMenu={(e) => handleContextMenu(e, view.id)}
+                    >
+                      {view.name}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )}
 
-        <button
-          className={`${tabBase} ${tabInactive} max-w-none text-base shrink-0 hover:text-text-link`}
-          onClick={onCreate}
-          title="Create new view"
-        >
-          <Plus size={14} />
-        </button>
+        <Tooltip content="Create new view">
+          <button
+            className={`${tabBase} max-w-none text-base shrink-0 hover:text-text-link`}
+            onClick={onCreate}
+          >
+            <Plus size={14} />
+          </button>
+        </Tooltip>
       </div>
 
-      <button
-        className={`${tabBase} max-w-none shrink-0 inline-flex items-center gap-[5px] ml-auto ${activeId === REVIEWS_VIEW.id ? tabActive : tabInactive}`}
-        onClick={onReviewsClick}
-        title="Review requests"
-      >
-        Reviews
-        {reviewCount > 0 && (
-          <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold bg-text-link text-white leading-none">
-            {reviewCount > 99 ? '99+' : reviewCount}
-          </span>
-        )}
-      </button>
-
-      {contextMenu && viewForContext && (
-        <div
-          ref={contextRef}
-          className="bg-bg-secondary border border-border rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.45)] z-[300] min-w-[150px] overflow-hidden animate-slide-in"
-          style={{ position: 'fixed', top: contextMenu.y, left: Math.min(contextMenu.x, window.innerWidth - 160) }}
+      <Tooltip content="Review requests" className="ml-auto">
+        <button
+          className={`${tabBase} max-w-none shrink-0 inline-flex items-center gap-[5px] ${activeId === REVIEWS_VIEW.id ? tabTextActive : ''}`}
+          onClick={onReviewsClick}
         >
+          Reviews
+          {reviewCount > 0 && (
+            <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold bg-text-link text-white leading-none">
+              {reviewCount > 99 ? '99+' : reviewCount}
+            </span>
+          )}
+          {activeId === REVIEWS_VIEW.id && activeIndicator}
+        </button>
+      </Tooltip>
+
+      <AnimatePresence>
+        {contextMenu && viewForContext && (
+          <motion.div
+            ref={contextRef}
+            {...dropdownMotion}
+            className="bg-bg-secondary border border-border rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.45)] z-[300] min-w-[150px] overflow-hidden"
+            style={{ position: 'fixed', top: contextMenu.y, left: Math.min(contextMenu.x, window.innerWidth - 160) }}
+          >
           <button className="flex items-center gap-1.5 w-full bg-transparent border-none border-b border-b-border text-text-primary py-2 px-3 text-xs text-left cursor-pointer transition-colors duration-100 last:border-b-0 hover:bg-bg-tertiary" onClick={() => { onEdit(viewForContext); setContextMenu(null); }}>
             <Pencil size={12} /> Edit view
           </button>
@@ -194,8 +240,9 @@ function TabBar({
           <button className="flex items-center gap-1.5 w-full bg-transparent border-none border-b border-b-border text-text-primary py-2 px-3 text-xs text-left cursor-pointer transition-colors duration-100 last:border-b-0 hover:bg-bg-tertiary hover:text-danger" onClick={() => { onDelete(viewForContext.id); setContextMenu(null); }}>
             <Trash2 size={12} /> Delete view
           </button>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </nav>
   );
 }
@@ -234,13 +281,14 @@ export function App() {
           <div className="flex items-center gap-1">
             <ThemeToggle resolvedTheme={resolvedTheme} onToggle={toggleTheme} />
             {isAuthenticated && (
-              <button
-                className="bg-transparent border-none text-text-secondary cursor-pointer p-1 rounded-md flex items-center justify-center hover:text-text-primary hover:bg-bg-tertiary"
-                onClick={() => setShowSettings(false)}
-                title="Back"
-              >
-                <ArrowLeft size={16} />
-              </button>
+              <Tooltip content="Back">
+                <button
+                  className="bg-transparent border-none text-text-secondary cursor-pointer p-1 rounded-md flex items-center justify-center hover:text-text-primary hover:bg-bg-tertiary"
+                  onClick={() => setShowSettings(false)}
+                >
+                  <ArrowLeft size={16} />
+                </button>
+              </Tooltip>
             )}
           </div>
         </header>
@@ -282,24 +330,25 @@ export function App() {
         <TabBar
           views={views}
           activeId={activeViewId}
-          onSelect={setActiveViewId}
+          onSelect={(id) => { setActiveViewId(id); setEditorState({ open: false }); }}
           onCreate={() => setEditorState({ open: true })}
           onEdit={(view) => setEditorState({ open: true, view })}
           onDelete={handleDelete}
           onMoveUp={moveUp}
           onMoveDown={moveDown}
           reviewCount={reviewCount}
-          onReviewsClick={() => setActiveViewId(REVIEWS_VIEW.id)}
+          onReviewsClick={() => { setActiveViewId(REVIEWS_VIEW.id); setEditorState({ open: false }); }}
         />
         <div className="flex items-center gap-1">
           <ThemeToggle resolvedTheme={resolvedTheme} onToggle={toggleTheme} />
-          <button
-            className="bg-transparent border-none text-text-secondary cursor-pointer p-1 rounded-md flex items-center justify-center hover:text-text-primary hover:bg-bg-tertiary"
-            onClick={() => setShowSettings(true)}
-            title="Settings"
-          >
-            <img src={user?.avatar_url} alt={user?.login} className="w-6 h-6 rounded-full" />
-          </button>
+          <Tooltip content="Settings">
+            <button
+              className="bg-transparent border-none text-text-secondary cursor-pointer p-1 rounded-md flex items-center justify-center hover:text-text-primary hover:bg-bg-tertiary"
+              onClick={() => setShowSettings(true)}
+            >
+              <img src={user?.avatar_url} alt={user?.login} className="w-6 h-6 rounded-full" />
+            </button>
+          </Tooltip>
         </div>
       </header>
 

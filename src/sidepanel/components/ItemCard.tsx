@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, X, Circle, AlertTriangle, MessageSquare, Loader, Pin, GitBranch } from 'lucide-react';
+import { Check, X, Circle, AlertTriangle, MessageSquare, Loader, Pin, GitBranch, Copy } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -7,11 +7,13 @@ import type { GitHubIssueItem, GitHubLabel, PRCheckSummary } from '../../types';
 import { usePRCheckStatus } from '../hooks/usePRCheckStatus';
 import { CommentsHovercard } from './CommentsHovercard';
 import { Hovercard } from './Hovercard';
+import { Tooltip } from './Tooltip';
 
 interface ItemCardProps {
   item: GitHubIssueItem;
   token?: string;
   isUnread?: boolean;
+  unreadTooltip?: string;
   isPinned?: boolean;
   onRead?: (item: GitHubIssueItem) => void;
   onTogglePin?: (url: string) => void;
@@ -47,11 +49,17 @@ function timeAgo(dateStr: string): string {
   return `${months}mo ago`;
 }
 
-function StateIcon({ item }: { item: GitHubIssueItem }) {
+function StateIcon({ item, mergeQueueState, mergeQueuePosition }: { item: GitHubIssueItem; mergeQueueState?: 'queued' | 'merging' | null; mergeQueuePosition?: number | null }) {
   const isPR = !!item.pull_request;
   const isMerged = isPR && item.pull_request?.merged_at;
 
   if (isPR) {
+    if (mergeQueueState) {
+      const tip = mergeQueueState === 'merging'
+        ? 'Merge in progress'
+        : `In merge queue${mergeQueuePosition != null ? ` · Position ${mergeQueuePosition + 1}` : ''}`;
+      return <Tooltip content={tip}><img src="/icons/git-merge-queue-16.svg" alt="Queued" className="w-3.5 h-3.5 shrink-0 state-icon-queue" /></Tooltip>;
+    }
     if (isMerged) {
       return <img src="/icons/git-pull-request-closed-16.svg" alt="Merged" className="w-3.5 h-3.5 shrink-0 state-icon-merged" />;
     }
@@ -154,20 +162,24 @@ function parseRepo(repoUrl: string): { owner: string; repo: string } {
   return match ? { owner: match[1], repo: match[2] } : { owner: '', repo: '' };
 }
 
-function CIStatusBadge({ summary, isLoading, isError }: { summary?: PRCheckSummary; isLoading: boolean; isError: boolean }) {
+function CIStatusBadge({ summary, isLoading, isError, htmlUrl }: { summary?: PRCheckSummary; isLoading: boolean; isError: boolean; htmlUrl: string }) {
   if (isError) {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] text-text-secondary opacity-60" title="Unable to load checks">
-        <span>–</span>
-        <span>Checks</span>
-      </span>
+      <Tooltip content="Unable to load checks">
+        <span className="inline-flex items-center gap-1 text-[10px] text-text-secondary opacity-60">
+          <span>–</span>
+          <span>Checks</span>
+        </span>
+      </Tooltip>
     );
   }
   if (isLoading || !summary) {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] text-text-secondary" title="Loading checks…">
-        <Loader size={10} className="animate-spin" />
-      </span>
+      <Tooltip content="Loading checks…">
+        <span className="inline-flex items-center gap-1 text-[10px] text-text-secondary">
+          <Loader size={10} className="animate-spin" />
+        </span>
+      </Tooltip>
     );
   }
 
@@ -190,39 +202,53 @@ function CIStatusBadge({ summary, isLoading, isError }: { summary?: PRCheckSumma
   };
 
   const hasConflict = summary.mergeable === false;
+  const checksUrl = `${htmlUrl}/checks`;
 
   return (
     <span className="inline-flex items-center gap-1.5 text-[10px] font-medium">
       {summary.status !== 'neutral' && (
-        <span
-          className={`inline-flex items-center gap-0.5 ${statusColors[summary.status] ?? ''} ${summary.status === 'pending' ? 'animate-pulse-opacity' : ''}`}
-          title={`${summary.success} passed, ${summary.failure} failed, ${summary.pending} pending`}
-        >
-          {ciIcons[summary.status]}
-          <span>{statusLabel[summary.status]}</span>
-        </span>
+        <Tooltip content={`${summary.success} passed, ${summary.failure} failed, ${summary.pending} pending`}>
+          <a
+            href={checksUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={`inline-flex items-center gap-0.5 no-underline transition-transform hover:scale-105 ${statusColors[summary.status] ?? ''} ${summary.status === 'pending' ? 'animate-pulse-opacity' : ''}`}
+          >
+            {ciIcons[summary.status]}
+            <span>{statusLabel[summary.status]}</span>
+          </a>
+        </Tooltip>
       )}
       {hasConflict && (
         <>
           {summary.status !== 'neutral' && <span className="text-text-secondary opacity-40">·</span>}
-          <span className="inline-flex items-center gap-0.5 text-warning" title="Has merge conflicts">
-            <AlertTriangle size={10} />
-            <span>Conflicts</span>
-          </span>
+          <Tooltip content="Has merge conflicts">
+            <span className="inline-flex items-center gap-0.5 text-warning">
+              <AlertTriangle size={10} />
+              <span>Conflicts</span>
+            </span>
+          </Tooltip>
         </>
       )}
     </span>
   );
 }
 
-function DiffStats({ additions, deletions, changedFiles }: { additions: number; deletions: number; changedFiles: number }) {
+function DiffStats({ additions, deletions, changedFiles, htmlUrl }: { additions: number; deletions: number; changedFiles: number; htmlUrl: string }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] font-medium">
+    <Tooltip content="View changed files">
+      <a
+        href={`${htmlUrl}/files`}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1 text-[10px] font-medium no-underline transition-transform hover:scale-105"
+      >
       <span className="text-state-open">+{additions}</span>
       <span className="text-state-closed">−{deletions}</span>
       <span className="text-text-secondary opacity-40">·</span>
       <span className="text-text-secondary">{changedFiles} {changedFiles === 1 ? 'file' : 'files'}</span>
-    </span>
+    </a>
+    </Tooltip>
   );
 }
 
@@ -238,14 +264,38 @@ function CopyBranchButton({ branchName }: { branchName: string }) {
   };
 
   return (
-    <button
-      onClick={handleCopy}
-      className="inline-flex items-center gap-1 text-text-secondary transition-colors hover:text-text-primary bg-transparent border-none cursor-pointer p-0 min-w-0"
-      title={copied ? 'Copied!' : `Copy branch: ${branchName}`}
-    >
-      {copied ? <Check size={11} className="text-state-open shrink-0" /> : <GitBranch size={11} className="shrink-0" />}
-      <span className="text-[10px] font-mono truncate max-w-[120px]">{branchName}</span>
-    </button>
+    <Tooltip content={copied ? 'Copied!' : `Copy branch: ${branchName}`}>
+      <button
+        onClick={handleCopy}
+        className="inline-flex items-center gap-1 text-text-secondary transition-colors hover:text-text-primary bg-transparent border-none cursor-pointer p-0 min-w-0"
+      >
+        {copied ? <Check size={11} className="text-state-open shrink-0" /> : <GitBranch size={11} className="shrink-0" />}
+        <span className="text-[10px] font-mono truncate max-w-[120px]">{branchName}</span>
+      </button>
+    </Tooltip>
+  );
+}
+
+function CopyLinkButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <Tooltip content={copied ? 'Copied!' : 'Copy link'}>
+      <button
+        onClick={handleCopy}
+        className="opacity-0 group-hover:opacity-100 bg-transparent border-none cursor-pointer p-0.5 rounded transition-all text-text-secondary hover:text-text-primary hover:bg-bg-tertiary"
+      >
+        {copied ? <Check size={11} className="text-state-open" /> : <Copy size={11} />}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -262,7 +312,7 @@ function BodyContent({ body }: { body: string }) {
   );
 }
 
-export function ItemCard({ item, token, isUnread, isPinned, onRead, onTogglePin }: ItemCardProps) {
+export function ItemCard({ item, token, isUnread, unreadTooltip, isPinned, onRead, onTogglePin }: ItemCardProps) {
   const repo = repoFromUrl(item.repository_url);
   const { owner, repo: repoName } = parseRepo(item.repository_url);
   const isPR = !!item.pull_request;
@@ -281,14 +331,14 @@ export function ItemCard({ item, token, isUnread, isPinned, onRead, onTogglePin 
     <div
       className={`block py-3 px-3.5 border-b border-border no-underline text-inherit transition-colors relative group hover:bg-bg-secondary ${isPinned ? 'border-l-2 border-l-text-link' : ''}`}
     >
-      {/* Unread indicator */}
-      {isUnread && (
-        <span className="absolute left-1 top-4 w-[7px] h-[7px] rounded-full bg-text-link" />
-      )}
-
       {/* Row 1: Header — state icon, repo#number, time, pin */}
       <div className="flex items-center gap-[5px] text-[11px] text-text-secondary tracking-[0.01em]">
-        <StateIcon item={item} />
+        {isUnread && (
+          <Tooltip content={unreadTooltip || 'Updated since last viewed'}>
+            <span className="w-[7px] h-[7px] rounded-full bg-text-link shrink-0 -ml-0.5" />
+          </Tooltip>
+        )}
+        <StateIcon item={item} mergeQueueState={prSummary?.mergeQueueState} mergeQueuePosition={prSummary?.mergeQueuePosition} />
         {item.body?.trim() ? (
           <Hovercard
             trigger={
@@ -323,22 +373,28 @@ export function ItemCard({ item, token, isUnread, isPinned, onRead, onTogglePin 
             {repo}<span className="opacity-50 mx-px">#</span>{item.number}
           </a>
         )}
+        <CopyLinkButton url={item.html_url} />
         <span className="ml-auto text-[10px]">{timeAgo(item.updated_at)}</span>
-        <button
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin?.(item.html_url); }}
-          className={`bg-transparent border-none cursor-pointer p-1 rounded transition-all hover:bg-bg-tertiary ${isPinned ? 'opacity-100 text-text-link' : 'opacity-0 group-hover:opacity-100 text-text-secondary hover:text-text-primary'}`}
-          title={isPinned ? 'Unpin' : 'Pin to top'}
-        >
-          <Pin size={12} />
-        </button>
+        <Tooltip content={isPinned ? 'Unpin' : 'Pin to top'}>
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin?.(item.html_url); }}
+            className={`bg-transparent border-none cursor-pointer p-1 rounded transition-all hover:bg-bg-tertiary ${isPinned ? 'opacity-100 text-text-link' : 'opacity-0 group-hover:opacity-100 text-text-secondary hover:text-text-primary'}`}
+          >
+            <Pin size={12} />
+          </button>
+        </Tooltip>
       </div>
 
-      {/* Row 2: Title */}
-      <div className="text-[13px] font-semibold leading-snug mt-1 mb-1.5 break-words text-text-primary">{item.title}</div>
+      {/* Row 2: Avatar + Title */}
+      <div className="flex items-start gap-1.5 mt-1 mb-1.5">
+        <Tooltip content={item.user.login}>
+          <img src={item.user.avatar_url} alt={item.user.login} className="w-4 h-4 rounded-full shrink-0 shadow-[0_0_0_1px_rgba(0,0,0,0.1)] mt-px" />
+        </Tooltip>
+        <span className="text-[13px] font-semibold leading-snug break-words text-text-primary">{item.title}</span>
+      </div>
 
-      {/* Row 3: Meta — avatar, comments, labels */}
+      {/* Row 3: Meta — comments, labels */}
       <div className="flex items-center gap-2 flex-wrap text-[11px] text-text-secondary">
-        <img src={item.user.avatar_url} alt={item.user.login} className="w-3.5 h-3.5 rounded-full shrink-0 shadow-[0_0_0_1px_rgba(0,0,0,0.1)]" title={item.user.login} />
         {item.comments > 0 && (
           token ? (
             <CommentsHovercard token={token} owner={owner} repo={repoName} issueNumber={item.number} commentCount={item.comments} />
@@ -352,11 +408,11 @@ export function ItemCard({ item, token, isUnread, isPinned, onRead, onTogglePin 
       {/* Row 4: PR details bar (PR-only) */}
       {showPRDetails && (
         <div className="flex items-center gap-3 mt-2 text-[10px]">
-          <CIStatusBadge summary={prSummary} isLoading={prLoading} isError={prError} />
+          <CIStatusBadge summary={prSummary} isLoading={prLoading} isError={prError} htmlUrl={item.html_url} />
           {prSummary && (
             <>
               <span className="text-border">|</span>
-              <DiffStats additions={prSummary.additions} deletions={prSummary.deletions} changedFiles={prSummary.changedFiles} />
+              <DiffStats additions={prSummary.additions} deletions={prSummary.deletions} changedFiles={prSummary.changedFiles} htmlUrl={item.html_url} />
               <span className="ml-auto" />
               <CopyBranchButton branchName={prSummary.branchName} />
             </>

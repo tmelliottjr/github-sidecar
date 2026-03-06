@@ -15,6 +15,11 @@ interface PRDetail {
   changed_files: number;
 }
 
+interface MergeQueueInfo {
+  state: 'queued' | 'merging' | null;
+  position: number | null;
+}
+
 async function fetchPRDetail(token: string, owner: string, repo: string, number: number, signal?: AbortSignal): Promise<PRDetail> {
   const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}`, {
     headers: {
@@ -39,9 +44,42 @@ async function fetchCheckRuns(token: string, owner: string, repo: string, sha: s
   return res.json();
 }
 
-function summarizeChecks(checkRuns: GitHubCheckRun[], pr: PRDetail): PRCheckSummary {
+async function fetchMergeQueueStatus(token: string, owner: string, repo: string, number: number, signal?: AbortSignal): Promise<MergeQueueInfo> {
+  const query = `query($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) {
+        mergeQueueEntry {
+          state
+          position
+        }
+      }
+    }
+  }`;
+
+  try {
+    const res = await fetch('https://api.github.com/graphql', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query, variables: { owner, repo, number } }),
+      signal,
+    });
+    if (!res.ok) return { state: null, position: null };
+    const json = await res.json();
+    const entry = json.data?.repository?.pullRequest?.mergeQueueEntry;
+    if (!entry) return { state: null, position: null };
+    const state = entry.state === 'MERGEABLE' ? 'merging' as const : 'queued' as const;
+    return { state, position: entry.position ?? null };
+  } catch {
+    return { state: null, position: null };
+  }
+}
+
+function summarizeChecks(checkRuns: GitHubCheckRun[], pr: PRDetail, mergeQueue: MergeQueueInfo): PRCheckSummary {
   if (checkRuns.length === 0) {
-    return { total: 0, success: 0, failure: 0, pending: 0, status: 'neutral', mergeable: pr.mergeable, additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changed_files, branchName: pr.head.ref };
+    return { total: 0, success: 0, failure: 0, pending: 0, status: 'neutral', mergeable: pr.mergeable, mergeQueueState: mergeQueue.state, mergeQueuePosition: mergeQueue.position, additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changed_files, branchName: pr.head.ref };
   }
 
   let success = 0;
@@ -63,16 +101,19 @@ function summarizeChecks(checkRuns: GitHubCheckRun[], pr: PRDetail): PRCheckSumm
   else if (pending > 0) status = 'pending';
   else status = 'success';
 
-  return { total: checkRuns.length, success, failure, pending, status, mergeable: pr.mergeable, additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changed_files, branchName: pr.head.ref };
+  return { total: checkRuns.length, success, failure, pending, status, mergeable: pr.mergeable, mergeQueueState: mergeQueue.state, mergeQueuePosition: mergeQueue.position, additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changed_files, branchName: pr.head.ref };
 }
 
 export function usePRCheckStatus(token: string, owner: string, repo: string, pullNumber: number, enabled: boolean) {
   return useQuery<PRCheckSummary>({
     queryKey: ['pr-checks', owner, repo, pullNumber],
     queryFn: async ({ signal }) => {
-      const pr = await fetchPRDetail(token, owner, repo, pullNumber, signal);
+      const [pr, mergeQueue] = await Promise.all([
+        fetchPRDetail(token, owner, repo, pullNumber, signal),
+        fetchMergeQueueStatus(token, owner, repo, pullNumber, signal),
+      ]);
       const data = await fetchCheckRuns(token, owner, repo, pr.head.sha, signal);
-      return summarizeChecks(data.check_runs, pr);
+      return summarizeChecks(data.check_runs, pr, mergeQueue);
     },
     enabled,
     staleTime: 60_000,

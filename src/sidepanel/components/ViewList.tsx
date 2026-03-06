@@ -58,7 +58,7 @@ export function ViewList({ token, username, view, onAddRepo }: ViewListProps) {
   );
   const parentRef = useRef<HTMLDivElement>(null);
 
-  const { isUnread, markAsRead, trackItems } = useReadState();
+  const { isUnread, unreadTooltip, markAsRead, trackItems } = useReadState();
   const { pinned, isPinned, togglePin } = usePinnedItems();
 
   // Auto-track newly seen items for unread detection
@@ -142,6 +142,7 @@ export function ViewList({ token, username, view, onAddRepo }: ViewListProps) {
                   item={item}
                   token={token}
                   isUnread={isUnread(item)}
+                  unreadTooltip={unreadTooltip(item)}
                   isPinned={isPinned(item.html_url)}
                   onRead={markAsRead}
                   onTogglePin={togglePin}

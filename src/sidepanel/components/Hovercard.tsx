@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { Tooltip } from './Tooltip';
 
 interface HovercardProps {
   trigger: ReactNode;
@@ -125,13 +126,14 @@ export function Hovercard({
             onMouseLeave={scheduleHide}
           >
             {showClose && (
-              <button
-                onClick={(e) => { e.stopPropagation(); closeNow(); }}
-                className="absolute top-1.5 right-1.5 z-10 bg-bg-tertiary/80 border-none text-text-secondary cursor-pointer p-0.5 rounded-md flex items-center justify-center hover:text-text-primary hover:bg-bg-tertiary transition-colors"
-                title="Close"
-              >
-                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="2" y1="2" x2="10" y2="10" /><line x1="10" y1="2" x2="2" y2="10" /></svg>
-              </button>
+              <Tooltip content="Close">
+                <button
+                  onClick={(e) => { e.stopPropagation(); closeNow(); }}
+                  className="absolute top-1.5 right-1.5 z-10 bg-bg-tertiary/80 border-none text-text-secondary cursor-pointer p-0.5 rounded-md flex items-center justify-center hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+                >
+                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="2" y1="2" x2="10" y2="10" /><line x1="10" y1="2" x2="2" y2="10" /></svg>
+                </button>
+              </Tooltip>
             )}
             {children({ hovered })}
           </div>,

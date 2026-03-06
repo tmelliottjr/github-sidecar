@@ -34,6 +34,8 @@ export interface PRCheckSummary {
   pending: number;
   status: 'success' | 'failure' | 'pending' | 'neutral';
   mergeable: boolean | null;
+  mergeQueueState: 'queued' | 'merging' | null;
+  mergeQueuePosition: number | null;
   additions: number;
   deletions: number;
   changedFiles: number;

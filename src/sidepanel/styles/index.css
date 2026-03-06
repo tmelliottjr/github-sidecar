@@ -4,23 +4,23 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* Light mode colors (default) */
+  /* Light mode colors — aligned with Primer default light theme */
   --color-bg-primary: #ffffff;
-  --color-bg-secondary: #f6f8fa;
-  --color-bg-tertiary: #e1e4e8;
-  --color-border: #d0d7de;
-  --color-text-primary: #1f2328;
-  --color-text-secondary: #656d76;
-  --color-text-link: #0969da;
-  --color-accent: #1f883d;
-  --color-accent-hover: #1a7f37;
-  --color-danger: #cf222e;
-  --color-danger-hover: #a40e26;
-  --color-state-open: #1a7f37;
-  --color-state-closed: #cf222e;
-  --color-state-merged: #8250df;
-  --color-state-draft: #656d76;
-  --color-warning: #9a6700;
+  --color-bg-secondary: #F6F8FA;
+  --color-bg-tertiary: #EFF2F5;
+  --color-border: #D1D9E0;
+  --color-text-primary: #1F2328;
+  --color-text-secondary: #59636E;
+  --color-text-link: #0969DA;
+  --color-accent: #2DA44E;
+  --color-accent-hover: #1A7F37;
+  --color-danger: #CF222E;
+  --color-danger-hover: #A40E26;
+  --color-state-open: #1A7F37;
+  --color-state-closed: #CF222E;
+  --color-state-merged: #8250DF;
+  --color-state-draft: #59636E;
+  --color-warning: #9A6700;
 
   /* Animation */
   --animate-pulse-opacity: pulse 1.5s ease-in-out infinite;
@@ -29,26 +29,28 @@
   --animate-slide-in: sf-slide-in 0.15s ease-out;
   --animate-hovercard-up: hovercard-in-up 0.15s ease-out;
   --animate-hovercard-down: hovercard-in-down 0.15s ease-out;
+  --animate-tooltip-up: tooltip-in-up 0.12s ease-out;
+  --animate-tooltip-down: tooltip-in-down 0.12s ease-out;
 }
 
-/* Dark mode overrides via .dark class */
+/* Dark mode overrides — aligned with Primer default dark theme */
 .dark {
-  --color-bg-primary: #0d1117;
-  --color-bg-secondary: #161b22;
-  --color-bg-tertiary: #21262d;
-  --color-border: #30363d;
-  --color-text-primary: #e6edf3;
-  --color-text-secondary: #8b949e;
-  --color-text-link: #58a6ff;
+  --color-bg-primary: #0D1117;
+  --color-bg-secondary: #151B23;
+  --color-bg-tertiary: #212830;
+  --color-border: #3D444D;
+  --color-text-primary: #F0F6FC;
+  --color-text-secondary: #9198A1;
+  --color-text-link: #58A6FF;
   --color-accent: #238636;
-  --color-accent-hover: #2ea043;
-  --color-danger: #da3633;
-  --color-danger-hover: #f85149;
-  --color-state-open: #3fb950;
-  --color-state-closed: #f85149;
-  --color-state-merged: #a371f7;
-  --color-state-draft: #8b949e;
-  --color-warning: #d29922;
+  --color-accent-hover: #2EA043;
+  --color-danger: #DA3633;
+  --color-danger-hover: #F85149;
+  --color-state-open: #3FB950;
+  --color-state-closed: #F85149;
+  --color-state-merged: #AB7DF8;
+  --color-state-draft: #9198A1;
+  --color-warning: #D29922;
 }
 
 /* Base styles */
@@ -60,7 +62,7 @@
   }
 
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+    font-family: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
     font-size: 13px;
     line-height: 1.5;
     color: var(--color-text-primary);
@@ -120,6 +122,16 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes tooltip-in-up {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes tooltip-in-down {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* State icon SVG filters — light mode */
 @layer utilities {
   .state-icon-open {
@@ -133,6 +145,9 @@
   }
   .state-icon-draft {
     filter: invert(45%) sepia(5%) saturate(500%) hue-rotate(180deg) brightness(90%) contrast(90%);
+  }
+  .state-icon-queue {
+    filter: invert(40%) sepia(90%) saturate(600%) hue-rotate(15deg) brightness(95%) contrast(95%);
   }
 }
 
@@ -148,6 +163,45 @@
 }
 .dark .state-icon-draft {
   filter: invert(60%) sepia(8%) saturate(467%) hue-rotate(176deg) brightness(95%) contrast(89%);
+}
+.dark .state-icon-queue {
+  filter: invert(65%) sepia(60%) saturate(500%) hue-rotate(10deg) brightness(100%) contrast(90%);
+}
+
+/* Tooltip */
+.tooltip-container {
+  z-index: 10000;
+  pointer-events: none;
+  max-width: 260px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--color-text-primary);
+  color: var(--color-bg-primary);
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 500;
+  white-space: pre-line;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.tooltip-arrow {
+  position: absolute;
+  width: 0;
+  height: 0;
+  border: 4px solid transparent;
+}
+
+.tooltip-arrow-up {
+  top: -8px;
+  transform: translateX(-50%);
+  border-bottom-color: var(--color-text-primary);
+}
+
+.tooltip-arrow-down {
+  bottom: -8px;
+  transform: translateX(-50%);
+  border-top-color: var(--color-text-primary);
 }
 
 /* Markdown content inside comment bodies */

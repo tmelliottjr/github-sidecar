@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { useIssueComments } from '../hooks/useIssueComments';
 import { Hovercard } from './Hovercard';
+import { Tooltip } from './Tooltip';
 import type { GitHubComment } from '../../types';
 
 const markdownComponents = {
@@ -60,6 +61,17 @@ function CommentRow({ comment }: { comment: GitHubComment }) {
           <img src={comment.user.avatar_url} alt="" className="w-4 h-4 rounded-full shrink-0" />
           <span className="text-[11px] font-semibold text-text-primary">{comment.user.login}</span>
           <span className="text-[10px] text-text-secondary ml-auto">{timeAgo(comment.created_at)}</span>
+          <Tooltip content="Open on GitHub">
+            <a
+              href={comment.html_url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] text-text-link no-underline hover:underline shrink-0"
+              onClick={(e) => e.stopPropagation()}
+            >
+              ↗
+            </a>
+          </Tooltip>
           {isLong && (
             <span className={`text-xs text-text-secondary transition-transform shrink-0 ${expanded ? 'rotate-90' : ''}`}><ChevronRight size={12} /></span>
           )}

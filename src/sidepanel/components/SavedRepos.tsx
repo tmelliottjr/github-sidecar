@@ -3,6 +3,7 @@ import { Search, X, ArrowLeft, ExternalLink, Trash2, Star, BookmarkPlus, Loader,
 import { useUserSearch } from '../hooks/useUserSearch';
 import { useRepoSearch } from '../hooks/useRepoSearch';
 import { useSavedRepos } from '../hooks/useSavedRepos';
+import { Tooltip } from './Tooltip';
 import type { GitHubUserSearchResult, GitHubRepoSearchResult } from '../../types';
 
 interface SavedReposProps {
@@ -434,33 +435,36 @@ export function SavedRepos({ token, onClose }: SavedReposProps) {
                     )}
                   </div>
                   <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={() => handleOpenRepo(repo.fullName)}
-                      className="bg-transparent border-none text-text-secondary cursor-pointer p-1 rounded hover:text-text-primary hover:bg-bg-tertiary transition-colors"
-                      title="Open in GitHub"
-                    >
-                      <ExternalLink size={12} />
-                    </button>
+                    <Tooltip content="Open in GitHub">
+                      <button
+                        onClick={() => handleOpenRepo(repo.fullName)}
+                        className="bg-transparent border-none text-text-secondary cursor-pointer p-1 rounded hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+                      >
+                        <ExternalLink size={12} />
+                      </button>
+                    </Tooltip>
                     {showConfirmDelete === repo.id ? (
-                      <button
-                        onClick={() => {
-                          removeRepo(repo.id);
-                          setShowConfirmDelete(null);
-                        }}
-                        onMouseLeave={() => setShowConfirmDelete(null)}
-                        className="bg-transparent border-none text-danger cursor-pointer p-1 rounded hover:bg-danger/10 transition-colors"
-                        title="Click again to confirm"
-                      >
-                        <Trash2 size={12} />
-                      </button>
+                      <Tooltip content="Click again to confirm">
+                        <button
+                          onClick={() => {
+                            removeRepo(repo.id);
+                            setShowConfirmDelete(null);
+                          }}
+                          onMouseLeave={() => setShowConfirmDelete(null)}
+                          className="bg-transparent border-none text-danger cursor-pointer p-1 rounded hover:bg-danger/10 transition-colors"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </Tooltip>
                     ) : (
-                      <button
-                        onClick={() => setShowConfirmDelete(repo.id)}
-                        className="bg-transparent border-none text-text-secondary cursor-pointer p-1 rounded hover:text-danger hover:bg-danger/10 transition-colors"
-                        title="Remove"
-                      >
-                        <Trash2 size={12} />
-                      </button>
+                      <Tooltip content="Remove">
+                        <button
+                          onClick={() => setShowConfirmDelete(repo.id)}
+                          className="bg-transparent border-none text-text-secondary cursor-pointer p-1 rounded hover:text-danger hover:bg-danger/10 transition-colors"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </Tooltip>
                     )}
                   </div>
                 </div>
