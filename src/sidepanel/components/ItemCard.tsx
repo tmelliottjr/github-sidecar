@@ -197,16 +197,19 @@ export function ItemCard({ item, token }: ItemCardProps) {
   const isPR = !!item.pull_request;
 
   return (
-    <a
-      href={item.html_url}
-      target="_blank"
-      rel="noreferrer"
+    <div
       className="block py-3 px-3.5 border-b border-border no-underline text-inherit transition-colors relative hover:bg-bg-secondary"
     >
       <div className="flex items-center gap-[5px] text-[11px] text-text-secondary mb-[3px] tracking-[0.01em]">
         <StateIcon item={item} />
-        <span className="font-medium">{repo}</span>
-        <span className="text-text-secondary">#{item.number}</span>
+        <a
+          href={item.html_url}
+          target="_blank"
+          rel="noreferrer"
+          className="font-medium text-text-secondary no-underline rounded px-1 -mx-1 transition-all duration-150 hover:text-text-primary hover:bg-bg-tertiary"
+        >
+          {repo}<span className="opacity-50 mx-px">#</span>{item.number}
+        </a>
         {isPR && token && <CIStatus token={token} owner={owner} repo={repoName} pullNumber={item.number} />}
       </div>
       <div className="text-[13px] font-semibold leading-snug mb-1.5 break-words text-text-primary">{item.title}</div>
@@ -222,6 +225,6 @@ export function ItemCard({ item, token }: ItemCardProps) {
         )}
         {item.labels.length > 0 && <Labels labels={item.labels} />}
       </div>
-    </a>
+    </div>
   );
 }

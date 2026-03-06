@@ -7,6 +7,7 @@ import { useTheme } from './hooks/useTheme';
 import { Settings } from './components/Settings';
 import { ViewList } from './components/ViewList';
 import { ViewEditor } from './components/ViewEditor';
+import { SavedRepos } from './components/SavedRepos';
 import type { SavedView, QueryType, FilterState } from '../types';
 
 const MAX_VISIBLE_TABS = 3;
@@ -105,15 +106,17 @@ function TabBar({
   const viewForContext = contextMenu ? views.find((v) => v.id === contextMenu.id) : null;
   const contextIdx = viewForContext ? views.indexOf(viewForContext) : -1;
 
-  const tabBase = 'bg-transparent border-none text-text-secondary text-xs font-medium py-3 px-3 cursor-pointer border-b-2 border-b-transparent transition-[color,border-color] duration-150 whitespace-nowrap overflow-hidden text-ellipsis max-w-[120px] hover:text-text-primary';
+  const tabBase = 'bg-transparent border-0 border-solid border-b-2 text-text-secondary text-xs font-medium px-3 cursor-pointer transition-[color,border-color] duration-150 whitespace-nowrap overflow-hidden text-ellipsis max-w-[120px] hover:text-text-primary self-stretch flex items-center';
+  const tabActive = 'text-text-primary border-b-[#f78166]';
+  const tabInactive = 'border-b-transparent';
 
   return (
-    <nav className="flex items-center flex-1 min-w-0 relative">
-      <div className="flex items-center min-w-0">
+    <nav className="flex items-stretch flex-1 min-w-0 relative h-full">
+      <div className="flex items-stretch min-w-0">
         {visibleTabs.map((view) => (
           <button
             key={view.id}
-            className={`${tabBase} ${activeId === view.id ? 'text-text-primary border-b-[#f78166]' : ''}`}
+            className={`${tabBase} ${activeId === view.id ? tabActive : tabInactive}`}
             onClick={() => onSelect(view.id)}
             onContextMenu={(e) => handleContextMenu(e, view.id)}
             title={view.name}
@@ -125,7 +128,7 @@ function TabBar({
         {overflowTabs.length > 0 && (
           <div className="relative shrink-0" ref={overflowRef}>
             <button
-              className={`${tabBase} max-w-none text-base tracking-widest ${overflowTabs.some((v) => v.id === activeId) ? 'text-text-primary border-b-[#f78166]' : ''}`}
+              className={`${tabBase} max-w-none text-base tracking-widest ${overflowTabs.some((v) => v.id === activeId) ? tabActive : tabInactive}`}
               onClick={() => setShowOverflow(!showOverflow)}
             >
               <MoreHorizontal size={14} />
@@ -148,26 +151,26 @@ function TabBar({
         )}
 
         <button
-          className={`${tabBase} max-w-none text-base shrink-0 hover:text-text-link`}
+          className={`${tabBase} ${tabInactive} max-w-none text-base shrink-0 hover:text-text-link`}
           onClick={onCreate}
           title="Create new view"
         >
           <Plus size={14} />
         </button>
-
-        <button
-          className={`${tabBase} max-w-none shrink-0 inline-flex items-center gap-[5px] ${activeId === REVIEWS_VIEW.id ? 'text-text-primary border-b-[#f78166]' : ''}`}
-          onClick={onReviewsClick}
-          title="Review requests"
-        >
-          Reviews
-          {reviewCount > 0 && (
-            <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold bg-text-link text-white leading-none">
-              {reviewCount > 99 ? '99+' : reviewCount}
-            </span>
-          )}
-        </button>
       </div>
+
+      <button
+        className={`${tabBase} max-w-none shrink-0 inline-flex items-center gap-[5px] ml-auto ${activeId === REVIEWS_VIEW.id ? tabActive : tabInactive}`}
+        onClick={onReviewsClick}
+        title="Review requests"
+      >
+        Reviews
+        {reviewCount > 0 && (
+          <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold bg-text-link text-white leading-none">
+            {reviewCount > 99 ? '99+' : reviewCount}
+          </span>
+        )}
+      </button>
 
       {contextMenu && viewForContext && (
         <div
@@ -204,6 +207,7 @@ export function App() {
   const { resolvedTheme, toggleTheme } = useTheme();
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSavedRepos, setShowSavedRepos] = useState(false);
   const [editorState, setEditorState] = useState<{ open: boolean; view?: SavedView }>({ open: false });
 
   const activeViewId = (() => {
@@ -214,7 +218,15 @@ export function App() {
 
   const setActiveViewId = (id: string | null) => setSelectedViewId(id);
 
-  if (!isAuthenticated || showSettings) {
+  if (!isAuthenticated || showSettings || showSavedRepos) {
+    if (isAuthenticated && showSavedRepos) {
+      return (
+        <div className="flex flex-col h-screen">
+          <SavedRepos token={token!} onClose={() => setShowSavedRepos(false)} />
+        </div>
+      );
+    }
+    if (!isAuthenticated || showSettings) {
     return (
       <div className="flex flex-col h-screen">
         <header className="flex items-center justify-between px-3 h-12 bg-bg-secondary border-b border-border shrink-0">
@@ -243,6 +255,7 @@ export function App() {
         />
       </div>
     );
+    }
   }
 
   const activeView = activeViewId === REVIEWS_VIEW.id
@@ -300,7 +313,7 @@ export function App() {
           />
         )}
         {!editorState.open && activeView ? (
-          <ViewList token={token!} username={user!.login} view={activeView} />
+          <ViewList key={activeView.id} token={token!} username={user!.login} view={activeView} onAddRepo={() => setShowSavedRepos(true)} />
         ) : !editorState.open && views.length === 0 && activeViewId !== REVIEWS_VIEW.id ? (
           <WelcomeScreen onCreate={() => setEditorState({ open: true })} />
         ) : null}

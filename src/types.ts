@@ -83,3 +83,31 @@ export interface FilterState {
   order: SortOrder;
   rawQuery?: string;
 }
+
+export interface SavedRepository {
+  id: string;
+  owner: string;
+  repo: string;
+  fullName: string;
+  ownerAvatarUrl: string;
+  description: string | null;
+}
+
+export interface GitHubUserSearchResult {
+  login: string;
+  avatar_url: string;
+  type: 'User' | 'Organization';
+}
+
+export interface GitHubRepoSearchResult {
+  full_name: string;
+  name: string;
+  description: string | null;
+  stargazers_count: number;
+  language: string | null;
+  updated_at: string;
+  owner: {
+    login: string;
+    avatar_url: string;
+  };
+}
