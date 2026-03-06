@@ -83,10 +83,12 @@ export function Hovercard({
     };
   }, []);
 
+  const animationClass = placement === 'above' ? 'animate-hovercard-up' : 'animate-hovercard-down';
+
   return (
     <span
       ref={triggerRef}
-      className="hovercard-trigger"
+      className="inline-flex items-center gap-0.5 cursor-default relative"
       onMouseEnter={handleTriggerEnter}
       onMouseLeave={handleTriggerLeave}
     >
@@ -94,7 +96,7 @@ export function Hovercard({
       {showPopover &&
         createPortal(
           <div
-            className={`hovercard-popover hovercard-${placement} ${className}`}
+            className={`flex flex-col bg-bg-secondary border border-border rounded-[10px] shadow-[0_8px_24px_rgba(0,0,0,0.45)] z-[9999] overflow-hidden ${animationClass} ${className}`}
             style={popoverStyle}
             onMouseEnter={cancelHide}
             onMouseLeave={scheduleHide}

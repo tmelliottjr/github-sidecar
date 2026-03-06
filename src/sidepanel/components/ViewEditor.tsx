@@ -1,4 +1,5 @@
 import { useForm } from '@tanstack/react-form';
+import { X, LayoutGrid, Terminal } from 'lucide-react';
 import type { SavedView, QueryType, FilterState, ItemState, SortOption, SortOrder } from '../../types';
 
 interface ViewEditorProps {
@@ -37,6 +38,9 @@ function getTemplateFilters(name: string): Partial<ViewFormValues> {
   return {};
 }
 
+const inputClass = 'w-full bg-bg-primary border border-border rounded-md py-[7px] px-2.5 text-text-primary text-[13px] placeholder:text-text-secondary focus:outline-none focus:border-text-link focus:ring-2 focus:ring-text-link/15';
+const selectClass = 'w-full bg-bg-primary border border-border rounded-md py-[7px] px-2.5 text-text-primary text-xs cursor-pointer focus:outline-none focus:border-text-link';
+
 export function ViewEditor({ existingView, onSave, onCancel, username }: ViewEditorProps) {
   const isEditing = !!existingView;
 
@@ -72,43 +76,53 @@ export function ViewEditor({ existingView, onSave, onCancel, username }: ViewEdi
   };
 
   return (
-    <div className="ve-overlay">
+    <div className="p-4 animate-slide-in">
       <form
-        className="ve-panel"
+        className="bg-bg-secondary border border-border rounded-[10px] overflow-hidden"
         onSubmit={(e) => { e.preventDefault(); form.handleSubmit(); }}
       >
-        <div className="ve-header">
-          <h3 className="ve-title">{isEditing ? 'Edit View' : 'Create a View'}</h3>
-          <button type="button" className="ve-close" onClick={onCancel}>×</button>
+        {/* Header */}
+        <div className="flex items-center justify-between py-3 px-4 border-b border-border">
+          <h3 className="text-sm font-semibold text-text-primary">{isEditing ? 'Edit View' : 'Create a View'}</h3>
+          <button
+            type="button"
+            className="bg-transparent border-none text-text-secondary text-lg cursor-pointer px-1 rounded leading-none transition-colors hover:text-text-primary hover:bg-bg-tertiary"
+            onClick={onCancel}
+          >
+            <X size={16} />
+          </button>
         </div>
 
+        {/* Templates */}
         {!isEditing && (
-          <div className="ve-templates">
-            <p className="ve-section-label">Quick start</p>
-            <div className="ve-template-grid">
+          <div className="py-3 px-4 border-b border-border">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary mb-2">Quick start</p>
+            <div className="grid grid-cols-2 gap-1.5">
               {TEMPLATES.map((t) => (
                 <button
                   key={t.name}
                   type="button"
-                  className="ve-template-card"
+                  className="flex items-center gap-1.5 bg-bg-tertiary border border-border rounded-lg py-2 px-2.5 cursor-pointer transition-[background,border-color] text-left hover:bg-border hover:border-text-secondary"
                   onClick={() => applyTemplate(t)}
                 >
-                  <span className="ve-template-icon">{t.icon}</span>
-                  <span className="ve-template-name">{t.name}</span>
+                  <span className="text-sm shrink-0">{t.icon}</span>
+                  <span className="text-[11px] font-medium text-text-primary">{t.name}</span>
                 </button>
               ))}
             </div>
           </div>
         )}
 
-        <div className="ve-form-body">
-          <div className="ve-section">
-            <label className="ve-label" htmlFor="ve-name">Name</label>
+        {/* Form Body */}
+        <div className="py-3 px-4">
+          {/* Name */}
+          <div className="mb-3.5">
+            <label className="text-[11px] font-semibold text-text-secondary mb-1.5 block" htmlFor="ve-name">Name</label>
             <form.Field name="name">
               {(field) => (
                 <input
                   id="ve-name"
-                  className="ve-input"
+                  className={inputClass}
                   placeholder="e.g. My Open Issues"
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
@@ -119,20 +133,25 @@ export function ViewEditor({ existingView, onSave, onCancel, username }: ViewEdi
             </form.Field>
           </div>
 
-          <div className="ve-section">
-            <p className="ve-label">Query type</p>
+          {/* Query Type */}
+          <div className="mb-3.5">
+            <p className="text-[11px] font-semibold text-text-secondary mb-1.5 block">Query type</p>
             <form.Field name="queryType">
               {(field) => (
-                <div className="ve-query-types">
+                <div className="flex flex-col gap-1">
                   {(Object.keys(QUERY_TYPE_LABELS) as QueryType[]).map((qt) => (
                     <button
                       key={qt}
                       type="button"
-                      className={`ve-qt-btn ${field.state.value === qt ? 've-qt-active' : ''}`}
+                      className={`flex flex-col items-start gap-px bg-bg-tertiary border rounded-lg py-2 px-3 cursor-pointer transition-[background,border-color] text-left hover:bg-border ${
+                        field.state.value === qt
+                          ? 'bg-text-link/10 border-text-link'
+                          : 'border-border'
+                      }`}
                       onClick={() => field.handleChange(qt)}
                     >
-                      <span className="ve-qt-label">{QUERY_TYPE_LABELS[qt].label}</span>
-                      <span className="ve-qt-desc">{QUERY_TYPE_LABELS[qt].description}</span>
+                      <span className="text-xs font-semibold text-text-primary">{QUERY_TYPE_LABELS[qt].label}</span>
+                      <span className="text-[10px] text-text-secondary">{QUERY_TYPE_LABELS[qt].description}</span>
                     </button>
                   ))}
                 </div>
@@ -140,17 +159,22 @@ export function ViewEditor({ existingView, onSave, onCancel, username }: ViewEdi
             </form.Field>
           </div>
 
-          <div className="ve-section">
-            <div className="ve-section-header">
-              <p className="ve-label">Filters</p>
+          {/* Filters */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] font-semibold text-text-secondary">Filters</p>
               <form.Field name="useRawQuery">
                 {(field) => (
                   <button
                     type="button"
-                    className={`ve-raw-toggle ${field.state.value ? 've-raw-active' : ''}`}
+                    className={`bg-bg-tertiary border rounded-md text-text-secondary py-0.5 px-2 text-[10px] cursor-pointer transition-[background,color] hover:bg-border hover:text-text-primary ${
+                      field.state.value
+                        ? 'bg-text-link/15 border-text-link text-text-link'
+                        : 'border-border'
+                    }`}
                     onClick={() => field.handleChange(!field.state.value)}
                   >
-                    {field.state.value ? '⊞ Structured' : '⌨ Raw query'}
+                    {field.state.value ? <><LayoutGrid size={10} className="inline" /> Structured</> : <><Terminal size={10} className="inline" /> Raw query</>}
                   </button>
                 )}
               </form.Field>
@@ -160,29 +184,29 @@ export function ViewEditor({ existingView, onSave, onCancel, username }: ViewEdi
               {(rawField) => rawField.state.value ? (
                 <form.Field name="rawQuery">
                   {(field) => (
-                    <div className="ve-raw-section">
+                    <div className="flex flex-col gap-1.5">
                       <input
-                        className="ve-input ve-input-mono"
+                        className={`${inputClass} font-mono text-xs`}
                         placeholder={`e.g. repo:org/repo label:bug`}
                         value={field.state.value}
                         onChange={(e) => field.handleChange(e.target.value)}
                       />
-                      <p className="ve-hint">
+                      <p className="text-[10px] text-text-secondary leading-snug">
                         This query will be combined with the query type above.
-                        For {username}, this will search: <code>is:issue/pr {'{your query}'}</code>
+                        For {username}, this will search: <code className="bg-bg-tertiary px-1 rounded text-[10px]">is:issue/pr {'{your query}'}</code>
                       </p>
                     </div>
                   )}
                 </form.Field>
               ) : (
-                <div className="ve-structured-filters">
-                  <div className="ve-filter-row">
-                    <div className="ve-filter-field">
-                      <label className="ve-filter-label">State</label>
+                <div className="flex flex-col gap-2">
+                  <div className="flex gap-2">
+                    <div className="flex flex-col gap-1 min-w-0">
+                      <label className="text-[10px] text-text-secondary">State</label>
                       <form.Field name="state">
                         {(field) => (
                           <select
-                            className="ve-select"
+                            className={selectClass}
                             value={field.state.value}
                             onChange={(e) => field.handleChange(e.target.value as ItemState)}
                           >
@@ -193,12 +217,12 @@ export function ViewEditor({ existingView, onSave, onCancel, username }: ViewEdi
                         )}
                       </form.Field>
                     </div>
-                    <div className="ve-filter-field ve-filter-field-grow">
-                      <label className="ve-filter-label">Repository</label>
+                    <div className="flex flex-col gap-1 min-w-0 flex-1">
+                      <label className="text-[10px] text-text-secondary">Repository</label>
                       <form.Field name="repo">
                         {(field) => (
                           <input
-                            className="ve-input"
+                            className={inputClass}
                             placeholder="owner/repo (optional)"
                             value={field.state.value}
                             onChange={(e) => field.handleChange(e.target.value)}
@@ -207,13 +231,13 @@ export function ViewEditor({ existingView, onSave, onCancel, username }: ViewEdi
                       </form.Field>
                     </div>
                   </div>
-                  <div className="ve-filter-row">
-                    <div className="ve-filter-field">
-                      <label className="ve-filter-label">Sort by</label>
+                  <div className="flex gap-2">
+                    <div className="flex flex-col gap-1 min-w-0">
+                      <label className="text-[10px] text-text-secondary">Sort by</label>
                       <form.Field name="sort">
                         {(field) => (
                           <select
-                            className="ve-select"
+                            className={selectClass}
                             value={field.state.value}
                             onChange={(e) => field.handleChange(e.target.value as SortOption)}
                           >
@@ -224,12 +248,12 @@ export function ViewEditor({ existingView, onSave, onCancel, username }: ViewEdi
                         )}
                       </form.Field>
                     </div>
-                    <div className="ve-filter-field">
-                      <label className="ve-filter-label">Order</label>
+                    <div className="flex flex-col gap-1 min-w-0">
+                      <label className="text-[10px] text-text-secondary">Order</label>
                       <form.Field name="order">
                         {(field) => (
                           <select
-                            className="ve-select"
+                            className={selectClass}
                             value={field.state.value}
                             onChange={(e) => field.handleChange(e.target.value as SortOrder)}
                           >
@@ -246,11 +270,22 @@ export function ViewEditor({ existingView, onSave, onCancel, username }: ViewEdi
           </div>
         </div>
 
-        <div className="ve-footer">
-          <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
+        {/* Footer */}
+        <div className="flex justify-end gap-2 py-3 px-4 border-t border-border">
+          <button
+            type="button"
+            className="bg-bg-tertiary text-text-primary border border-border rounded-md px-4 py-1.5 text-[13px] font-medium cursor-pointer transition-colors hover:bg-border"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
           <form.Subscribe selector={(s) => s.values.name}>
             {(name) => (
-              <button type="submit" className="btn btn-primary" disabled={!name.trim()}>
+              <button
+                type="submit"
+                className="border-none rounded-md px-4 py-1.5 text-[13px] font-medium cursor-pointer bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={!name.trim()}
+              >
                 {isEditing ? 'Save Changes' : 'Create View'}
               </button>
             )}

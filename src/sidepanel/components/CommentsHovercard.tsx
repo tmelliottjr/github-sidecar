@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { MessageSquare, ChevronRight } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { useIssueComments } from '../hooks/useIssueComments';
 import { Hovercard } from './Hovercard';
@@ -31,9 +32,9 @@ function CommentRow({ comment }: { comment: GitHubComment }) {
   const previewText = isLong ? comment.body.slice(0, 140) + '…' : comment.body;
 
   return (
-    <div className="comment-row">
+    <div className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-tertiary">
       <div
-        className="comment-row-clickable"
+        className="py-2 px-3 cursor-pointer"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -41,15 +42,15 @@ function CommentRow({ comment }: { comment: GitHubComment }) {
         }}
         role={isLong ? 'button' : undefined}
       >
-        <div className="comment-row-header">
-          <img src={comment.user.avatar_url} alt="" className="comment-avatar" />
-          <span className="comment-author">{comment.user.login}</span>
-          <span className="comment-time">{timeAgo(comment.created_at)}</span>
+        <div className="flex items-center gap-1.5 mb-[3px]">
+          <img src={comment.user.avatar_url} alt="" className="w-4 h-4 rounded-full shrink-0" />
+          <span className="text-[11px] font-semibold text-text-primary">{comment.user.login}</span>
+          <span className="text-[10px] text-text-secondary ml-auto">{timeAgo(comment.created_at)}</span>
           {isLong && (
-            <span className={`comment-expand-icon ${expanded ? 'comment-expand-open' : ''}`}>›</span>
+            <span className={`text-xs text-text-secondary transition-transform shrink-0 ${expanded ? 'rotate-90' : ''}`}><ChevronRight size={12} /></span>
           )}
         </div>
-        <div className={`comment-body ${expanded ? 'comment-body-expanded' : 'comment-body-collapsed'}`}>
+        <div className={`comment-markdown text-[11px] text-text-secondary leading-snug break-words ${expanded ? '' : 'max-h-10 overflow-hidden'}`}>
           <Markdown>{expanded ? comment.body : previewText}</Markdown>
         </div>
       </div>
@@ -58,7 +59,7 @@ function CommentRow({ comment }: { comment: GitHubComment }) {
           href={comment.html_url}
           target="_blank"
           rel="noreferrer"
-          className="comment-open-link"
+          className="block px-3 pt-1 pb-2 text-[10px] text-text-link no-underline hover:underline"
           onClick={(e) => e.stopPropagation()}
         >
           Open on GitHub ↗
@@ -70,14 +71,14 @@ function CommentRow({ comment }: { comment: GitHubComment }) {
 
 function LoadingSkeleton() {
   return (
-    <div className="comments-loading">
+    <div className="py-1">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="comment-skeleton">
-          <div className="skeleton-header">
-            <div className="skeleton-avatar" />
-            <div className="skeleton-text" />
+        <div key={i} className="py-2 px-3">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <div className="w-4 h-4 rounded-full bg-bg-tertiary animate-skeleton" />
+            <div className="w-20 h-2.5 rounded bg-bg-tertiary animate-skeleton" />
           </div>
-          <div className="skeleton-body" />
+          <div className="w-full h-2.5 rounded bg-bg-tertiary animate-skeleton" />
         </div>
       ))}
     </div>
@@ -87,9 +88,8 @@ function LoadingSkeleton() {
 export function CommentsHovercard({ token, owner, repo, issueNumber, commentCount }: CommentsHovercardProps) {
   return (
     <Hovercard
-      trigger={<>💬 {commentCount}</>}
+      trigger={<><MessageSquare size={11} /> {commentCount}</>}
       popoverWidth={320}
-      className="comments-popover"
     >
       {({ hovered }) => (
         <CommentsContent token={token} owner={owner} repo={repo} issueNumber={issueNumber} enabled={hovered} />
@@ -105,15 +105,17 @@ function CommentsContent({ token, owner, repo, issueNumber, enabled }: {
 
   return (
     <>
-      <div className="comments-popover-header">Latest comments</div>
+      <div className="py-2 px-3 text-[11px] font-semibold text-text-secondary border-b border-border uppercase tracking-wide">
+        Latest comments
+      </div>
       {isLoading ? (
         <LoadingSkeleton />
       ) : comments && comments.length > 0 ? (
-        <div className="comments-list">
+        <div className="max-h-[300px] overflow-y-auto">
           {comments.map((c) => <CommentRow key={c.id} comment={c} />)}
         </div>
       ) : (
-        <div className="comments-empty">No comments</div>
+        <div className="py-4 px-3 text-center text-text-secondary text-[11px]">No comments</div>
       )}
     </>
   );
