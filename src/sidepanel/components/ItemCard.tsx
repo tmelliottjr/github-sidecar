@@ -154,54 +154,62 @@ function parseRepo(repoUrl: string): { owner: string; repo: string } {
   return match ? { owner: match[1], repo: match[2] } : { owner: '', repo: '' };
 }
 
-function CIStatus({ summary, isLoading, isError }: { summary?: PRCheckSummary; isLoading: boolean; isError: boolean }) {
+function CIStatusBadge({ summary, isLoading, isError }: { summary?: PRCheckSummary; isLoading: boolean; isError: boolean }) {
   if (isError) {
     return (
-      <span className="inline-flex items-center gap-1 ml-auto">
-        <span className="text-[11px] font-bold w-3 text-center text-text-secondary opacity-50" title="Unable to load checks">–</span>
-        <span className="inline-block w-3" />
+      <span className="inline-flex items-center gap-1 text-[10px] text-text-secondary opacity-60" title="Unable to load checks">
+        <span>–</span>
+        <span>Checks</span>
       </span>
     );
   }
   if (isLoading || !summary) {
     return (
-      <span className="inline-flex items-center gap-1 ml-auto">
-        <span className="text-[11px] font-bold w-3 text-center text-text-secondary opacity-50 animate-pulse-opacity" title="Loading checks…"><Loader size={11} className="animate-spin" /></span>
-        <span className="inline-block w-3" />
+      <span className="inline-flex items-center gap-1 text-[10px] text-text-secondary" title="Loading checks…">
+        <Loader size={10} className="animate-spin" />
       </span>
     );
   }
 
   const ciIcons: Record<string, React.ReactNode> = {
-    success: <Check size={11} />,
-    failure: <X size={11} />,
+    success: <Check size={11} strokeWidth={2.5} />,
+    failure: <X size={11} strokeWidth={2.5} />,
     pending: <Circle size={11} />,
   };
 
   const statusColors: Record<string, string> = {
     success: 'text-state-open',
     failure: 'text-state-closed',
-    pending: 'text-warning animate-pulse-opacity',
+    pending: 'text-warning',
+  };
+
+  const statusLabel: Record<string, string> = {
+    success: `${summary.total}/${summary.total}`,
+    failure: `${summary.failure} failed`,
+    pending: `${summary.pending} pending`,
   };
 
   const hasConflict = summary.mergeable === false;
 
   return (
-    <span className="inline-flex items-center gap-1 ml-auto">
-      {summary.status !== 'neutral' ? (
+    <span className="inline-flex items-center gap-1.5 text-[10px] font-medium">
+      {summary.status !== 'neutral' && (
         <span
-          className={`text-[11px] font-bold w-3 text-center ${statusColors[summary.status] ?? ''}`}
+          className={`inline-flex items-center gap-0.5 ${statusColors[summary.status] ?? ''} ${summary.status === 'pending' ? 'animate-pulse-opacity' : ''}`}
           title={`${summary.success} passed, ${summary.failure} failed, ${summary.pending} pending`}
         >
           {ciIcons[summary.status]}
+          <span>{statusLabel[summary.status]}</span>
         </span>
-      ) : (
-        <span className="inline-block w-3" />
       )}
-      {hasConflict ? (
-        <span className="text-[11px] font-bold w-3 text-center text-warning" title="Has merge conflicts"><AlertTriangle size={11} /></span>
-      ) : (
-        <span className="inline-block w-3" />
+      {hasConflict && (
+        <>
+          {summary.status !== 'neutral' && <span className="text-text-secondary opacity-40">·</span>}
+          <span className="inline-flex items-center gap-0.5 text-warning" title="Has merge conflicts">
+            <AlertTriangle size={10} />
+            <span>Conflicts</span>
+          </span>
+        </>
       )}
     </span>
   );
@@ -209,12 +217,11 @@ function CIStatus({ summary, isLoading, isError }: { summary?: PRCheckSummary; i
 
 function DiffStats({ additions, deletions, changedFiles }: { additions: number; deletions: number; changedFiles: number }) {
   return (
-    <span
-      className="inline-flex items-center gap-1 text-[10px] font-medium"
-      title={`${changedFiles} file${changedFiles === 1 ? '' : 's'} changed`}
-    >
+    <span className="inline-flex items-center gap-1 text-[10px] font-medium">
       <span className="text-state-open">+{additions}</span>
       <span className="text-state-closed">−{deletions}</span>
+      <span className="text-text-secondary opacity-40">·</span>
+      <span className="text-text-secondary">{changedFiles} {changedFiles === 1 ? 'file' : 'files'}</span>
     </span>
   );
 }
@@ -233,10 +240,11 @@ function CopyBranchButton({ branchName }: { branchName: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="inline-flex items-center gap-0.5 text-text-secondary transition-colors hover:text-text-primary bg-transparent border-none cursor-pointer p-0"
-      title={copied ? 'Copied!' : branchName}
+      className="inline-flex items-center gap-1 text-text-secondary transition-colors hover:text-text-primary bg-transparent border-none cursor-pointer p-0 min-w-0"
+      title={copied ? 'Copied!' : `Copy branch: ${branchName}`}
     >
-      {copied ? <Check size={11} className="text-state-open" /> : <GitBranch size={11} />}
+      {copied ? <Check size={11} className="text-state-open shrink-0" /> : <GitBranch size={11} className="shrink-0" />}
+      <span className="text-[10px] font-mono truncate max-w-[120px]">{branchName}</span>
     </button>
   );
 }
@@ -267,6 +275,8 @@ export function ItemCard({ item, token, isUnread, isPinned, onRead, onTogglePin 
     onRead?.(item);
   };
 
+  const showPRDetails = isPR && !!token;
+
   return (
     <div
       className={`block py-3 px-3.5 border-b border-border no-underline text-inherit transition-colors relative group hover:bg-bg-secondary ${isPinned ? 'border-l-2 border-l-text-link' : ''}`}
@@ -276,16 +286,8 @@ export function ItemCard({ item, token, isUnread, isPinned, onRead, onTogglePin 
         <span className="absolute left-1 top-4 w-[7px] h-[7px] rounded-full bg-text-link" />
       )}
 
-      {/* Pin toggle */}
-      <button
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin?.(item.html_url); }}
-        className={`absolute top-2 right-2 bg-transparent border-none cursor-pointer p-1 rounded transition-all hover:bg-bg-tertiary ${isPinned ? 'opacity-100 text-text-link' : 'opacity-0 group-hover:opacity-100 text-text-secondary hover:text-text-primary'}`}
-        title={isPinned ? 'Unpin' : 'Pin to top'}
-      >
-        <Pin size={12} />
-      </button>
-
-      <div className="flex items-center gap-[5px] text-[11px] text-text-secondary mb-[3px] tracking-[0.01em]">
+      {/* Row 1: Header — state icon, repo#number, time, pin */}
+      <div className="flex items-center gap-[5px] text-[11px] text-text-secondary tracking-[0.01em]">
         <StateIcon item={item} />
         {item.body?.trim() ? (
           <Hovercard
@@ -321,13 +323,22 @@ export function ItemCard({ item, token, isUnread, isPinned, onRead, onTogglePin 
             {repo}<span className="opacity-50 mx-px">#</span>{item.number}
           </a>
         )}
-        {isPR && token && <CIStatus summary={prSummary} isLoading={prLoading} isError={prError} />}
-        {isPR && prSummary && <DiffStats additions={prSummary.additions} deletions={prSummary.deletions} changedFiles={prSummary.changedFiles} />}
+        <span className="ml-auto text-[10px]">{timeAgo(item.updated_at)}</span>
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin?.(item.html_url); }}
+          className={`bg-transparent border-none cursor-pointer p-1 rounded transition-all hover:bg-bg-tertiary ${isPinned ? 'opacity-100 text-text-link' : 'opacity-0 group-hover:opacity-100 text-text-secondary hover:text-text-primary'}`}
+          title={isPinned ? 'Unpin' : 'Pin to top'}
+        >
+          <Pin size={12} />
+        </button>
       </div>
-      <div className="text-[13px] font-semibold leading-snug mb-1.5 break-words text-text-primary">{item.title}</div>
+
+      {/* Row 2: Title */}
+      <div className="text-[13px] font-semibold leading-snug mt-1 mb-1.5 break-words text-text-primary">{item.title}</div>
+
+      {/* Row 3: Meta — avatar, comments, labels */}
       <div className="flex items-center gap-2 flex-wrap text-[11px] text-text-secondary">
-        <img src={item.user.avatar_url} alt={item.user.login} className="w-3.5 h-3.5 rounded-full shrink-0" title={item.user.login} />
-        <span>{timeAgo(item.updated_at)}</span>
+        <img src={item.user.avatar_url} alt={item.user.login} className="w-3.5 h-3.5 rounded-full shrink-0 shadow-[0_0_0_1px_rgba(0,0,0,0.1)]" title={item.user.login} />
         {item.comments > 0 && (
           token ? (
             <CommentsHovercard token={token} owner={owner} repo={repoName} issueNumber={item.number} commentCount={item.comments} />
@@ -335,9 +346,23 @@ export function ItemCard({ item, token, isUnread, isPinned, onRead, onTogglePin 
             <span className="flex items-center gap-0.5"><MessageSquare size={11} /> {item.comments}</span>
           )
         )}
-        {isPR && prSummary && <CopyBranchButton branchName={prSummary.branchName} />}
         {item.labels.length > 0 && <Labels labels={item.labels} />}
       </div>
+
+      {/* Row 4: PR details bar (PR-only) */}
+      {showPRDetails && (
+        <div className="flex items-center gap-3 mt-2 text-[10px]">
+          <CIStatusBadge summary={prSummary} isLoading={prLoading} isError={prError} />
+          {prSummary && (
+            <>
+              <span className="text-border">|</span>
+              <DiffStats additions={prSummary.additions} deletions={prSummary.deletions} changedFiles={prSummary.changedFiles} />
+              <span className="ml-auto" />
+              <CopyBranchButton branchName={prSummary.branchName} />
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
