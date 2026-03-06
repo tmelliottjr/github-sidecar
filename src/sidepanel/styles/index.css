@@ -206,11 +206,50 @@
     max-width: 100%;
     border-radius: 4px;
   }
-  .comment-markdown h1,
-  .comment-markdown h2,
-  .comment-markdown h3,
+  .comment-markdown del {
+    opacity: 0.65;
+  }
+  .comment-markdown table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 4px 0;
+    font-size: 10px;
+  }
+  .comment-markdown th,
+  .comment-markdown td {
+    border: 1px solid var(--color-border);
+    padding: 4px 8px;
+    text-align: left;
+  }
+  .comment-markdown th {
+    background: var(--color-bg-tertiary);
+    font-weight: 600;
+  }
+  .comment-markdown input[type="checkbox"] {
+    margin-right: 4px;
+  }
+  .comment-markdown h1 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 8px 0 4px;
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: 4px;
+  }
+  .comment-markdown h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 8px 0 4px;
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: 3px;
+  }
+  .comment-markdown h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 6px 0 3px;
+  }
   .comment-markdown h4 {
     font-size: 12px;
+    font-weight: 600;
     margin: 6px 0 3px;
   }
 }

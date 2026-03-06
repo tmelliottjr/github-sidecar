@@ -1,6 +1,8 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useMemo } from 'react';
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { useGitHubSearch } from '../hooks/useGitHubSearch';
+import { useReadState } from '../hooks/useReadState';
+import { usePinnedItems } from '../hooks/usePinnedItems';
 import { ItemCard } from './ItemCard';
 import { RepoQuickNav } from './RepoQuickNav';
 import type { SavedView } from '../../types';
@@ -56,12 +58,29 @@ export function ViewList({ token, username, view, onAddRepo }: ViewListProps) {
   );
   const parentRef = useRef<HTMLDivElement>(null);
 
+  const { isUnread, markAsRead, trackItems } = useReadState();
+  const { pinned, isPinned, togglePin } = usePinnedItems();
+
+  // Auto-track newly seen items for unread detection
+  useEffect(() => {
+    if (items.length > 0) trackItems(items);
+  }, [items, trackItems]);
+
+  // Reorder: pinned items first
+  const sortedItems = useMemo(() => {
+    const pinnedSet = new Set(pinned);
+    const pinnedItems = items.filter((item) => pinnedSet.has(item.html_url));
+    const unpinnedItems = items.filter((item) => !pinnedSet.has(item.html_url));
+    return [...pinnedItems, ...unpinnedItems];
+  }, [items, pinned]);
+
   const saved = scrollState.get(view.id);
 
   const virtualizer = useVirtualizer({
-    count: items.length,
+    count: sortedItems.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ESTIMATED_ITEM_HEIGHT,
+    getItemKey: (index) => sortedItems[index]?.id ?? index,
     overscan: 5,
     initialOffset: saved?.offset ?? 0,
     initialMeasurementsCache: saved?.measurements ?? [],
@@ -105,7 +124,7 @@ export function ViewList({ token, username, view, onAddRepo }: ViewListProps) {
       <div className="flex-1 overflow-y-auto" ref={parentRef}>
         <div style={{ height: virtualizer.getTotalSize(), width: '100%', position: 'relative' }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {
-            const item = items[virtualRow.index];
+            const item = sortedItems[virtualRow.index];
             return (
               <div
                 key={item.id}
@@ -119,7 +138,14 @@ export function ViewList({ token, username, view, onAddRepo }: ViewListProps) {
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                <ItemCard item={item} token={token} />
+                <ItemCard
+                  item={item}
+                  token={token}
+                  isUnread={isUnread(item)}
+                  isPinned={isPinned(item.html_url)}
+                  onRead={markAsRead}
+                  onTogglePin={togglePin}
+                />
               </div>
             );
           })}
@@ -129,7 +155,7 @@ export function ViewList({ token, username, view, onAddRepo }: ViewListProps) {
             <div className="w-6 h-6 border-2 border-border border-t-text-link rounded-full animate-spin" />
           </div>
         )}
-        {!loading && items.length === 0 && !error && (
+        {!loading && sortedItems.length === 0 && !error && (
           <div className="flex flex-col items-center justify-center py-10 px-5 gap-3 text-text-secondary">
             <p>No results</p>
             <button

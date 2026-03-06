@@ -1,9 +1,17 @@
 import { useState } from 'react';
 import { MessageSquare, ChevronRight } from 'lucide-react';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { useIssueComments } from '../hooks/useIssueComments';
 import { Hovercard } from './Hovercard';
 import type { GitHubComment } from '../../types';
+
+const markdownComponents = {
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a href={href} target="_blank" rel="noreferrer">{children}</a>
+  ),
+};
 
 interface CommentsHovercardProps {
   token: string;
@@ -26,16 +34,22 @@ function timeAgo(dateStr: string): string {
   return `${months}mo ago`;
 }
 
+function stripHtmlComments(text: string): string {
+  return text.replace(/<!--[\s\S]*?-->/g, '');
+}
+
 function CommentRow({ comment }: { comment: GitHubComment }) {
   const [expanded, setExpanded] = useState(false);
-  const isLong = comment.body.length > 140;
-  const previewText = isLong ? comment.body.slice(0, 140) + '…' : comment.body;
+  const cleaned = stripHtmlComments(comment.body);
+  const isLong = cleaned.length > 140;
+  const previewText = isLong ? cleaned.slice(0, 140) + '…' : cleaned;
 
   return (
     <div className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-tertiary">
       <div
         className="py-2 px-3 cursor-pointer"
         onClick={(e) => {
+          if ((e.target as HTMLElement).closest('a')) return;
           e.preventDefault();
           e.stopPropagation();
           if (isLong) setExpanded(!expanded);
@@ -51,7 +65,7 @@ function CommentRow({ comment }: { comment: GitHubComment }) {
           )}
         </div>
         <div className={`comment-markdown text-[11px] text-text-secondary leading-snug break-words ${expanded ? '' : 'max-h-10 overflow-hidden'}`}>
-          <Markdown>{expanded ? comment.body : previewText}</Markdown>
+          <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{expanded ? cleaned : previewText}</Markdown>
         </div>
       </div>
       {expanded && (
@@ -89,7 +103,8 @@ export function CommentsHovercard({ token, owner, repo, issueNumber, commentCoun
   return (
     <Hovercard
       trigger={<><MessageSquare size={11} /> {commentCount}</>}
-      popoverWidth={320}
+      popoverWidth={480}
+      showClose
     >
       {({ hovered }) => (
         <CommentsContent token={token} owner={owner} repo={repo} issueNumber={issueNumber} enabled={hovered} />

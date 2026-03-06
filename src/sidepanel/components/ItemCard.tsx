@@ -1,5 +1,9 @@
-import { Check, X, Circle, AlertTriangle, MessageSquare, Loader } from 'lucide-react';
-import type { GitHubIssueItem, GitHubLabel } from '../../types';
+import { useState } from 'react';
+import { Check, X, Circle, AlertTriangle, MessageSquare, Loader, Pin, GitBranch } from 'lucide-react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import type { GitHubIssueItem, GitHubLabel, PRCheckSummary } from '../../types';
 import { usePRCheckStatus } from '../hooks/usePRCheckStatus';
 import { CommentsHovercard } from './CommentsHovercard';
 import { Hovercard } from './Hovercard';
@@ -7,9 +11,23 @@ import { Hovercard } from './Hovercard';
 interface ItemCardProps {
   item: GitHubIssueItem;
   token?: string;
+  isUnread?: boolean;
+  isPinned?: boolean;
+  onRead?: (item: GitHubIssueItem) => void;
+  onTogglePin?: (url: string) => void;
 }
 
 const MAX_VISIBLE_LABELS = 2;
+
+function stripHtmlComments(text: string): string {
+  return text.replace(/<!--[\s\S]*?-->/g, '');
+}
+
+const markdownComponents = {
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a href={href} target="_blank" rel="noreferrer">{children}</a>
+  ),
+};
 
 function repoFromUrl(url: string): string {
   const match = url.match(/repos\/(.+)/);
@@ -136,9 +154,7 @@ function parseRepo(repoUrl: string): { owner: string; repo: string } {
   return match ? { owner: match[1], repo: match[2] } : { owner: '', repo: '' };
 }
 
-function CIStatus({ token, owner, repo, pullNumber }: { token: string; owner: string; repo: string; pullNumber: number }) {
-  const { data: summary, isLoading, isError } = usePRCheckStatus(token, owner, repo, pullNumber, !!owner && !!repo);
-
+function CIStatus({ summary, isLoading, isError }: { summary?: PRCheckSummary; isLoading: boolean; isError: boolean }) {
   if (isError) {
     return (
       <span className="inline-flex items-center gap-1 ml-auto">
@@ -191,26 +207,122 @@ function CIStatus({ token, owner, repo, pullNumber }: { token: string; owner: st
   );
 }
 
-export function ItemCard({ item, token }: ItemCardProps) {
+function DiffStats({ additions, deletions, changedFiles }: { additions: number; deletions: number; changedFiles: number }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[10px] font-medium"
+      title={`${changedFiles} file${changedFiles === 1 ? '' : 's'} changed`}
+    >
+      <span className="text-state-open">+{additions}</span>
+      <span className="text-state-closed">−{deletions}</span>
+    </span>
+  );
+}
+
+function CopyBranchButton({ branchName }: { branchName: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await navigator.clipboard.writeText(branchName);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center gap-0.5 text-text-secondary transition-colors hover:text-text-primary bg-transparent border-none cursor-pointer p-0"
+      title={copied ? 'Copied!' : branchName}
+    >
+      {copied ? <Check size={11} className="text-state-open" /> : <GitBranch size={11} />}
+    </button>
+  );
+}
+
+function BodyContent({ body }: { body: string }) {
+  return (
+    <>
+      <div className="py-2 px-3 text-[11px] font-semibold text-text-secondary border-b border-border uppercase tracking-wide">
+        Description
+      </div>
+      <div className="p-3 max-h-[300px] overflow-y-auto comment-markdown text-[12px] text-text-secondary leading-relaxed">
+        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{stripHtmlComments(body)}</Markdown>
+      </div>
+    </>
+  );
+}
+
+export function ItemCard({ item, token, isUnread, isPinned, onRead, onTogglePin }: ItemCardProps) {
   const repo = repoFromUrl(item.repository_url);
   const { owner, repo: repoName } = parseRepo(item.repository_url);
   const isPR = !!item.pull_request;
 
+  const { data: prSummary, isLoading: prLoading, isError: prError } = usePRCheckStatus(
+    token ?? '', owner, repoName, item.number, isPR && !!token,
+  );
+
+  const handleLinkClick = () => {
+    onRead?.(item);
+  };
+
   return (
     <div
-      className="block py-3 px-3.5 border-b border-border no-underline text-inherit transition-colors relative hover:bg-bg-secondary"
+      className={`block py-3 px-3.5 border-b border-border no-underline text-inherit transition-colors relative group hover:bg-bg-secondary ${isPinned ? 'border-l-2 border-l-text-link' : ''}`}
     >
+      {/* Unread indicator */}
+      {isUnread && (
+        <span className="absolute left-1 top-4 w-[7px] h-[7px] rounded-full bg-text-link" />
+      )}
+
+      {/* Pin toggle */}
+      <button
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin?.(item.html_url); }}
+        className={`absolute top-2 right-2 bg-transparent border-none cursor-pointer p-1 rounded transition-all hover:bg-bg-tertiary ${isPinned ? 'opacity-100 text-text-link' : 'opacity-0 group-hover:opacity-100 text-text-secondary hover:text-text-primary'}`}
+        title={isPinned ? 'Unpin' : 'Pin to top'}
+      >
+        <Pin size={12} />
+      </button>
+
       <div className="flex items-center gap-[5px] text-[11px] text-text-secondary mb-[3px] tracking-[0.01em]">
         <StateIcon item={item} />
-        <a
-          href={item.html_url}
-          target="_blank"
-          rel="noreferrer"
-          className="font-medium text-text-secondary no-underline rounded px-1 -mx-1 transition-all duration-150 hover:text-text-primary hover:bg-bg-tertiary"
-        >
-          {repo}<span className="opacity-50 mx-px">#</span>{item.number}
-        </a>
-        {isPR && token && <CIStatus token={token} owner={owner} repo={repoName} pullNumber={item.number} />}
+        {item.body?.trim() ? (
+          <Hovercard
+            trigger={
+              <a
+                href={item.html_url}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-text-secondary no-underline rounded px-1 -mx-1 transition-all duration-150 cursor-pointer hover:text-text-primary hover:bg-bg-tertiary"
+                onClick={handleLinkClick}
+              >
+                {repo}<span className="opacity-50 mx-px">#</span>{item.number}
+              </a>
+            }
+            popoverWidth={480}
+            showDelay={500}
+            hideDelay={300}
+            showClose
+            className="p-0"
+          >
+            {() => (
+              <BodyContent body={item.body!} />
+            )}
+          </Hovercard>
+        ) : (
+          <a
+            href={item.html_url}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-text-secondary no-underline rounded px-1 -mx-1 transition-all duration-150 hover:text-text-primary hover:bg-bg-tertiary"
+            onClick={handleLinkClick}
+          >
+            {repo}<span className="opacity-50 mx-px">#</span>{item.number}
+          </a>
+        )}
+        {isPR && token && <CIStatus summary={prSummary} isLoading={prLoading} isError={prError} />}
+        {isPR && prSummary && <DiffStats additions={prSummary.additions} deletions={prSummary.deletions} changedFiles={prSummary.changedFiles} />}
       </div>
       <div className="text-[13px] font-semibold leading-snug mb-1.5 break-words text-text-primary">{item.title}</div>
       <div className="flex items-center gap-2 flex-wrap text-[11px] text-text-secondary">
@@ -223,6 +335,7 @@ export function ItemCard({ item, token }: ItemCardProps) {
             <span className="flex items-center gap-0.5"><MessageSquare size={11} /> {item.comments}</span>
           )
         )}
+        {isPR && prSummary && <CopyBranchButton branchName={prSummary.branchName} />}
         {item.labels.length > 0 && <Labels labels={item.labels} />}
       </div>
     </div>

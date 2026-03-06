@@ -7,9 +7,12 @@ interface CheckRunsResponse {
 }
 
 interface PRDetail {
-  head: { sha: string };
+  head: { sha: string; ref: string };
   mergeable: boolean | null;
   mergeable_state: string;
+  additions: number;
+  deletions: number;
+  changed_files: number;
 }
 
 async function fetchPRDetail(token: string, owner: string, repo: string, number: number, signal?: AbortSignal): Promise<PRDetail> {
@@ -36,9 +39,9 @@ async function fetchCheckRuns(token: string, owner: string, repo: string, sha: s
   return res.json();
 }
 
-function summarizeChecks(checkRuns: GitHubCheckRun[], mergeable: boolean | null): PRCheckSummary {
+function summarizeChecks(checkRuns: GitHubCheckRun[], pr: PRDetail): PRCheckSummary {
   if (checkRuns.length === 0) {
-    return { total: 0, success: 0, failure: 0, pending: 0, status: 'neutral', mergeable };
+    return { total: 0, success: 0, failure: 0, pending: 0, status: 'neutral', mergeable: pr.mergeable, additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changed_files, branchName: pr.head.ref };
   }
 
   let success = 0;
@@ -60,7 +63,7 @@ function summarizeChecks(checkRuns: GitHubCheckRun[], mergeable: boolean | null)
   else if (pending > 0) status = 'pending';
   else status = 'success';
 
-  return { total: checkRuns.length, success, failure, pending, status, mergeable };
+  return { total: checkRuns.length, success, failure, pending, status, mergeable: pr.mergeable, additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changed_files, branchName: pr.head.ref };
 }
 
 export function usePRCheckStatus(token: string, owner: string, repo: string, pullNumber: number, enabled: boolean) {
@@ -69,7 +72,7 @@ export function usePRCheckStatus(token: string, owner: string, repo: string, pul
     queryFn: async ({ signal }) => {
       const pr = await fetchPRDetail(token, owner, repo, pullNumber, signal);
       const data = await fetchCheckRuns(token, owner, repo, pr.head.sha, signal);
-      return summarizeChecks(data.check_runs, pr.mergeable);
+      return summarizeChecks(data.check_runs, pr);
     },
     enabled,
     staleTime: 60_000,

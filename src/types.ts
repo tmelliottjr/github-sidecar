@@ -34,6 +34,10 @@ export interface PRCheckSummary {
   pending: number;
   status: 'success' | 'failure' | 'pending' | 'neutral';
   mergeable: boolean | null;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  branchName: string;
 }
 
 export interface GitHubIssueItem {
