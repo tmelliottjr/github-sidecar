@@ -1,7 +1,8 @@
 # GitHub Sidecar
 
-A Chrome extension that keeps a small, draggable window on every github.com page
-showing the issues and pull requests you actually care about.
+GitHub Sidecar is a Chrome extension that keeps a small, draggable sidebar on
+every github.com page, showing the issues and pull requests you actually care
+about.
 
 ## Features
 

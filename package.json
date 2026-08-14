@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "An omni-present, draggable GitHub issue/PR sidebar for github.com",
+  "description": "GitHub Sidecar — an omni-present, draggable sidebar for the GitHub issues and pull requests you care about",
   "engines": {
     "node": ">=22.18"
   },

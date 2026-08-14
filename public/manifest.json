@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GitHub Sidecar",
   "version": "0.1.0",
-  "description": "An omni-present, draggable sidebar for tracking the GitHub issues and pull requests you care about.",
+  "description": "GitHub Sidecar — an omni-present, draggable sidebar for tracking the GitHub issues and pull requests you care about.",
   "minimum_chrome_version": "114",
   "permissions": ["storage"],
   "host_permissions": ["https://api.github.com/*", "https://github.com/*"],
