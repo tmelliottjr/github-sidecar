@@ -12,7 +12,7 @@ export const DEV_RELOAD_ORIGIN = `http://127.0.0.1:${DEV_RELOAD_PORT}`
  */
 function devManifest(enabled: boolean): Plugin {
   return {
-    name: 'github-sidebar:dev-manifest',
+    name: 'github-sidecar:dev-manifest',
     apply: 'build',
     async writeBundle() {
       if (!enabled) return

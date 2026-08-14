@@ -189,7 +189,7 @@ export function Sidebar() {
   // would have been.
   if (!isVisible && !isDocked) {
     return (
-      <Hint label="Open GitHub Sidebar" side="left">
+      <Hint label="Open GitHub Sidecar" side="left">
         <button
           type="button"
           onClick={() => setOpen(true)}
@@ -198,7 +198,7 @@ export function Sidebar() {
             'rounded-full border border-border bg-background text-foreground shadow-window',
             'transition-transform hover:scale-105 active:scale-95',
           )}
-          aria-label="Open GitHub Sidebar"
+          aria-label="Open GitHub Sidecar"
         >
           <Github className="size-4" />
         </button>
@@ -215,7 +215,7 @@ export function Sidebar() {
     return (
       <DockRail
         top={dockTop}
-        label={activeQuery?.name ?? 'GitHub Sidebar'}
+        label={activeQuery?.name ?? 'GitHub Sidecar'}
         count={search.data ? totalCount : null}
         onExpand={() => {
           // One rail, two reasons to be showing it, and the click has to clear

@@ -74,7 +74,7 @@ const searchService = createSearchService({
   fetchPage: async (params) => searchIssues(await requireToken(), params),
   isTabActive,
   broadcast: (update) => void broadcastToGitHubTabs(update),
-  onError: (error) => console.warn('[github-sidebar] revalidation failed', error),
+  onError: (error) => console.warn('[github-sidecar] revalidation failed', error),
 })
 
 async function openItem(url: string, target: 'window' | 'tab'): Promise<void> {
@@ -126,7 +126,7 @@ async function handle(
       // Patch the shared cache before telling anyone, so a tab that reacts by
       // asking for its page cannot be handed the copy this just replaced.
       await indexedDbStore.updateItem(item).catch((error: unknown) => {
-        console.warn('[github-sidebar] could not cache the refreshed item', error)
+        console.warn('[github-sidecar] could not cache the refreshed item', error)
       })
       await broadcastToGitHubTabs({ type: 'item-updated', item })
       return item

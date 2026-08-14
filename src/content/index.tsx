@@ -58,7 +58,7 @@ function mount(): void {
   shadow.adoptedStyleSheets = [sheet]
 
   const container = document.createElement('div')
-  container.id = 'github-sidebar-container'
+  container.id = 'github-sidecar-container'
   container.className = 'gh-sidebar-root'
   shadow.appendChild(container)
 

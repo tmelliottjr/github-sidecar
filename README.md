@@ -1,4 +1,4 @@
-# GitHub Sidebar
+# GitHub Sidecar
 
 A Chrome extension that keeps a small, draggable window on every github.com page
 showing the issues and pull requests you actually care about.
@@ -348,7 +348,7 @@ npm run test:unit  # unit tests only (no browser needed)
 npm run dev
 ```
 
-Then load `dist/` unpacked once (it is named **GitHub Sidebar (dev)** so you can
+Then load `dist/` unpacked once (it is named **GitHub Sidecar (dev)** so you can
 tell it apart from an installed copy). From then on, saving a file rebuilds,
 reloads the extension, and refreshes your open github.com tabs automatically.
 

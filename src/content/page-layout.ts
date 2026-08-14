@@ -14,16 +14,16 @@
  * the site rather than as something parked on top of it.
  */
 
-export const HOST_ID = 'github-sidebar-root'
+export const HOST_ID = 'github-sidecar-root'
 
-const STYLE_ID = 'github-sidebar-dock-style'
+const STYLE_ID = 'github-sidecar-dock-style'
 
 /**
  * Marks the bars that have to keep spanning the viewport once we have taken
  * space from the page. An attribute rather than a selector in the stylesheet
  * so the rule stays one line however github.com's markup is arranged.
  */
-const FULL_BLEED_ATTR = 'data-github-sidebar-full-bleed'
+const FULL_BLEED_ATTR = 'data-github-sidecar-full-bleed'
 
 /** Breathing room between the docked panel and the page's own content. */
 export const DOCK_GAP = 16

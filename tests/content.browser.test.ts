@@ -206,7 +206,7 @@ describe('content script', { concurrency: false, skip }, () => {
 
     const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
     await page.evaluate(bundle)
-    await page.waitForSelector('#github-sidebar-root')
+    await page.waitForSelector('#github-sidecar-root')
   })
 
   after(async () => {
@@ -215,12 +215,12 @@ describe('content script', { concurrency: false, skip }, () => {
 
   it('mounts a shadow root with adopted styles', async () => {
     const result = await page.evaluate(() => {
-      const host = document.getElementById('github-sidebar-root')
+      const host = document.getElementById('github-sidecar-root')
       const shadow = host?.shadowRoot
       return {
         hasShadow: Boolean(shadow),
         adoptedSheets: shadow?.adoptedStyleSheets.length ?? 0,
-        hasContainer: Boolean(shadow?.getElementById('github-sidebar-container')),
+        hasContainer: Boolean(shadow?.getElementById('github-sidecar-container')),
       }
     })
 
@@ -231,7 +231,7 @@ describe('content script', { concurrency: false, skip }, () => {
 
   it('renders the window with Open Sans and applied Tailwind styles', async () => {
     const result = await page.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const panel = shadow.querySelector('[role="complementary"]') as HTMLElement
       const styles = getComputedStyle(panel)
       return {
@@ -255,12 +255,12 @@ describe('content script', { concurrency: false, skip }, () => {
 
   it('renders virtualised rows rather than the whole result set', async () => {
     await page.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidebar-root')?.shadowRoot
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
       return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
     })
 
     const counts = await page.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return {
         rendered: shadow.querySelectorAll('[data-index]').length,
         footer: shadow.querySelector('footer')?.textContent ?? '',
@@ -275,7 +275,7 @@ describe('content script', { concurrency: false, skip }, () => {
 
   it('shows the author as an avatar and a handle', async () => {
     const author = await page.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const avatar = shadow.querySelector('[data-index="1"] img') as HTMLImageElement
       const styles = getComputedStyle(avatar)
       return {
@@ -307,7 +307,7 @@ describe('content script', { concurrency: false, skip }, () => {
 
   it('falls back to the handle alone when there is no avatar', async () => {
     const row = await page.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return {
         avatars: shadow.querySelectorAll('[data-index="0"] img').length,
         text: shadow.querySelector('[data-index="0"]')?.textContent ?? '',
@@ -321,13 +321,13 @@ describe('content script', { concurrency: false, skip }, () => {
   it('drops an avatar that cannot load rather than tearing the row', async () => {
     // Row 3's avatar points at an unresolvable host, so it fails on load.
     await page.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const row = shadow.querySelector('[data-index="3"]')
       return Boolean(row) && row!.querySelectorAll('img').length === 0
     })
 
     const text = await page.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return shadow.querySelector('[data-index="3"]')?.textContent ?? ''
     })
     assert.match(text, /octocat/)
@@ -335,7 +335,7 @@ describe('content script', { concurrency: false, skip }, () => {
 
   it('shows labels as overlapping dots rather than as names', async () => {
     const dots = await page.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const row = shadow.querySelector('[data-index="0"]')!
       const dot = row.querySelector('[role="img"][aria-label="bug"]') as HTMLElement
       const box = dot.getBoundingClientRect()
@@ -355,7 +355,7 @@ describe('content script', { concurrency: false, skip }, () => {
 
   it('caps the dots at five and counts the rest', async () => {
     const row = await page.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const node = shadow.querySelector('[data-index="1"]')!
       const dots = [...node.querySelectorAll('[role="img"]')] as HTMLElement[]
       return {
@@ -379,7 +379,7 @@ describe('content script', { concurrency: false, skip }, () => {
 
   it('names a label on hover', async () => {
     const point = await page.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const dot = shadow.querySelector(
         '[data-index="1"] [role="img"][aria-label="regression"]',
       )!
@@ -389,7 +389,7 @@ describe('content script', { concurrency: false, skip }, () => {
 
     await page.mouse.move(point.x, point.y)
     await page.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return [...shadow.querySelectorAll('[role="tooltip"]')].some((node) =>
         node.textContent?.includes('regression'),
       )
@@ -401,7 +401,7 @@ describe('content script', { concurrency: false, skip }, () => {
 
   it('opens an item in a new window through the background worker', async () => {
     await page.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const row = shadow.querySelector('[data-index] button') as HTMLButtonElement
       row.click()
     })
@@ -420,7 +420,7 @@ describe('content script', { concurrency: false, skip }, () => {
 
   it('collapses to the header without unmounting', async () => {
     const height = await page.evaluate(async () => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const button = shadow.querySelector('[aria-label="Collapse"]') as HTMLButtonElement
       button.click()
       await new Promise((resolve) => setTimeout(resolve, 400))
@@ -451,7 +451,7 @@ describe('window geometry', { concurrency: false, skip }, () => {
 
     const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
     await dragPage.evaluate(bundle)
-    await dragPage.waitForSelector('#github-sidebar-root')
+    await dragPage.waitForSelector('#github-sidecar-root')
   })
 
   after(async () => {
@@ -461,7 +461,7 @@ describe('window geometry', { concurrency: false, skip }, () => {
   /** Centre of the bare strip in the header that is reserved for dragging. */
   const dragRegionCentre = () =>
     dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const region = shadow.querySelector('[data-drag-region]') as HTMLElement
       const box = region.getBoundingClientRect()
       return { x: box.x + box.width / 2, y: box.y + box.height / 2, width: box.width }
@@ -469,7 +469,7 @@ describe('window geometry', { concurrency: false, skip }, () => {
 
   const panelBox = () =>
     dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const panel = shadow.querySelector('[role="complementary"]') as HTMLElement
       const box = panel.getBoundingClientRect()
       return { x: box.x, y: box.y, width: box.width, height: box.height }
@@ -509,12 +509,12 @@ describe('window geometry', { concurrency: false, skip }, () => {
 
   it('ignores drags once the position is locked', async () => {
     await dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const lock = shadow.querySelector('[aria-label="Lock position"]') as HTMLButtonElement
       lock.click()
     })
     await dragPage.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidebar-root')?.shadowRoot
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
       return Boolean(shadow?.querySelector('[aria-label="Unlock position"]'))
     })
 
@@ -532,7 +532,7 @@ describe('window geometry', { concurrency: false, skip }, () => {
 
   it('hides resize handles while locked', async () => {
     const handles = await dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return shadow.querySelectorAll('[class*="cursor-nwse-resize"]').length
     })
     assert.equal(handles, 0)
@@ -578,7 +578,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
 
     const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
     await dockPage.evaluate(bundle)
-    await dockPage.waitForSelector('#github-sidebar-root')
+    await dockPage.waitForSelector('#github-sidecar-root')
   })
 
   after(async () => {
@@ -587,7 +587,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
 
   const panel = () =>
     dockPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const node = shadow.querySelector('[role="complementary"]') as HTMLElement
       const box = node.getBoundingClientRect()
       const styles = getComputedStyle(node)
@@ -616,7 +616,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
 
   const clickDock = async (label: string) => {
     await dockPage.evaluate((selector) => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       ;(shadow.querySelector(selector) as HTMLButtonElement).click()
     }, `[aria-label="${label}"]`)
     // The dock measures the page in an effect, so let React commit first.
@@ -681,7 +681,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
       return {
         // The wrapper is the outermost match, so it is the one pulled back
         // out; marking the nav inside it as well would move the nav twice.
-        marked: [...document.querySelectorAll('[data-github-sidebar-full-bleed]')].map(
+        marked: [...document.querySelectorAll('[data-github-sidecar-full-bleed]')].map(
           (element) => element.className,
         ),
         wrapperLeft: wrapper.getBoundingClientRect().left,
@@ -735,7 +735,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
     await clickDock('Collapse')
 
     const rail = await dockPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const node = shadow.querySelector('[aria-label^="Expand"]') as HTMLElement | null
       if (!node) return null
       const box = node.getBoundingClientRect()
@@ -768,7 +768,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
   it('keeps taking results while collapsed', async () => {
     const countOn = () =>
       dockPage.evaluate(() => {
-        const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
         return shadow.querySelector('[aria-label^="Expand"]')?.textContent?.trim()
       })
 
@@ -800,7 +800,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
 
   it('expands again from the rail alone', async () => {
     await dockPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       ;(shadow.querySelector('[aria-label^="Expand"]') as HTMLButtonElement).click()
     })
     await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)))
@@ -820,7 +820,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
     assert.equal((await host()).bodyPadding, 0)
     assert.equal(
       await dockPage.evaluate(() =>
-        Boolean(document.getElementById('github-sidebar-dock-style')),
+        Boolean(document.getElementById('github-sidecar-dock-style')),
       ),
       false,
     )
@@ -842,9 +842,9 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
     const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
     await menuPage.evaluate(bundle)
-    await menuPage.waitForSelector('#github-sidebar-root')
+    await menuPage.waitForSelector('#github-sidecar-root')
     await menuPage.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidebar-root')?.shadowRoot
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
       return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
     })
   })
@@ -855,7 +855,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
   const openMenuOn = async (index: number) => {
     const point = await menuPage.evaluate((rowIndex) => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const row = shadow.querySelector(`[data-index="${rowIndex}"] button`)!
       const box = row.getBoundingClientRect()
       return { x: box.x + 40, y: box.y + 20 }
@@ -863,13 +863,13 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
     await menuPage.mouse.click(point.x, point.y, { button: 'right' })
     await menuPage.waitForFunction(() =>
-      Boolean(document.getElementById('github-sidebar-root')?.shadowRoot?.querySelector('[role="menu"]')),
+      Boolean(document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector('[role="menu"]')),
     )
   }
 
   const clickMenuItem = async (label: string) => {
     await menuPage.evaluate((text) => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const entry = [...shadow.querySelectorAll('[role="menuitem"]')].find((node) =>
         node.textContent?.includes(text),
       )
@@ -881,7 +881,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     await openMenuOn(0)
 
     const labels = await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return [...shadow.querySelectorAll('[role="menuitem"]')].map((node) =>
         node.textContent?.trim(),
       )
@@ -894,7 +894,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     await clickMenuItem('Refresh this item')
 
     await menuPage.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return shadow.querySelector('[data-index="0"]')?.textContent?.includes(
         'A refreshed title',
       )
@@ -923,14 +923,14 @@ describe('row context menu', { concurrency: false, skip }, () => {
     await clickMenuItem('Refresh this item')
 
     await menuPage.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return Boolean(
         shadow.querySelector('[data-index="1"] [aria-label="Refresh failed"]'),
       )
     })
 
     const busy = await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return shadow
         .querySelector('[data-index="1"] button')!
         .getAttribute('aria-busy')
@@ -940,7 +940,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
   it('spins the pending checks mark slowly', async () => {
     const animation = await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const marks = [...shadow.querySelectorAll('[data-index] svg')]
       const spinning = marks.find(
         (mark) => getComputedStyle(mark).animationName !== 'none',
@@ -961,7 +961,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
   const firstRowText = () =>
     menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return shadow.querySelector('[data-index="0"]')?.textContent ?? ''
     })
 
@@ -970,7 +970,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     await clickMenuItem('Pin item')
 
     await menuPage.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const row = shadow.querySelector('[data-index="0"]')
       return Boolean(
         row?.textContent?.includes('Item number 3 ') &&
@@ -986,7 +986,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     await openMenuOn(0)
 
     const labels = await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return [...shadow.querySelectorAll('[role="menuitem"]')].map((node) =>
         node.textContent?.trim(),
       )
@@ -997,7 +997,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     await menuPage.waitForFunction(
       () =>
         !document
-          .getElementById('github-sidebar-root')!
+          .getElementById('github-sidecar-root')!
           .shadowRoot!.querySelector('[data-index="0"]')
           ?.textContent?.includes('Item number 3 '),
     )
@@ -1009,7 +1009,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
   const stackRow = () =>
     menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return shadow.querySelector('[data-index="1"]')?.textContent ?? ''
     })
 
@@ -1017,7 +1017,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     assert.match(await stackRow(), /2\/3/)
     // An unstacked row says nothing about stacks and offers no expander.
     const expanders = await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return shadow.querySelectorAll('[data-index="0"] [aria-expanded]').length
     })
     assert.equal(expanders, 0)
@@ -1025,7 +1025,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
   it('expands to the rest of the stack, base branch first', async () => {
     await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const toggle = shadow.querySelector(
         '[data-index="1"] [aria-label="Show the stack"]',
       ) as HTMLButtonElement
@@ -1034,13 +1034,13 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
     await menuPage.waitForFunction(() =>
       document
-        .getElementById('github-sidebar-root')!
+        .getElementById('github-sidecar-root')!
         .shadowRoot!.querySelector('[data-index="1"]')
         ?.textContent?.includes('Groundwork for the feature'),
     )
 
     const layers = await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return [...shadow.querySelectorAll('[data-index="1"] li button')].map((node) =>
         node.textContent?.trim(),
       )
@@ -1054,7 +1054,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
     // The row it was expanded from is marked rather than dropped.
     const current = await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return shadow.querySelector('[data-index="1"] [aria-current="true"]')?.textContent
     })
     assert.match(current!, /#2 Item number 1/)
@@ -1062,7 +1062,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
   it('opens a related pull request from the stack', async () => {
     await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const layer = [...shadow.querySelectorAll('[data-index="1"] li button')].find(
         (node) => node.textContent?.includes('The last layer'),
       ) as HTMLButtonElement
@@ -1087,7 +1087,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     await openMenuOn(1)
 
     const labels = await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return [...shadow.querySelectorAll('[role="menuitem"]')].map((node) =>
         node.textContent?.trim(),
       )
@@ -1098,7 +1098,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     await menuPage.waitForFunction(
       () =>
         !document
-          .getElementById('github-sidebar-root')!
+          .getElementById('github-sidecar-root')!
           .shadowRoot!.querySelector('[data-index="1"]')
           ?.textContent?.includes('Groundwork for the feature'),
     )
@@ -1124,7 +1124,7 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
 
     const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
     await quietPage.evaluate(bundle)
-    await quietPage.waitForSelector('#github-sidebar-root')
+    await quietPage.waitForSelector('#github-sidecar-root')
   })
 
   after(async () => {
@@ -1140,8 +1140,8 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
 
   const launcher = () =>
     quietPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
-      return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidebar"]'))
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidecar"]'))
     })
 
   it('starts closed, showing only the launcher', async () => {
@@ -1149,7 +1149,7 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
 
     assert.equal(await launcher(), true)
     const panel = await quietPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return Boolean(shadow.querySelector('[role="complementary"]'))
     })
     assert.equal(panel, false)
@@ -1162,14 +1162,14 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
 
   it('loads once opened, and remembers that this tab is open', async () => {
     await quietPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       ;(
-        shadow.querySelector('[aria-label="Open GitHub Sidebar"]') as HTMLButtonElement
+        shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLButtonElement
       ).click()
     })
 
     await quietPage.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidebar-root')?.shadowRoot
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
       return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
     })
 
@@ -1205,7 +1205,7 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
 
     const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
     await railPage.evaluate(bundle)
-    await railPage.waitForSelector('#github-sidebar-root')
+    await railPage.waitForSelector('#github-sidecar-root')
     await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
   })
 
@@ -1215,7 +1215,7 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
 
   const rail = () =>
     railPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const node = shadow.querySelector('[aria-label^="Expand"]') as HTMLElement | null
       if (!node) return null
       const box = node.getBoundingClientRect()
@@ -1224,7 +1224,7 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
 
   const clickRail = async () => {
     await railPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       ;(shadow.querySelector('[aria-label^="Expand"]') as HTMLButtonElement).click()
     })
     await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
@@ -1232,7 +1232,7 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
 
   const panelShowing = () =>
     railPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return Boolean(shadow.querySelector('[data-docked]'))
     })
 
@@ -1250,8 +1250,8 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
 
   it('leaves the corner launcher to floating mode', async () => {
     const corner = await railPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
-      return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidebar"]'))
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidecar"]'))
     })
     assert.equal(corner, false)
   })
@@ -1283,7 +1283,7 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
 
   it('takes one click to come back from hidden and collapsed at once', async () => {
     await railPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidebar-root')!.shadowRoot!
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       ;(shadow.querySelector('[aria-label="Collapse"]') as HTMLButtonElement).click()
     })
     await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))

@@ -1,4 +1,4 @@
-const FONT_STYLE_ID = 'github-sidebar-fonts'
+const FONT_STYLE_ID = 'github-sidecar-fonts'
 
 /**
  * @font-face rules must resolve chrome-extension:// URLs at runtime, so they are

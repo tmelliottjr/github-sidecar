@@ -142,7 +142,7 @@ watch(distDir, { recursive: true }, (_event, filename) => {
 })
 
 console.log(`
-  GitHub Sidebar — development
+  GitHub Sidecar — development
 
   Watching for changes. Reload server on http://127.0.0.1:${PORT}
 

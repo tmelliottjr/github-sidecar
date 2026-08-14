@@ -43,7 +43,7 @@ export function FloatingWindow({ state, onStateChange, header, children }: Props
     <div
       ref={nodeRef}
       role="complementary"
-      aria-label="GitHub Sidebar"
+      aria-label="GitHub Sidecar"
       className={cn(
         'fixed left-0 top-0 z-[2147483646] flex flex-col overflow-hidden',
         'rounded-window border border-border bg-background text-foreground shadow-window',

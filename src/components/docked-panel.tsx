@@ -74,7 +74,7 @@ export function DockedPanel({ width, top, onWidthChange, header, children }: Pro
     <div
       ref={nodeRef}
       role="complementary"
-      aria-label="GitHub Sidebar"
+      aria-label="GitHub Sidecar"
       data-docked=""
       className={cn(
         'fixed bottom-0 left-0 z-[2147483646] flex flex-col overflow-hidden',

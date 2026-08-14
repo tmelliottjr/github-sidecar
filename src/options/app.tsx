@@ -10,7 +10,7 @@ import type { Settings } from '@/lib/storage'
 import { cn } from '@/lib/utils'
 
 const TOKEN_SCOPES_URL =
-  'https://github.com/settings/tokens/new?scopes=repo,read:org&description=GitHub%20Sidebar'
+  'https://github.com/settings/tokens/new?scopes=repo,read:org&description=GitHub%20Sidecar'
 
 const POLL_OPTIONS = [
   { label: 'Off', value: 0 },
@@ -55,7 +55,7 @@ export function OptionsApp() {
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-5 px-6 py-10">
       <header className="space-y-1">
-        <h1 className="text-xl font-bold tracking-tight">GitHub Sidebar</h1>
+        <h1 className="text-xl font-bold tracking-tight">GitHub Sidecar</h1>
         <p className="text-[13px] text-muted-foreground">
           Track the issues and pull requests you care about from anywhere on github.com.
         </p>

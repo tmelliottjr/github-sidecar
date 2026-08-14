@@ -8,7 +8,7 @@ import type { SearchItem, SearchPage } from '@/lib/github/types'
  * host page's storage and would not be shared between tabs. The worker has its
  * own extension origin, giving every github.com tab one shared cache.
  */
-const DB_NAME = 'github-sidebar'
+const DB_NAME = 'github-sidecar'
 const DB_VERSION = 1
 const STORE = 'search-pages'
 const QUERY_INDEX = 'query'

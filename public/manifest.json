@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "GitHub Sidebar",
+  "name": "GitHub Sidecar",
   "version": "0.1.0",
   "description": "An omni-present, draggable sidebar for tracking the GitHub issues and pull requests you care about.",
   "minimum_chrome_version": "114",
@@ -19,7 +19,7 @@
     }
   ],
   "action": {
-    "default_title": "Toggle GitHub Sidebar"
+    "default_title": "Toggle GitHub Sidecar"
   },
   "options_ui": {
     "page": "options.html",
