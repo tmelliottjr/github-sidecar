@@ -325,6 +325,13 @@ The pieces that make that work:
 - **Refreshes are pushed, not pulled.** When the active tab triggers a refresh,
   the worker broadcasts the result to every open tab, which update their caches
   without making their own request.
+- **A background refresh says so.** Serving the cached copy resolves the tab's
+  own request immediately, so the network call that follows it happens with
+  nothing in flight locally to report. The page carries a `revalidating` flag
+  instead, and a green hairline along the header's bottom border pulses — with
+  a lighter crest running left to right across it — until the broadcast lands.
+  It is held briefly so a fast refresh does not flicker, and capped so a
+  refresh that failed cannot leave the panel looking busy forever.
 - **The refresh window follows your setting.** The refresh interval you choose is
   exactly how long a cached page is served for, with a 15s floor so a short
   interval cannot flood the API. With polling off, cached pages last 5 minutes.

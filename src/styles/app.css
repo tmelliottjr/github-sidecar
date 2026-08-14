@@ -38,6 +38,14 @@
    */
   --animate-spin-slow: spin-slow 3s linear infinite;
 
+  /*
+   * A poll has no measurable progress to report, so the bar breathes and a
+   * crest crosses it rather than either of them filling. Both run on the same
+   * period so the brightest point of the pulse always lands mid-crossing.
+   */
+  --animate-progress-sweep: progress-sweep 1.6s ease-in-out infinite;
+  --animate-progress-pulse: progress-pulse 1.6s ease-in-out infinite;
+
   --shadow-window:
     0 0 0 1px oklch(0 0 0 / 0.06), 0 12px 32px -8px oklch(0 0 0 / 0.18),
     0 4px 12px -4px oklch(0 0 0 / 0.1);
@@ -86,6 +94,46 @@
 @keyframes spin-slow {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/*
+ * The crest is a third of its track, so it has to travel rather further than
+ * the track's own width to leave at one end having entered at the other.
+ */
+@keyframes progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+/* Never far down: on a 2px line the pulse floor multiplies the track's own
+ * alpha, and anything lower than this fades out rather than breathes. */
+@keyframes progress-pulse {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/*
+ * An animation that loops until some network call comes back is precisely what
+ * this preference is asking us not to run. Unlayered, so it outranks the
+ * utilities it overrides. A still bar still says "busy" by being there.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .animate-progress-pulse {
+    animation: none;
+    opacity: 0.9;
+  }
+  .animate-progress-sweep {
+    display: none;
   }
 }
 

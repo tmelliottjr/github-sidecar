@@ -17,6 +17,7 @@ import { Hint } from '@/components/ui/tooltip'
 import { useDockLayout } from '@/hooks/use-dock-layout'
 import { useDocumentVisible } from '@/hooks/use-document-visible'
 import { useIssueSearch } from '@/hooks/use-issue-search'
+import { useRefreshActivity } from '@/hooks/use-refresh-activity'
 import { useSearchUpdates } from '@/hooks/use-search-updates'
 import { useStorageValue } from '@/hooks/use-storage-value'
 import { useTabOpen } from '@/hooks/use-tab-open'
@@ -106,6 +107,14 @@ export function Sidebar() {
     // cache the moment the user switches to it.
     enabled: hasToken && isVisible && !(isCollapsed && !isDocked) && !editing && isTabVisible,
   })
+
+  // The worker answers from its cache straight away and only then goes to the
+  // network, so this tab's request has already resolved while the refresh it
+  // set off is still running. `isFetching` is false for that whole window,
+  // which is exactly the window worth reporting; the pages themselves say so
+  // instead, and stop saying so when the result is broadcast back.
+  const isRevalidating = search.data?.pages.some((page) => page.revalidating) ?? false
+  const isRefreshing = useRefreshActivity(search.isFetching || isRevalidating)
 
   // Pinned rows are lifted to the top in the order they were pinned. Only the
   // pages already loaded can be reordered, so a pin on a row that has not been
@@ -235,6 +244,7 @@ export function Sidebar() {
       queries={savedQueries}
       activeQuery={activeQuery}
       isFetching={search.isFetching}
+      isRefreshing={isRefreshing}
       canRefresh={hasToken}
       onSelectQuery={selectQuery}
       onManageQueries={() => setEditing(true)}
@@ -289,14 +299,16 @@ export function Sidebar() {
               <span
                 className={cn(
                   'size-1.5 rounded-full',
-                  search.isFetching ? 'animate-pulse bg-open' : 'bg-border',
+                  isRefreshing ? 'animate-pulse bg-open' : 'bg-border',
                 )}
                 aria-hidden
               />
             )}
-            {lastFetchedAt
-              ? `updated ${relativeTime(new Date(lastFetchedAt).toISOString())}`
-              : 'idle'}
+            {isRefreshing
+              ? 'updating…'
+              : lastFetchedAt
+                ? `updated ${relativeTime(new Date(lastFetchedAt).toISOString())}`
+                : 'idle'}
           </span>
         </footer>
       )}

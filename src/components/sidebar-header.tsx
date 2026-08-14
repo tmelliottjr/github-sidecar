@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Hint } from '@/components/ui/tooltip'
+import { IndeterminateBar } from '@/components/ui/progress-bar'
 import { sendMessage } from '@/lib/messages'
 import type { SavedQuery, WindowState } from '@/lib/storage'
 import { cn } from '@/lib/utils'
@@ -34,6 +35,12 @@ interface Props {
   queries: SavedQuery[]
   activeQuery: SavedQuery | null
   isFetching: boolean
+  /**
+   * Any refresh at all, including the ones the worker runs on its own after
+   * answering from cache. Broader than `isFetching`, which only covers this
+   * tab's own request.
+   */
+  isRefreshing: boolean
   canRefresh: boolean
   onSelectQuery: (id: string) => void
   onManageQueries: () => void
@@ -49,6 +56,7 @@ export function SidebarHeader({
   queries,
   activeQuery,
   isFetching,
+  isRefreshing,
   canRefresh,
   onSelectQuery,
   onManageQueries,
@@ -66,8 +74,9 @@ export function SidebarHeader({
   return (
     <header
       onPointerDown={docked ? undefined : onPointerDown}
+      aria-busy={isRefreshing}
       className={cn(
-        'flex h-11 shrink-0 items-center gap-1 border-b border-border px-2',
+        'relative flex h-11 shrink-0 items-center gap-1 border-b border-border px-2',
         docked || windowState.locked
           ? 'cursor-default'
           : 'cursor-grab active:cursor-grabbing',
@@ -197,6 +206,19 @@ export function SidebarHeader({
           </Button>
         </Hint>
       </div>
+
+      {/*
+       * Laid over the header's bottom border rather than added below it, so
+       * appearing and disappearing never shifts the list by a pixel. This is
+       * the only thing that reports a refresh the worker started on its own,
+       * where the request never passes through this tab at all.
+       */}
+      {isRefreshing && (
+        <IndeterminateBar
+          label="Refreshing results"
+          className="absolute inset-x-0 -bottom-px h-0.5"
+        />
+      )}
     </header>
   )
 }
