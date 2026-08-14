@@ -1,12 +1,12 @@
 import { memo, useCallback, useState } from 'react'
 import {
-  AlertTriangle,
-  Layers,
-  MessageSquare,
-  Pin,
-  PinOff,
-  RotateCw,
-} from 'lucide-react'
+  AlertIcon,
+  CommentIcon,
+  PinIcon,
+  PinSlashIcon,
+  StackIcon,
+  SyncIcon,
+} from '@primer/octicons-react'
 
 import { StackBadge, StackSection } from '@/components/stack-section'
 import {
@@ -121,13 +121,13 @@ function ItemRowImpl({
                    */}
                   <span className="flex shrink-0 items-center pt-px text-[11px] tabular-nums text-muted-foreground">
                     {refresh.status === 'loading' ? (
-                      <RotateCw
+                      <SyncIcon
                         className="size-3 animate-spin-slow"
                         aria-label="Refreshing"
                       />
                     ) : refresh.status === 'error' ? (
                       <Hint label={refresh.message}>
-                        <AlertTriangle
+                        <AlertIcon
                           className="size-3 text-attention"
                           aria-label="Refresh failed"
                         />
@@ -140,7 +140,7 @@ function ItemRowImpl({
 
                 <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   {isPinned && (
-                    <Pin
+                    <PinIcon
                       className="size-3 shrink-0 text-accent-foreground"
                       aria-label="Pinned"
                     />
@@ -172,7 +172,7 @@ function ItemRowImpl({
 
                 {item.commentCount > 0 && (
                   <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
-                    <MessageSquare className="size-3" />
+                    <CommentIcon className="size-3" />
                     {item.commentCount}
                   </span>
                 )}
@@ -220,17 +220,17 @@ function ItemRowImpl({
 
       <ContextMenuContent>
         <ContextMenuItem onSelect={togglePin}>
-          {isPinned ? <PinOff /> : <Pin />}
+          {isPinned ? <PinSlashIcon /> : <PinIcon />}
           {isPinned ? 'Unpin item' : 'Pin item'}
         </ContextMenuItem>
         {stack && (
           <ContextMenuItem onSelect={toggleStack}>
-            <Layers />
+            <StackIcon />
             {isStackOpen ? 'Hide the stack' : 'Show the stack'}
           </ContextMenuItem>
         )}
         <ContextMenuItem onSelect={refreshItem} disabled={refresh.status === 'loading'}>
-          <RotateCw />
+          <SyncIcon />
           Refresh this item
         </ContextMenuItem>
       </ContextMenuContent>

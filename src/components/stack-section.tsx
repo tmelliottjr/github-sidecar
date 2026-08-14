@@ -1,4 +1,4 @@
-import { ChevronUp, ChevronsRight, Layers } from 'lucide-react'
+import { ChevronRightIcon, ChevronUpIcon, StackIcon } from '@primer/octicons-react'
 
 import { ReviewIndicator, StateIcon } from '@/components/status-icons'
 import { ClampedTitle } from '@/components/ui/clamped-title'
@@ -37,7 +37,7 @@ export function StackBadge({
             : 'border-border bg-muted text-muted-foreground hover:border-foreground/25 hover:text-foreground',
         )}
       >
-        <Layers className="size-2.5" aria-hidden />
+        <StackIcon className="size-2.5" aria-hidden />
         <span className="tabular-nums">
           {stack.position}/{stack.size}
         </span>
@@ -106,7 +106,7 @@ function CollapseHandle({ onCollapse }: { onCollapse: () => void }) {
         aria-label="Hide the stack"
         className="group/lid flex w-full cursor-pointer items-center justify-center py-1 focus-visible:outline-none"
       >
-        <ChevronUp
+        <ChevronUpIcon
           className={cn(
             'size-3.5 text-muted-foreground transition-[color,transform] duration-200',
             'group-hover/lid:-translate-y-px group-hover/lid:text-foreground',
@@ -142,7 +142,7 @@ function StackRow({
     >
       {/* Hangs into the section's left gutter so it never shifts the row. */}
       {isCurrent && (
-        <ChevronsRight
+        <ChevronRightIcon
           className="pointer-events-none absolute -left-4 top-1/2 size-4 -translate-y-1/2 text-foreground"
           aria-hidden
         />

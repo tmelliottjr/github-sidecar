@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Github, Inbox, RotateCw, SlidersHorizontal } from 'lucide-react'
+import {
+  AlertIcon,
+  InboxIcon,
+  MarkGithubIcon,
+  SlidersIcon,
+  SyncIcon,
+} from '@primer/octicons-react'
 
 import {
   DOCK_RAIL_WIDTH,
@@ -210,7 +216,7 @@ export function Sidebar() {
           )}
           aria-label="Open GitHub Sidecar"
         >
-          <Github className="size-4" />
+          <MarkGithubIcon className="size-4" />
         </button>
       </Hint>
     )
@@ -363,7 +369,7 @@ function noop() {}
 function TokenPrompt() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <Github className="size-7 text-muted-foreground" />
+      <MarkGithubIcon className="size-7 text-muted-foreground" />
       <div className="space-y-1">
         <p className="text-[13px] font-semibold">Connect your GitHub account</p>
         <p className="text-[12px] leading-relaxed text-muted-foreground">
@@ -381,10 +387,10 @@ function TokenPrompt() {
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <AlertTriangle className="size-6 text-attention" />
+      <AlertIcon className="size-6 text-attention" />
       <p className="text-[12px] leading-relaxed text-muted-foreground">{message}</p>
       <Button variant="outline" size="sm" onClick={onRetry}>
-        <RotateCw />
+        <SyncIcon />
         Try again
       </Button>
     </div>
@@ -394,12 +400,12 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 function EmptyState({ onEdit }: { onEdit: () => void }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <Inbox className="size-6 text-muted-foreground" />
+      <InboxIcon className="size-6 text-muted-foreground" />
       <p className="text-[12px] leading-relaxed text-muted-foreground">
         Nothing matches this query right now.
       </p>
       <Button variant="outline" size="sm" onClick={onEdit}>
-        <SlidersHorizontal />
+        <SlidersIcon />
         Edit query
       </Button>
     </div>

@@ -1,5 +1,12 @@
 import { useState } from 'react'
-import { CheckCircle2, ExternalLink, Eye, EyeOff, Loader2, XCircle } from 'lucide-react'
+import {
+  CheckCircleFillIcon,
+  EyeClosedIcon,
+  EyeIcon,
+  LinkExternalIcon,
+  SyncIcon,
+  XCircleFillIcon,
+} from '@primer/octicons-react'
 
 import { QueryEditor } from '@/components/query-editor'
 import { Button } from '@/components/ui/button'
@@ -85,7 +92,7 @@ export function OptionsApp() {
               aria-label={revealed ? 'Hide token' : 'Show token'}
               className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1.5 text-muted-foreground hover:text-foreground"
             >
-              {revealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+              {revealed ? <EyeClosedIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
             </button>
           </div>
 
@@ -94,20 +101,20 @@ export function OptionsApp() {
             onClick={() => void validate()}
             disabled={!settings.token || validation.status === 'checking'}
           >
-            {validation.status === 'checking' && <Loader2 className="animate-spin" />}
+            {validation.status === 'checking' && <SyncIcon className="animate-spin" />}
             Verify
           </Button>
         </div>
 
         {validation.status === 'valid' && (
           <p className="flex items-center gap-1.5 text-[12px] font-semibold text-open">
-            <CheckCircle2 className="size-3.5" />
+            <CheckCircleFillIcon className="size-3.5" />
             Connected as {validation.login}
           </p>
         )}
         {validation.status === 'invalid' && (
           <p className="flex items-center gap-1.5 text-[12px] font-semibold text-closed">
-            <XCircle className="size-3.5" />
+            <XCircleFillIcon className="size-3.5" />
             {validation.message}
           </p>
         )}
@@ -119,7 +126,7 @@ export function OptionsApp() {
           className="inline-flex w-fit items-center gap-1 text-[12px] font-semibold text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           Create a token on GitHub
-          <ExternalLink className="size-3" />
+          <LinkExternalIcon className="size-3" />
         </a>
       </Section>
 

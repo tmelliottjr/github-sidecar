@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Loader2 } from 'lucide-react'
+import { SyncIcon } from '@primer/octicons-react'
 
 import { ItemRow } from '@/components/item-row'
 import type { SearchItem } from '@/lib/github/types'
@@ -122,7 +122,7 @@ export function ItemList({
                   />
                 ) : (
                   <div className="flex items-center justify-center gap-2 py-4 text-[12px] text-muted-foreground">
-                    <Loader2 className="size-3.5 animate-spin" />
+                    <SyncIcon className="size-3.5 animate-spin" />
                     Loading more
                   </div>
                 )}

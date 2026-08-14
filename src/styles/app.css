@@ -8,8 +8,16 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
+  /*
+   * github.com's own stack, as shipped in Primer's `--fontStack-sansSerif`.
+   * No font is bundled: on github.com the content script overrides this with
+   * the stack it reads off the page, so the sidebar tracks whatever the site
+   * is using. This value is the default for everywhere else — chiefly the
+   * options page, which has no GitHub page to read from.
+   */
   --font-sans:
-    'Open Sans Variable', 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    'Mona Sans VF', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans',
+    Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
 
   --color-background: oklch(1 0 0);
   --color-foreground: oklch(0.21 0.006 285.9);

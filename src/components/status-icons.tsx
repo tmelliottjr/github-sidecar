@@ -1,17 +1,20 @@
+import type { Icon } from '@primer/octicons-react'
 import {
-  CheckCircle2,
-  CircleDashed,
-  CircleDot,
-  CircleSlash,
-  FileCheck,
-  FileDiff,
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestClosed,
-  GitPullRequestDraft,
-  Info,
-  XCircle,
-} from 'lucide-react'
+  CheckCircleFillIcon,
+  CheckIcon,
+  DotFillIcon,
+  EyeIcon,
+  FileDiffIcon,
+  GitMergeIcon,
+  GitMergeQueueIcon,
+  GitPullRequestClosedIcon,
+  GitPullRequestDraftIcon,
+  GitPullRequestIcon,
+  IssueClosedIcon,
+  IssueOpenedIcon,
+  SkipIcon,
+  XCircleFillIcon,
+} from '@primer/octicons-react'
 
 import { Hint } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -53,33 +56,32 @@ export function StateIcon({
 function pickIcon(item: Pick<SearchItem, 'kind' | 'state' | 'stateReason'>) {
   if (item.kind === 'issue') {
     if (item.state === 'closed') {
-      return item.stateReason === 'NOT_PLANNED' ? CircleSlash : CheckCircle2
+      return item.stateReason === 'NOT_PLANNED' ? SkipIcon : IssueClosedIcon
     }
-    return CircleDot
+    return IssueOpenedIcon
   }
   switch (item.state) {
     case 'merged':
-      return GitMerge
+      return GitMergeIcon
     case 'closed':
-      return GitPullRequestClosed
+      return GitPullRequestClosedIcon
     case 'draft':
-      return GitPullRequestDraft
-    // Queued keeps the plain pull request mark and is told apart by colour:
-    // it is an open pull request, just one that is on its way in.
+      return GitPullRequestDraftIcon
+    // Octicons carries GitHub's own mark for the merge queue, so a queued
+    // pull request is now told apart by its glyph as well as its colour.
+    case 'queued':
+      return GitMergeQueueIcon
     default:
-      return GitPullRequest
+      return GitPullRequestIcon
   }
 }
 
-const CHECK_META: Record<
-  CheckState,
-  { label: string; className: string; Icon: typeof CheckCircle2 }
-> = {
-  SUCCESS: { label: 'All checks passing', className: 'text-open', Icon: CheckCircle2 },
-  FAILURE: { label: 'Checks failing', className: 'text-closed', Icon: XCircle },
-  ERROR: { label: 'Checks errored', className: 'text-closed', Icon: XCircle },
-  PENDING: { label: 'Checks running', className: 'text-attention', Icon: CircleDashed },
-  EXPECTED: { label: 'Checks expected', className: 'text-attention', Icon: CircleDashed },
+const CHECK_META: Record<CheckState, { label: string; className: string; Icon: Icon }> = {
+  SUCCESS: { label: 'All checks passing', className: 'text-open', Icon: CheckCircleFillIcon },
+  FAILURE: { label: 'Checks failing', className: 'text-closed', Icon: XCircleFillIcon },
+  ERROR: { label: 'Checks errored', className: 'text-closed', Icon: XCircleFillIcon },
+  PENDING: { label: 'Checks running', className: 'text-attention', Icon: DotFillIcon },
+  EXPECTED: { label: 'Checks expected', className: 'text-attention', Icon: DotFillIcon },
 }
 
 export function CheckIndicator({ state }: { state: CheckState | null }) {
@@ -88,26 +90,28 @@ export function CheckIndicator({ state }: { state: CheckState | null }) {
   return (
     <Hint label={label}>
       <span className={cn('flex items-center', className)}>
-        <Icon className={cn('size-3.5', state === 'PENDING' && 'animate-spin-slow')} />
+        {/*
+         * In-progress checks are GitHub's amber dot, which is drawn still: the
+         * mark is rotationally symmetric, so the slow spin the pending state
+         * used to carry would have been motion nobody could see.
+         */}
+        <Icon className="size-3.5" />
         <span className="sr-only">{label}</span>
       </span>
     </Hint>
   )
 }
 
-const REVIEW_META: Record<
-  ReviewDecision,
-  { label: string; className: string; Icon: typeof CheckCircle2 }
-> = {
-  APPROVED: { label: 'Approved', className: 'text-open', Icon: FileCheck },
+const REVIEW_META: Record<ReviewDecision, { label: string; className: string; Icon: Icon }> = {
+  APPROVED: { label: 'Approved', className: 'text-open', Icon: CheckIcon },
   CHANGES_REQUESTED: {
     label: 'Changes requested',
     className: 'text-closed',
-    Icon: FileDiff,
+    Icon: FileDiffIcon,
   },
   // Amber rather than grey: a review that has not happened yet is the one
   // state on this mark that is asking someone for something.
-  REVIEW_REQUIRED: { label: 'Review required', className: 'text-attention', Icon: Info },
+  REVIEW_REQUIRED: { label: 'Review required', className: 'text-attention', Icon: EyeIcon },
 }
 
 /**

@@ -135,9 +135,11 @@ describe('options page', { concurrency: false, skip }, () => {
     ])
   })
 
-  it('uses Open Sans', async () => {
+  it('falls back to GitHub’s stack where no page token exists', async () => {
     const font = await page.evaluate(() => getComputedStyle(document.body).fontFamily)
-    assert.match(font, /Open Sans Variable/)
+    // The options page is not github.com, so there is nothing to borrow from.
+    assert.match(font, /Mona Sans VF/)
+    assert.match(font, /-apple-system/)
   })
 
   it('masks the token and can reveal it', async () => {

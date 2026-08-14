@@ -229,7 +229,7 @@ describe('content script', { concurrency: false, skip }, () => {
     assert.equal(result.hasContainer, true)
   })
 
-  it('renders the window with Open Sans and applied Tailwind styles', async () => {
+  it('renders the window with the fallback font stack and applied Tailwind styles', async () => {
     const result = await page.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const panel = shadow.querySelector('[role="complementary"]') as HTMLElement
@@ -246,7 +246,8 @@ describe('content script', { concurrency: false, skip }, () => {
     })
 
     assert.equal(result.found, true)
-    assert.match(result.fontFamily, /Open Sans Variable/)
+    // This page publishes no Primer token, so the bundled default applies.
+    assert.match(result.fontFamily, /Mona Sans VF/)
     assert.equal(result.position, 'fixed')
     assert.equal(result.width, 420)
     assert.notEqual(result.borderRadius, '0px')
@@ -378,7 +379,9 @@ describe('content script', { concurrency: false, skip }, () => {
     const row = await page.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const node = shadow.querySelector('[data-index="1"]')!
-      const dots = [...node.querySelectorAll('[role="img"]')] as HTMLElement[]
+      // Octicons carry role="img" too once they are labelled, so the dots are
+      // picked out by being the only spans drawn that way.
+      const dots = [...node.querySelectorAll('span[role="img"]')] as HTMLElement[]
       return {
         names: dots.map((dot) => dot.getAttribute('aria-label')),
         // Left edges, to prove the dots actually overlap.
@@ -648,6 +651,7 @@ describe('window geometry', { concurrency: false, skip }, () => {
  * which is the layout docked mode measures itself against.
  */
 const GITHUB_PAGE = `<!doctype html><html data-color-mode="light"><body style="margin:0">
+<style>:root{--fontStack-sansSerif:"Test Page Face",Verdana,sans-serif}</style>
 <header class="AppHeader" style="position:sticky;top:0;height:64px;background:#1f2328"></header>
 <div class="js-header-wrapper">
   <nav class="UnderlineNav" style="height:48px;border-bottom:1px solid #d1d9e0"></nav>
@@ -687,6 +691,27 @@ describe('docked mode', { concurrency: false, skip }, () => {
 
   after(async () => {
     await dockBrowser?.close()
+  })
+
+  it('borrows the font stack the page publishes', async () => {
+    const fonts = await dockPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const container = shadow.getElementById('github-sidecar-container')!
+
+      // Resolved through the page's own token, so both sides go through the
+      // same normalisation and can be compared as strings.
+      const probe = document.createElement('span')
+      probe.style.fontFamily = 'var(--fontStack-sansSerif)'
+      document.body.appendChild(probe)
+      const pageFont = getComputedStyle(probe).fontFamily
+      probe.remove()
+
+      return { pageFont, panelFont: getComputedStyle(container).fontFamily }
+    })
+
+    assert.match(fonts.pageFont, /Test Page Face/)
+    // Nothing is bundled: the panel renders in whatever github.com is using.
+    assert.equal(fonts.panelFont, fonts.pageFont)
   })
 
   const panel = () =>
@@ -1042,25 +1067,21 @@ describe('row context menu', { concurrency: false, skip }, () => {
     assert.equal(busy, 'false')
   })
 
-  it('spins the pending checks mark slowly', async () => {
-    const animation = await menuPage.evaluate(() => {
+  it('draws the pending checks mark as a still amber dot', async () => {
+    const mark = await menuPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const marks = [...shadow.querySelectorAll('[data-index] svg')]
-      const spinning = marks.find(
-        (mark) => getComputedStyle(mark).animationName !== 'none',
-      )
-      if (!spinning) return null
-      const styles = getComputedStyle(spinning)
-      return { name: styles.animationName, duration: styles.animationDuration }
+      const dot = shadow.querySelector('[data-index] svg.octicon-dot-fill')
+      if (!dot) return null
+      const styles = getComputedStyle(dot)
+      return { animationName: styles.animationName, colour: styles.color }
     })
 
-    assert.ok(animation, 'expected a spinning mark to be rendered')
-    assert.equal(animation.name, 'spin-slow')
-    // Comfortably slower than Tailwind's one-second default.
-    assert.ok(
-      parseFloat(animation.duration) >= 2,
-      `expected a slow spin, saw ${animation.duration}`,
-    )
+    assert.ok(mark, 'expected a pending checks mark to be rendered')
+    // GitHub draws in-progress checks as a still dot, and the mark is
+    // rotationally symmetric, so the slow spin it used to carry was motion
+    // nobody could have seen.
+    assert.equal(mark.animationName, 'none')
+    assert.equal(mark.colour, 'oklch(0.72 0.16 70.7)')
   })
 
   const firstRowText = () =>

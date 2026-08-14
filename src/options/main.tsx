@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
 
-import '@fontsource-variable/open-sans/wght.css'
 import './options.css'
 import { OptionsApp } from './app'
 

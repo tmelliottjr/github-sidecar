@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, GripVertical, Plus, Trash2 } from 'lucide-react'
+import { CheckIcon, GrabberIcon, PlusIcon, TrashIcon } from '@primer/octicons-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -61,7 +61,7 @@ export function QueryEditor({ queries, activeQueryId, onChange, onSelect, onDone
             className="group rounded-lg border border-border bg-card p-2.5 transition-colors focus-within:border-ring/60"
           >
             <div className="flex items-center gap-1.5">
-              <GripVertical className="size-3.5 shrink-0 text-muted-foreground/50" />
+              <GrabberIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
               <Input
                 value={query.name}
                 onChange={(event) => update(query.id, { name: event.target.value })}
@@ -71,7 +71,7 @@ export function QueryEditor({ queries, activeQueryId, onChange, onSelect, onDone
               />
               {query.id === activeQueryId && (
                 <Hint label="Currently shown">
-                  <Check className="size-3.5 shrink-0 text-open" />
+                  <CheckIcon className="size-3.5 shrink-0 text-open" />
                 </Hint>
               )}
               <Hint label="Delete query">
@@ -81,7 +81,7 @@ export function QueryEditor({ queries, activeQueryId, onChange, onSelect, onDone
                   onClick={() => remove(query.id)}
                   aria-label={`Delete ${query.name}`}
                 >
-                  <Trash2 />
+                  <TrashIcon />
                 </Button>
               </Hint>
             </div>
@@ -98,7 +98,7 @@ export function QueryEditor({ queries, activeQueryId, onChange, onSelect, onDone
         ))}
 
         <Button variant="outline" size="sm" onClick={add} className="self-start">
-          <Plus />
+          <PlusIcon />
           Add query
         </Button>
       </div>

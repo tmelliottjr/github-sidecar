@@ -89,13 +89,12 @@ The token is stored in `chrome.storage.local` and is only ever sent to
 ```
 src/
   background/   Service worker: GitHub API proxy, IndexedDB cache, dev reload
-  content/      Shadow-DOM mount, font injection, colour-mode sync, page metrics
+  content/      Shadow-DOM mount, page font/colour-mode sync, page metrics
   components/   Window chrome, list, rows, and shadcn-style primitives
   hooks/        Storage sync, window geometry, dock layout, search, cache updates
   lib/          GitHub GraphQL client, message protocol, storage schema
   options/      Settings page
-scripts/        Font copying, dev watch server
-scripts/        Font copying, dev watch server
+scripts/        Dev watch server
 ```
 
 A few decisions worth knowing:

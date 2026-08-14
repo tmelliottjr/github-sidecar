@@ -1,18 +1,17 @@
 import {
-  ChevronDown,
-  ChevronsDownUp,
-  ChevronsUpDown,
-  Github,
-  Lock,
-  PanelLeft,
-  PanelLeftClose,
-  PictureInPicture2,
-  RotateCw,
-  Settings2,
-  SlidersHorizontal,
-  Unlock,
-  X,
-} from 'lucide-react'
+  ChevronDownIcon,
+  FoldDownIcon,
+  FoldUpIcon,
+  GearIcon,
+  LockIcon,
+  MarkGithubIcon,
+  ScreenNormalIcon,
+  SidebarExpandIcon,
+  SlidersIcon,
+  SyncIcon,
+  UnlockIcon,
+  XIcon,
+} from '@primer/octicons-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -90,11 +89,11 @@ export function SidebarHeader({
             className="min-w-0 max-w-[55%] shrink justify-start gap-1 px-1.5"
             onPointerDown={stopDrag}
           >
-            <Github className="size-3.5 shrink-0 text-muted-foreground" />
+            <MarkGithubIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="truncate text-[13px] font-bold tracking-tight">
               {activeQuery?.name ?? 'No query'}
             </span>
-            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+            <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
           </Button>
         </DropdownMenuTrigger>
 
@@ -112,11 +111,11 @@ export function SidebarHeader({
 
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onManageQueries}>
-            <SlidersHorizontal />
+            <SlidersIcon />
             Manage queries
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void sendMessage({ type: 'open-options' })}>
-            <Settings2 />
+            <GearIcon />
             Settings
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -137,7 +136,7 @@ export function SidebarHeader({
             disabled={!canRefresh}
             aria-label="Refresh results"
           >
-            <RotateCw className={cn(isFetching && 'animate-spin')} />
+            <SyncIcon className={cn(isFetching && 'animate-spin')} />
           </Button>
         </Hint>
 
@@ -149,7 +148,7 @@ export function SidebarHeader({
             aria-pressed={docked}
             aria-label={docked ? 'Float the window' : 'Dock to the page'}
           >
-            {docked ? <PictureInPicture2 /> : <PanelLeft />}
+            {docked ? <ScreenNormalIcon /> : <SidebarExpandIcon />}
           </Button>
         </Hint>
 
@@ -163,7 +162,7 @@ export function SidebarHeader({
               aria-pressed={windowState.locked}
               aria-label={windowState.locked ? 'Unlock position' : 'Lock position'}
             >
-              {windowState.locked ? <Lock className="text-attention" /> : <Unlock />}
+              {windowState.locked ? <LockIcon className="text-attention" /> : <UnlockIcon />}
             </Button>
           </Hint>
         )}
@@ -171,6 +170,8 @@ export function SidebarHeader({
         {/*
          * Collapsing folds a floating window up into its header and a docked
          * one sideways into a rail, so the mark points the way it will go.
+         * Octicon's sidebar marks are named for a sidebar on the right, so the
+         * leftward arrow this needs is the one called `sidebar-expand`.
          */}
         <Hint label={windowState.collapsed ? 'Expand' : 'Collapse'}>
           <Button
@@ -180,11 +181,11 @@ export function SidebarHeader({
             aria-label={windowState.collapsed ? 'Expand' : 'Collapse'}
           >
             {docked ? (
-              <PanelLeftClose />
+              <SidebarExpandIcon />
             ) : windowState.collapsed ? (
-              <ChevronsUpDown />
+              <FoldDownIcon />
             ) : (
-              <ChevronsDownUp />
+              <FoldUpIcon />
             )}
           </Button>
         </Hint>
@@ -196,7 +197,7 @@ export function SidebarHeader({
             onClick={onHide}
             aria-label="Hide sidebar"
           >
-            <X />
+            <XIcon />
           </Button>
         </Hint>
       </div>

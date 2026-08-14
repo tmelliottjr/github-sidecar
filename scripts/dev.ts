@@ -114,7 +114,6 @@ process.on('SIGTERM', shutdown)
 // Start from a clean directory so stale output can never be loaded.
 await rm(distDir, { recursive: true, force: true })
 await mkdir(distDir, { recursive: true })
-await import('./copy-fonts.ts')
 
 await new Promise<void>((done) => server.listen(PORT, '127.0.0.1', done))
 
