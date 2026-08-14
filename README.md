@@ -26,8 +26,8 @@ about.
   and shared by every github.com tab, so opening tabs costs no API calls.
 - **Fast lists.** Cursor-paginated infinite scroll with windowed virtualisation,
   so only the visible rows are ever in the DOM.
-- **Opens in a new window.** Clicking a row pops the item out; ⌘/Ctrl-click opens
-  a tab instead.
+- **Opens in a new tab.** Clicking a row opens the item in a tab; switch to a
+  popped-out window in settings, and ⌘/Ctrl-click always opens a tab.
 
 ## Install
 
@@ -81,7 +81,8 @@ The token is stored in `chrome.storage.local` and is only ever sent to
 | Open an item          | Click a row (⌘/Ctrl-click for a tab)             |
 | Refresh one row       | Right-click it → **Refresh this item**           |
 | Pin a row to the top  | Right-click it → **Pin item** (again to unpin)   |
-| See a stack           | Chevron on a stacked row, or right-click → **Show the stack** |
+| See a stack           | The `layer/size` badge on a stacked row, or right-click → **Show the stack** |
+| Shut a stack          | The chevron at the top of the slide-out, or the badge again      |
 
 ## Architecture
 
@@ -248,11 +249,14 @@ one below it. GitHub exposes membership directly: `PullRequest.stackEntry`
 gives this pull request's position, and `PullRequest.stack` gives the stack's
 number, size, base branch, and entries. Nothing is inferred from branch names.
 
-A stacked row carries a `layer/size` badge and opens, from its own chevron, a
-list of the whole stack read from the base branch up. The row it was expanded
-from stays in that list and is marked instead of being filtered out, because a
-stack is only legible as a whole. Expansion is deliberately not on the row
-itself: clicking a row still means "open this pull request".
+A stacked row carries a `layer/size` badge, and that badge is the control: it
+slides open a list of the whole stack, read from the base branch up. The row it
+was expanded from stays in that list and is marked with a chevron instead of
+being filtered out, because a stack is only legible as a whole. A chevron along
+the top edge of the slide-out shuts it again, since by then the badge that
+opened it may be several layers up the panel. Expansion is
+deliberately not on the row itself: clicking a row still means "open this pull
+request".
 
 `stack` and `stackEntry` are a public preview. A host that has not been given
 the fields rejects the whole query rather than returning null, which would take

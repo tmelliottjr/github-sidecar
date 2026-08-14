@@ -47,7 +47,7 @@ export interface StorageShape {
 export const DEFAULT_SETTINGS: Settings = {
   token: '',
   pollIntervalMs: 60_000,
-  openIn: 'window',
+  openIn: 'tab',
   activeQueryId: 'review-requested',
 }
 

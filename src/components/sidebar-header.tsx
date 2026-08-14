@@ -104,15 +104,9 @@ export function SidebarHeader({
             <DropdownMenuItem
               key={query.id}
               onSelect={() => onSelectQuery(query.id)}
-              className={cn(
-                'flex-col items-start gap-0.5',
-                query.id === activeQuery?.id && 'bg-accent',
-              )}
+              className={cn(query.id === activeQuery?.id && 'bg-accent')}
             >
-              <span className="font-semibold">{query.name}</span>
-              <span className="w-full truncate font-mono text-[10px] text-muted-foreground">
-                {query.query}
-              </span>
+              <span className="truncate font-semibold">{query.name}</span>
             </DropdownMenuItem>
           ))}
 

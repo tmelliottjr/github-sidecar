@@ -333,24 +333,45 @@ describe('content script', { concurrency: false, skip }, () => {
     assert.match(text, /octocat/)
   })
 
-  it('shows labels as overlapping dots rather than as names', async () => {
+  it('shows labels as overlapping discs rather than as names', async () => {
     const dots = await page.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const row = shadow.querySelector('[data-index="0"]')!
       const dot = row.querySelector('[role="img"][aria-label="bug"]') as HTMLElement
       const box = dot.getBoundingClientRect()
       const styles = getComputedStyle(dot)
+
+      // The label's colour put through the same mixer at full strength, so the
+      // fill can be compared with it in the space it was actually mixed in.
+      const probe = document.createElement('span')
+      probe.style.backgroundColor = 'color-mix(in oklab, #d73a4a 100%, transparent 0%)'
+      dot.after(probe)
+      const pure = getComputedStyle(probe).backgroundColor
+      probe.remove()
+
       return {
         width: box.width,
-        colour: styles.backgroundColor,
+        border: styles.borderTopColor,
+        fill: styles.backgroundColor,
+        pure,
         // The name is carried by the label, never printed in the row.
         text: row.textContent ?? '',
       }
     })
 
-    assert.ok(dots.width > 0 && dots.width <= 12, `saw a ${dots.width}px dot`)
-    assert.equal(dots.colour, 'rgb(215, 58, 74)')
+    assert.ok(dots.width > 0 && dots.width <= 16, `saw a ${dots.width}px disc`)
+    // The label's own colour draws the disc.
+    assert.equal(dots.border, 'rgb(215, 58, 74)')
     assert.doesNotMatch(dots.text, /bug/)
+
+    // The fill is that same colour taken back towards the surface: lighter
+    // than the label, and opaque, so overlapping discs stay legible.
+    assert.doesNotMatch(dots.fill, /\//, `expected an opaque fill, saw ${dots.fill}`)
+    const lightness = (colour: string) => Number(colour.match(/[\d.]+/)![0])
+    assert.ok(
+      lightness(dots.fill) > lightness(dots.pure),
+      `expected a lighter fill, saw ${dots.fill} against ${dots.pure}`,
+    )
   })
 
   it('caps the dots at five and counts the rest', async () => {
@@ -397,6 +418,89 @@ describe('content script', { concurrency: false, skip }, () => {
 
     // Leave the row alone again so later tests see an unhovered list.
     await page.mouse.move(0, 0)
+  })
+
+  it('offers the full title only when the row cannot show it', async () => {
+    const TITLE = 'Item number 0 with a reasonably long title to wrap'
+
+    const setPanelWidth = (width: string) =>
+      page.evaluate((value) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const panel = shadow.querySelector('[role="complementary"]') as HTMLElement
+        panel.style.width = value
+      }, width)
+
+    const titleNode = () =>
+      page.evaluate((text) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const node = [...shadow.querySelectorAll('[data-index="0"] span')].find(
+          (candidate) =>
+            candidate.children.length === 0 && candidate.textContent === text,
+        ) as HTMLElement
+        const box = node.getBoundingClientRect()
+        return {
+          clamped: node.scrollHeight > node.clientHeight + 1,
+          x: box.x + 10,
+          y: box.y + 5,
+        }
+      }, TITLE)
+
+    const namesTitle = () =>
+      page.evaluate((text) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        return [...shadow.querySelectorAll('[role="tooltip"]')].some((node) =>
+          node.textContent?.includes(text),
+        )
+      }, TITLE)
+
+    // At full width the title is all there, and a hint would only repeat it.
+    const whole = await titleNode()
+    assert.equal(whole.clamped, false)
+    await page.mouse.move(whole.x, whole.y)
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    assert.equal(await namesTitle(), false)
+
+    await page.mouse.move(0, 0)
+    await setPanelWidth('230px')
+
+    // The panel is measured, not guessed, so wait for the row to agree it is
+    // now too narrow, and for the hint's trigger to be in place, rather than
+    // for a fixed number of frames.
+    await page.waitForFunction(
+      (text) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const node = [...shadow.querySelectorAll('[data-index="0"] span')].find(
+          (candidate) =>
+            candidate.children.length === 0 && candidate.textContent === text,
+        ) as HTMLElement | undefined
+        return (
+          Boolean(node) &&
+          node!.scrollHeight > node!.clientHeight + 1 &&
+          node!.hasAttribute('data-state')
+        )
+      },
+      {},
+      TITLE,
+    )
+
+    const clipped = await titleNode()
+    assert.equal(clipped.clamped, true)
+    await page.mouse.move(clipped.x, clipped.y)
+    // A nudge, so the hint hears a move even if the pointer was already there.
+    await page.mouse.move(clipped.x + 3, clipped.y + 2)
+    await page.waitForFunction(
+      (text) =>
+        [...document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelectorAll('[role="tooltip"]')].some((node) =>
+          node.textContent?.includes(text),
+        ),
+      {},
+      TITLE,
+    )
+
+    await page.mouse.move(0, 0)
+    await setPanelWidth('420px')
   })
 
   it('opens an item in a new window through the background worker', async () => {
@@ -1032,12 +1136,17 @@ describe('row context menu', { concurrency: false, skip }, () => {
       toggle.click()
     })
 
-    await menuPage.waitForFunction(() =>
-      document
-        .getElementById('github-sidecar-root')!
-        .shadowRoot!.querySelector('[data-index="1"]')
-        ?.textContent?.includes('Groundwork for the feature'),
-    )
+    // The section stays mounted so it can slide, so "expanded" is the state it
+    // reports and the height it actually has, not the presence of its text.
+    await menuPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const region = shadow.querySelector(
+        '[data-index="1"] [data-stack="open"]',
+      ) as HTMLElement | null
+      return Boolean(region) && region!.getBoundingClientRect().height > 0
+    })
+
+    assert.match(await stackRow(), /Groundwork for the feature/)
 
     const layers = await menuPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
@@ -1083,6 +1192,53 @@ describe('row context menu', { concurrency: false, skip }, () => {
     })
   })
 
+  it('shuts the stack again from the chevron along its top edge', async () => {
+    const stackState = () =>
+      menuPage.evaluate(() => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const region = shadow.querySelector('[data-index="1"] [data-stack]') as HTMLElement
+        return {
+          state: region.getAttribute('data-stack'),
+          height: region.getBoundingClientRect().height,
+        }
+      })
+
+    await menuPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      // The lid lives inside the slide-out, unlike the badge that opened it.
+      const lid = shadow.querySelector(
+        '[data-index="1"] [data-stack] [aria-label="Hide the stack"]',
+      ) as HTMLButtonElement
+      lid.click()
+    })
+
+    await menuPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const region = shadow.querySelector('[data-index="1"] [data-stack]') as HTMLElement
+      return (
+        region.getAttribute('data-stack') === 'closed' &&
+        region.getBoundingClientRect().height === 0
+      )
+    })
+
+    // Left open again for the context menu, which is the other way to shut it.
+    await menuPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const badge = shadow.querySelector(
+        '[data-index="1"] [aria-label="Show the stack"]',
+      ) as HTMLButtonElement
+      badge.click()
+    })
+
+    await menuPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const region = shadow.querySelector('[data-index="1"] [data-stack]') as HTMLElement
+      return region.getBoundingClientRect().height > 0
+    })
+
+    assert.equal((await stackState()).state, 'open')
+  })
+
   it('offers the same toggle in the context menu, and collapses again', async () => {
     await openMenuOn(1)
 
@@ -1095,13 +1251,19 @@ describe('row context menu', { concurrency: false, skip }, () => {
     assert.deepEqual(labels, ['Pin item', 'Hide the stack', 'Refresh this item'])
 
     await clickMenuItem('Hide the stack')
-    await menuPage.waitForFunction(
-      () =>
-        !document
-          .getElementById('github-sidecar-root')!
-          .shadowRoot!.querySelector('[data-index="1"]')
-          ?.textContent?.includes('Groundwork for the feature'),
-    )
+    await menuPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const region = shadow.querySelector(
+        '[data-index="1"] [data-stack="closed"]',
+      ) as HTMLElement | null
+      // Collapsed means no height and no way in: the rows are still mounted so
+      // the section can slide, but they are inert while it is shut.
+      return (
+        Boolean(region) &&
+        region!.getBoundingClientRect().height === 0 &&
+        region!.hasAttribute('inert')
+      )
+    })
   })
 })
 

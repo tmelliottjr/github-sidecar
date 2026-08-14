@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react'
 
 import { ItemRow } from '@/components/item-row'
 import type { SearchItem } from '@/lib/github/types'
+import { cn } from '@/lib/utils'
 
 interface Props {
   items: SearchItem[]
@@ -20,6 +21,8 @@ interface Props {
 const ESTIMATED_ROW_HEIGHT = 78
 /** Start fetching this many rows before the end so scrolling stays smooth. */
 const PREFETCH_THRESHOLD = 6
+
+const NO_IDS: ReadonlySet<string> = new Set()
 
 export function ItemList({
   items,
@@ -48,6 +51,25 @@ export function ItemList({
 
   // A trailing row renders the loading indicator when more pages exist.
   const count = hasNextPage ? items.length + 1 : items.length
+
+  // Rows that a refresh has just brought into the list announce themselves.
+  // Rows merely scrolled back into view must not: the virtualiser mounts and
+  // unmounts those constantly, and animating them would make the list twitch
+  // under the scrollbar. The set is read during render so a row carries the
+  // animation from its first paint, and only written afterwards.
+  const seenIds = useRef<ReadonlySet<string> | null>(null)
+  const entering = useMemo(() => {
+    const previous = seenIds.current
+    // The first list to arrive animates as one view, not as a hail of rows.
+    if (!previous) return NO_IDS
+    const fresh = new Set<string>()
+    for (const item of items) if (!previous.has(item.id)) fresh.add(item.id)
+    return fresh
+  }, [items])
+
+  useEffect(() => {
+    seenIds.current = new Set(items.map((item) => item.id))
+  }, [items])
 
   const virtualizer = useVirtualizer({
     count,
@@ -81,23 +103,30 @@ export function ItemList({
               className="absolute left-0 top-0 w-full border-b border-border/60 last:border-b-0"
               style={{ transform: `translateY(${virtualRow.start}px)` }}
             >
-              {item ? (
-                <ItemRow
-                  item={item}
-                  isPinned={pinned.has(item.id)}
-                  isStackOpen={openStacks.has(item.id)}
-                  onOpen={onOpen}
-                  onOpenUrl={onOpenUrl}
-                  onRefresh={onRefreshItem}
-                  onTogglePin={onTogglePin}
-                  onToggleStack={toggleStack}
-                />
-              ) : (
-                <div className="flex items-center justify-center gap-2 py-4 text-[12px] text-muted-foreground">
-                  <Loader2 className="size-3.5 animate-spin" />
-                  Loading more
-                </div>
-              )}
+              {/*
+               * The entrance lives on an inner element: the wrapper's own
+               * transform is what places the row in the virtual list, and an
+               * animation of the same property would fight it.
+               */}
+              <div className={cn(item && entering.has(item.id) && 'animate-row-in')}>
+                {item ? (
+                  <ItemRow
+                    item={item}
+                    isPinned={pinned.has(item.id)}
+                    isStackOpen={openStacks.has(item.id)}
+                    onOpen={onOpen}
+                    onOpenUrl={onOpenUrl}
+                    onRefresh={onRefreshItem}
+                    onTogglePin={onTogglePin}
+                    onToggleStack={toggleStack}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center gap-2 py-4 text-[12px] text-muted-foreground">
+                    <Loader2 className="size-3.5 animate-spin" />
+                    Loading more
+                  </div>
+                )}
+              </div>
             </div>
           )
         })}

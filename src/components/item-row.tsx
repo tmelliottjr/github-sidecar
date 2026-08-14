@@ -1,7 +1,6 @@
 import { memo, useCallback, useState } from 'react'
 import {
   AlertTriangle,
-  ChevronRight,
   Layers,
   MessageSquare,
   Pin,
@@ -22,9 +21,13 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import { ClampedTitle } from '@/components/ui/clamped-title'
 import { Hint } from '@/components/ui/tooltip'
 import type { SearchItem } from '@/lib/github/types'
 import { cn, relativeTime } from '@/lib/utils'
+
+/** Row padding (12px) plus the state icon (16px) and the gap after it (10px). */
+const MARKS_INDENT = 'pl-[38px]'
 
 interface Props {
   item: SearchItem
@@ -67,6 +70,13 @@ function ItemRowImpl({
   const togglePin = useCallback(() => onTogglePin(item), [item, onTogglePin])
   const toggleStack = useCallback(() => onToggleStack(item), [item, onToggleStack])
 
+  const hasMarks =
+    Boolean(stack) ||
+    item.labels.length > 0 ||
+    item.commentCount > 0 ||
+    Boolean(item.checkState) ||
+    Boolean(item.reviewDecision)
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -74,25 +84,36 @@ function ItemRowImpl({
           data-pinned={isPinned || undefined}
           className={cn('group flex flex-col', isPinned && 'bg-accent/40')}
         >
-          <div className="flex w-full items-start">
+          {/*
+           * Hover and focus are carried by the row's own wrapper rather than
+           * the button, so the marks below the meta line — which sit outside
+           * the click target now that one of them is a control — still read as
+           * part of the same row.
+           */}
+          <div
+            className={cn(
+              'flex flex-col transition-colors',
+              'hover:bg-accent has-[:focus-visible]:bg-accent',
+              'group-data-[state=open]:bg-accent',
+            )}
+          >
             <button
               type="button"
               onClick={(event) => onOpen(item, event)}
               aria-busy={refresh.status === 'loading'}
               className={cn(
-                'flex min-w-0 flex-1 gap-2.5 py-2.5 pl-3 text-left transition-colors',
-                stack ? 'pr-1' : 'pr-3',
-                'hover:bg-accent focus-visible:bg-accent focus-visible:outline-none',
-                'group-data-[state=open]:bg-accent',
+                'flex w-full min-w-0 gap-2.5 px-3 pt-2.5 text-left focus-visible:outline-none',
+                hasMarks ? 'pb-1' : 'pb-2.5',
               )}
             >
               <StateIcon item={item} />
 
               <span className="flex min-w-0 flex-1 flex-col gap-1">
                 <span className="flex items-start gap-2">
-                  <span className="line-clamp-2 flex-1 text-[13px] font-semibold leading-snug text-foreground">
-                    {item.title}
-                  </span>
+                  <ClampedTitle
+                    title={item.title}
+                    className="line-clamp-2 flex-1 text-[13px] font-semibold leading-snug text-foreground"
+                  />
                   {/*
                    * A refresh reports itself in the same slot as the timestamp it
                    * is about to change, so the row says what it is doing without
@@ -130,56 +151,69 @@ function ItemRowImpl({
                     <Author login={item.authorLogin} avatarUrl={item.authorAvatarUrl} />
                   )}
                 </span>
-
-                {(stack ||
-                  item.labels.length > 0 ||
-                  item.commentCount > 0 ||
-                  item.checkState ||
-                  item.reviewDecision) && (
-                  <span className="flex flex-wrap items-center gap-1.5">
-                    {stack && <StackBadge stack={stack} />}
-                    <CheckIndicator state={item.checkState} />
-                    <ReviewIndicator decision={item.reviewDecision} />
-                    <LabelDots labels={item.labels} total={item.labelCount} />
-
-                    {item.commentCount > 0 && (
-                      <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
-                        <MessageSquare className="size-3" />
-                        {item.commentCount}
-                      </span>
-                    )}
-                  </span>
-                )}
               </span>
             </button>
 
             {/*
-             * The stack gets its own control rather than expanding from the
-             * row: clicking a row still has to mean "open this pull request".
+             * Indented past the state icon so the marks line up under the
+             * title. `MARKS_INDENT` is that icon plus the row's own padding.
              */}
-            {stack && (
-              <button
-                type="button"
-                onClick={toggleStack}
-                aria-expanded={isStackOpen}
-                aria-label={isStackOpen ? 'Hide the stack' : 'Show the stack'}
-                className={cn(
-                  'flex shrink-0 items-center self-stretch px-2 text-muted-foreground transition-colors',
-                  'hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:outline-none',
+            {hasMarks && (
+              <div className={cn('flex flex-wrap items-center gap-1.5 pb-2.5 pr-3', MARKS_INDENT)}>
+                {stack && (
+                  <StackBadge
+                    stack={stack}
+                    isOpen={isStackOpen}
+                    onToggle={toggleStack}
+                  />
                 )}
-              >
-                <ChevronRight
-                  className={cn(
-                    'size-3.5 transition-transform',
-                    isStackOpen && 'rotate-90',
-                  )}
-                />
-              </button>
+                <CheckIndicator state={item.checkState} />
+                <ReviewIndicator decision={item.reviewDecision} />
+
+                {item.commentCount > 0 && (
+                  <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
+                    <MessageSquare className="size-3" />
+                    {item.commentCount}
+                  </span>
+                )}
+
+                {/*
+                 * Labels are the least of what this line says, so they are put
+                 * where the eye lands last rather than in the run of marks.
+                 */}
+                <span className="ml-auto flex items-center pl-1.5">
+                  <LabelDots labels={item.labels} total={item.labelCount} />
+                </span>
+              </div>
             )}
           </div>
 
-          {stack && isStackOpen && (
-            <StackSection stack={stack} currentId={item.id} onOpen={onOpenUrl} />
+          {/*
+           * The stack stays mounted so it can slide rather than appear. A
+           * collapsed grid row measures the section without reserving space
+           * for it, which is what lets the height animate at all; `inert`
+           * keeps the hidden rows out of the tab order while it is closed.
+           */}
+          {stack && (
+            <div
+              data-stack={isStackOpen ? 'open' : 'closed'}
+              inert={!isStackOpen}
+              aria-hidden={!isStackOpen}
+              className={cn(
+                'grid transition-[grid-template-rows,opacity] duration-300 ease-stack',
+                'motion-reduce:transition-none',
+                isStackOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+              )}
+            >
+              <div className="overflow-hidden">
+                <StackSection
+                  stack={stack}
+                  currentId={item.id}
+                  onOpen={onOpenUrl}
+                  onCollapse={toggleStack}
+                />
+              </div>
+            </div>
           )}
         </div>
       </ContextMenuTrigger>

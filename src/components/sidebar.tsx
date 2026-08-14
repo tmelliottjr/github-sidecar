@@ -146,8 +146,9 @@ export function Sidebar() {
 
   const openUrl = useCallback(
     (url: string, event: React.MouseEvent) => {
-      // Modifier-click falls back to a tab, matching normal link behaviour.
-      const target = event.metaKey || event.ctrlKey ? 'tab' : (settings?.openIn ?? 'window')
+      // Modifier-click opens a tab whatever the setting says, matching normal
+      // link behaviour.
+      const target = event.metaKey || event.ctrlKey ? 'tab' : (settings?.openIn ?? 'tab')
       void sendMessage({ type: 'open-item', url, target })
     },
     [settings?.openIn],
@@ -237,6 +238,19 @@ export function Sidebar() {
     )
   }
 
+  // What the panel is showing right now, used as the key that replays the
+  // pane's entrance. Deliberately blind to the contents of a list, so a poll
+  // that only changes rows does not throw away the reader's scroll position.
+  const viewKey = editing
+    ? 'editor'
+    : !hasToken
+      ? 'token'
+      : search.isError
+        ? 'error'
+        : search.isPending
+          ? 'loading'
+          : `${items.length === 0 ? 'empty' : 'list'}:${activeQuery?.id ?? ''}`
+
   const renderHeader = (onPointerDown: (event: React.PointerEvent) => void) => (
     <SidebarHeader
       onPointerDown={onPointerDown}
@@ -257,7 +271,12 @@ export function Sidebar() {
 
   const body = (
     <div className="flex h-full flex-col">
-      <div className="min-h-0 flex-1">
+      {/*
+       * Keyed on what the panel is showing, so switching query or state
+       * remounts the pane and replays its entrance rather than swapping one
+       * screen of content for another between frames.
+       */}
+      <div key={viewKey} className="min-h-0 flex-1 animate-view-in">
         {editing ? (
           <QueryEditor
             queries={savedQueries}

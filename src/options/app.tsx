@@ -143,10 +143,10 @@ export function OptionsApp() {
 
       <Section
         title="Opening items"
-        description="Hold ⌘ or Ctrl while clicking to override this and open a tab."
+        description="Hold ⌘ or Ctrl while clicking to open a tab whatever this says."
       >
         <div className="flex gap-1.5">
-          {(['window', 'tab'] as const).map((target) => (
+          {(['tab', 'window'] as const).map((target) => (
             <Button
               key={target}
               variant={settings.openIn === target ? 'default' : 'outline'}

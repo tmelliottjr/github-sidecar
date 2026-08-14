@@ -3,10 +3,13 @@ import {
   CircleDashed,
   CircleDot,
   CircleSlash,
+  FileCheck,
+  FileDiff,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
+  Info,
   XCircle,
 } from 'lucide-react'
 
@@ -92,30 +95,34 @@ export function CheckIndicator({ state }: { state: CheckState | null }) {
   )
 }
 
-const REVIEW_META: Record<ReviewDecision, { label: string; className: string }> = {
-  APPROVED: { label: 'Approved', className: 'text-open border-open/30 bg-open/10' },
+const REVIEW_META: Record<
+  ReviewDecision,
+  { label: string; className: string; Icon: typeof CheckCircle2 }
+> = {
+  APPROVED: { label: 'Approved', className: 'text-open', Icon: FileCheck },
   CHANGES_REQUESTED: {
     label: 'Changes requested',
-    className: 'text-closed border-closed/30 bg-closed/10',
+    className: 'text-closed',
+    Icon: FileDiff,
   },
-  REVIEW_REQUIRED: {
-    label: 'Review required',
-    className: 'text-muted-foreground border-border bg-muted',
-  },
+  // Amber rather than grey: a review that has not happened yet is the one
+  // state on this mark that is asking someone for something.
+  REVIEW_REQUIRED: { label: 'Review required', className: 'text-attention', Icon: Info },
 }
 
+/**
+ * The review decision, drawn as the checks mark is: a bare glyph at the same
+ * size, in the same three colours. The two marks sit side by side, so any
+ * difference in weight between them would read as a difference in importance.
+ */
 export function ReviewIndicator({ decision }: { decision: ReviewDecision | null }) {
   if (!decision) return null
-  const { label, className } = REVIEW_META[decision]
+  const { label, className, Icon } = REVIEW_META[decision]
   return (
     <Hint label={label}>
-      <span
-        className={cn(
-          'rounded-full border px-1.5 py-px text-[10px] font-bold uppercase tracking-wide leading-[1.4]',
-          className,
-        )}
-      >
-        {decision === 'APPROVED' ? '✓' : decision === 'CHANGES_REQUESTED' ? '±' : '···'}
+      <span className={cn('flex items-center', className)}>
+        <Icon className="size-3.5" />
+        <span className="sr-only">{label}</span>
       </span>
     </Hint>
   )
@@ -125,9 +132,14 @@ export function ReviewIndicator({ decision }: { decision: ReviewDecision | null 
 const MAX_LABEL_DOTS = 5
 
 /**
- * Labels as a row of overlapping colour dots. Names are what a label is for,
+ * Labels as a row of overlapping colour discs. Names are what a label is for,
  * but at three or four to a row they crowd out the title, so the colour does
  * the work at rest and the name arrives on hover.
+ *
+ * Each disc is the label's own colour twice over: full strength as the ring
+ * that draws it, and mixed into the surface behind it as the fill. Tinting
+ * against `background` rather than using an alpha keeps the discs opaque, so
+ * where they overlap the one in front still reads as the one in front.
  */
 export function LabelDots({ labels, total }: { labels: Label[]; total: number }) {
   if (labels.length === 0) return null
@@ -145,12 +157,15 @@ export function LabelDots({ labels, total }: { labels: Label[]; total: number })
               role="img"
               aria-label={label.name}
               // The ring is the row's own background, which is what makes the
-              // overlap read as separate dots rather than one smear.
+              // overlap read as separate discs rather than one smear.
               className={cn(
-                'size-2.5 rounded-full ring-2 ring-background group-hover:ring-accent',
-                index > 0 && '-ml-1',
+                'size-3.5 rounded-full border ring-2 ring-background group-hover:ring-accent',
+                index > 0 && '-ml-1.5',
               )}
-              style={{ backgroundColor: `#${label.color}` }}
+              style={{
+                borderColor: `#${label.color}`,
+                backgroundColor: `color-mix(in oklab, #${label.color} 28%, var(--color-background))`,
+              }}
             />
           </Hint>
         ))}
