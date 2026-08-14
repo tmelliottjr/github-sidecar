@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "GitHub Sidebar",
+  "version": "0.1.0",
+  "description": "An omni-present, draggable sidebar for tracking the GitHub issues and pull requests you care about.",
+  "minimum_chrome_version": "114",
+  "permissions": ["storage"],
+  "host_permissions": ["https://api.github.com/*", "https://github.com/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "Toggle GitHub Sidebar"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["fonts/*.woff2"],
+      "matches": ["https://github.com/*"]
+    }
+  ]
+}

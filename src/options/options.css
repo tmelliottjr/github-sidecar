@@ -1,0 +1,21 @@
+@import '../styles/app.css';
+
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background-color: var(--color-muted);
+    color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    body {
+      background-color: oklch(0.16 0.006 285.9);
+    }
+  }
+}
