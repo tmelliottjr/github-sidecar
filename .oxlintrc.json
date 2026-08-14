@@ -22,6 +22,7 @@
           "__sentMessages",
           "__broadcast",
           "__failRefresh",
+          "__revalidating",
           "__tabOpen",
           "__DEV_RELOAD_ORIGIN__"
         ]

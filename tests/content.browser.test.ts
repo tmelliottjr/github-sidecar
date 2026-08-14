@@ -157,7 +157,7 @@ window.chrome = {
             hasNextPage: true,
             fetchedAt: Date.now(),
             source: 'cache',
-            revalidating: false,
+            revalidating: window.__revalidating === true,
           },
         };
       }
@@ -1302,5 +1302,102 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
 
     await clickRail()
     assert.equal(await panelShowing(), true)
+  })
+})
+
+describe('a refresh the worker started on its own', { concurrency: false, skip }, () => {
+  let busyBrowser: Browser
+  let busyPage: Page
+
+  before(async () => {
+    busyBrowser = await puppeteer.launch({ executablePath, headless: true })
+    busyPage = await busyBrowser.newPage()
+    await busyPage.setViewport({ width: 1280, height: 800 })
+    await busyPage.setContent(
+      '<!doctype html><html data-color-mode="light"><body></body></html>',
+    )
+    await busyPage.evaluate(CHROME_STUB)
+    // The worker answers from cache and goes to the network behind it, which
+    // is the state this tab can only learn about from the flag on the page.
+    await busyPage.evaluate(() => {
+      ;(window as unknown as { __revalidating: boolean }).__revalidating = true
+    })
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await busyPage.evaluate(bundle)
+    await busyPage.waitForSelector('#github-sidecar-root')
+  })
+
+  after(async () => {
+    await busyBrowser?.close()
+  })
+
+  const bar = () =>
+    busyPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const node = shadow.querySelector('[role="progressbar"]')
+      if (!node) return null
+      const segment = node.firstElementChild as HTMLElement
+      return {
+        label: node.getAttribute('aria-label'),
+        height: node.getBoundingClientRect().height,
+        // A bar that is in the DOM but not actually animating would report
+        // this state without ever looking like it.
+        pulse: getComputedStyle(node).animationName,
+        sweep: getComputedStyle(segment).animationName,
+        busyHeader: shadow.querySelector('header')?.getAttribute('aria-busy'),
+      }
+    })
+
+  it('reports itself, even though this tab issued no request', async () => {
+    await busyPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+
+    const shown = await bar()
+    assert.ok(shown, 'expected the header to report a background refresh')
+    assert.equal(shown.label, 'Refreshing results')
+    assert.equal(shown.pulse, 'progress-pulse')
+    assert.equal(shown.sweep, 'progress-sweep')
+    assert.equal(shown.busyHeader, 'true')
+    assert.ok(shown.height > 0, 'expected the bar to have height')
+  })
+
+  it('says so in the footer instead of quoting a stale timestamp', async () => {
+    const footer = await busyPage.evaluate(
+      () =>
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('footer')?.textContent ?? '',
+    )
+    assert.match(footer, /updating/)
+  })
+
+  it('stands down once the worker broadcasts the result back', async () => {
+    await busyPage.evaluate(() => {
+      ;(window as unknown as { __revalidating: boolean }).__revalidating = false
+      ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
+        type: 'search-updated',
+        query: 'is:open is:pr',
+        after: null,
+        page: {
+          items: [],
+          totalCount: 0,
+          endCursor: null,
+          hasNextPage: false,
+          fetchedAt: Date.now(),
+        },
+      })
+    })
+
+    await busyPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[role="progressbar"]'),
+      { timeout: 5_000 },
+    )
+    assert.equal(await bar(), null)
   })
 })
