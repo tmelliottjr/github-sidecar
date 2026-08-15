@@ -17,6 +17,7 @@ function makePage(overrides: Partial<SearchPage> = {}): SearchPage {
     endCursor: 'CURSOR',
     hasNextPage: false,
     fetchedAt: 1000,
+    warning: null,
     ...overrides,
   }
 }

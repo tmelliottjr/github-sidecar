@@ -1,6 +1,16 @@
 export type ItemKind = 'issue' | 'pull-request'
 
 /**
+ * What the reader can do about a failure, rather than what went wrong.
+ *
+ * Deliberately says nothing about *why* a token was refused: single sign-on,
+ * an IP allow list and a missing scope all land on `auth` because the next
+ * step is the same one — go and fix the token. Naming any single identity
+ * provider here would tie the panel to one deployment's setup.
+ */
+export type ApiErrorKind = 'auth' | 'rate-limit' | 'not-found' | 'server' | 'unknown'
+
+/**
  * Normalised lifecycle state, flattened across issues and pull requests.
  * `queued` is a pull request sitting in a merge queue: still open, but no
  * longer waiting on anything the reader has to do.
@@ -78,4 +88,11 @@ export interface SearchPage {
   hasNextPage: boolean
   /** When the page was produced, used to show data freshness. */
   fetchedAt: number
+  /**
+   * Set when GitHub answered with results *and* errors — typically a token
+   * that cannot reach some of the organisations the query covers. The list is
+   * usable but incomplete, so this is shown alongside it rather than instead
+   * of it.
+   */
+  warning: string | null
 }

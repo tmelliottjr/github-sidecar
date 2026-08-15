@@ -22,7 +22,9 @@
           "__sentMessages",
           "__broadcast",
           "__failRefresh",
+          "__pageKeys",
           "__revalidating",
+          "__searchWarning",
           "__tabOpen",
           "__DEV_RELOAD_ORIGIN__"
         ]

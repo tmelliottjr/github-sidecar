@@ -1,4 +1,5 @@
 import type {
+  ApiErrorKind,
   CheckState,
   ItemState,
   Label,
@@ -246,11 +247,17 @@ interface GraphQLNode {
   } | null
 }
 
+export interface GraphQLError {
+  message: string
+  type?: string
+  path?: Array<string | number>
+}
+
 interface ItemResponse {
   data?: {
     repository: { issueOrPullRequest: GraphQLNode | null } | null
-  }
-  errors?: Array<{ message: string; type?: string }>
+  } | null
+  errors?: GraphQLError[]
 }
 
 interface GraphQLResponse {
@@ -259,18 +266,46 @@ interface GraphQLResponse {
       issueCount: number
       pageInfo: { hasNextPage: boolean; endCursor: string | null }
       nodes: Array<GraphQLNode | Record<string, never>> | null
-    }
-  }
-  errors?: Array<{ message: string; type?: string }>
+    } | null
+  } | null
+  errors?: GraphQLError[]
 }
+
+/** Kinds where asking the same question again cannot produce a better answer. */
+const TERMINAL_KINDS: ReadonlySet<ApiErrorKind> = new Set<ApiErrorKind>([
+  'auth',
+  'rate-limit',
+  'not-found',
+])
 
 export class GitHubApiError extends Error {
   readonly status: number | undefined
+  /**
+   * What the caller can do about it, rather than what went wrong. Survives the
+   * trip through `chrome.runtime.sendMessage`, which flattens an Error to its
+   * message, so the panel can still offer the right next step.
+   */
+  readonly kind: ApiErrorKind
+  /** False where trying again unchanged cannot possibly succeed. */
+  readonly retryable: boolean
+  /** The raw GraphQL errors, kept for matching that must not read prose. */
+  readonly errors: readonly GraphQLError[]
 
-  constructor(message: string, status?: number) {
+  constructor(
+    message: string,
+    options: {
+      status?: number
+      kind?: ApiErrorKind
+      retryable?: boolean
+      errors?: readonly GraphQLError[]
+    } = {},
+  ) {
     super(message)
     this.name = 'GitHubApiError'
-    this.status = status
+    this.status = options.status
+    this.kind = options.kind ?? 'unknown'
+    this.retryable = options.retryable ?? !TERMINAL_KINDS.has(this.kind)
+    this.errors = options.errors ?? []
   }
 }
 
@@ -369,10 +404,128 @@ export interface SearchParams {
 }
 
 /**
+ * GitHub's own wording for a refused token is written for an API client, not
+ * for a reader: the single sign-on one is three sentences of OAuth vocabulary,
+ * and it arrives once per inaccessible repository, so the raw text is both
+ * unreadable and enormous in a 300px panel.
+ *
+ * These patterns key off *what the token cannot do*, never off the identity
+ * provider enforcing it, so one deployment's sign-on setup is not baked into
+ * the panel. Anything unrecognised keeps GitHub's own message.
+ */
+const AUTH_PATTERNS: Array<{ test: RegExp; message: string }> = [
+  {
+    test: /\b(saml|sso|single[- ]sign[- ]?on)\b|must grant your .*token/i,
+    message:
+      'Your token is not authorised for every organisation this query covers. Authorise it for those organisations, then try again.',
+  },
+  {
+    test: /\bip allow ?list\b/i,
+    message:
+      "Your token was refused by an organisation's IP allow list. Connect from an allowed address, or add this token to the list.",
+  },
+  {
+    test: /\b(scopes?|oauth app access)\b/i,
+    message:
+      'Your token is missing a permission this query needs. Re-create it with repository and organisation read access.',
+  },
+]
+
+const ERROR_TYPE_KINDS: Record<string, ApiErrorKind> = {
+  FORBIDDEN: 'auth',
+  INSUFFICIENT_SCOPES: 'auth',
+  UNAUTHORIZED: 'auth',
+  RATE_LIMITED: 'rate-limit',
+  NOT_FOUND: 'not-found',
+  SERVICE_UNAVAILABLE: 'server',
+  INTERNAL: 'server',
+}
+
+/** Trims runaway prose so one error cannot fill the panel. */
+const MAX_MESSAGE_LENGTH = 200
+
+function truncate(message: string): string {
+  if (message.length <= MAX_MESSAGE_LENGTH) return message
+  return `${message.slice(0, MAX_MESSAGE_LENGTH - 1).trimEnd()}…`
+}
+
+/** What the reader can do about a set of GraphQL errors. */
+export function classifyGraphQLErrors(errors: readonly GraphQLError[]): ApiErrorKind {
+  const kinds = new Set(
+    errors.map((error) => ERROR_TYPE_KINDS[error.type ?? ''] ?? 'unknown'),
+  )
+  if (kinds.has('auth')) return 'auth'
+  if (kinds.has('rate-limit')) return 'rate-limit'
+  // Older hosts send these refusals without a machine-readable type at all.
+  if (errors.some((error) => AUTH_PATTERNS.some(({ test }) => test.test(error.message)))) {
+    return 'auth'
+  }
+  if (kinds.has('server')) return 'server'
+  if (kinds.has('not-found')) return 'not-found'
+  return 'unknown'
+}
+
+/**
+ * Collapses GraphQL errors into one short line. GitHub repeats the same
+ * refusal once per resource it applies to, so identical causes are deduped
+ * rather than listed out.
+ */
+export function describeGraphQLErrors(errors: readonly GraphQLError[]): string {
+  const described = new Set<string>()
+
+  for (const error of errors) {
+    const known = AUTH_PATTERNS.find(({ test }) => test.test(error.message))
+    if (known) {
+      described.add(known.message)
+      continue
+    }
+    if (error.type === 'RATE_LIMITED') {
+      described.add('GitHub is rate limiting this token. Results will refresh shortly.')
+      continue
+    }
+    described.add(truncate(error.message.trim()))
+  }
+
+  const lines = [...described]
+  if (lines.length === 0) return 'GitHub rejected this request.'
+  // Anything past the first cause is noise in a panel this narrow.
+  return lines.length === 1 ? lines[0] : `${lines[0]} (+${lines.length - 1} more)`
+}
+
+/**
+ * True when GitHub answered with something worth rendering. A response can
+ * carry both data and errors — a token that cannot see one organisation still
+ * gets results from the others — and discarding that would take the whole list
+ * down over a repository the reader may not even care about.
+ */
+function hasUsableData(payload: { data?: unknown }): boolean {
+  const { data } = payload
+  if (!data || typeof data !== 'object') return false
+  return Object.values(data as Record<string, unknown>).some((value) => value !== null)
+}
+
+/** GitHub reports a spent budget on the response itself, not only as a 429. */
+function isRateLimited(response: Response): boolean {
+  return (
+    response.status === 429 ||
+    response.headers.get('x-ratelimit-remaining') === '0' ||
+    response.headers.has('retry-after')
+  )
+}
+
+export interface GraphQLPayload {
+  data?: unknown
+  errors?: GraphQLError[]
+}
+
+/**
  * Runs in the background service worker: github.com's CSP would block these
  * requests if they were issued from the content script.
+ *
+ * Resolves with the payload whenever there is data to render, errors and all;
+ * the caller decides what to say about a partial answer.
  */
-async function post<T extends { errors?: Array<{ message: string }> }>(
+async function post<T extends GraphQLPayload>(
   token: string,
   body: { query: string; variables: Record<string, unknown> },
 ): Promise<T> {
@@ -387,18 +540,39 @@ async function post<T extends { errors?: Array<{ message: string }> }>(
   })
 
   if (response.status === 401) {
-    throw new GitHubApiError('Invalid or expired token. Update it in settings.', 401)
+    throw new GitHubApiError('Invalid or expired token. Update it in settings.', {
+      status: 401,
+      kind: 'auth',
+    })
   }
-  if (response.status === 403 || response.status === 429) {
-    throw new GitHubApiError('Rate limited by GitHub. Try again shortly.', response.status)
+  if (isRateLimited(response)) {
+    throw new GitHubApiError('Rate limited by GitHub. Try again shortly.', {
+      status: response.status,
+      kind: 'rate-limit',
+    })
+  }
+  // A 403 that is not a rate limit is a refusal: the token cannot reach what
+  // it asked for, and asking again unchanged will be refused again.
+  if (response.status === 403) {
+    throw new GitHubApiError(
+      'GitHub refused this request. Your token may not be authorised for the organisation that owns these results.',
+      { status: 403, kind: 'auth' },
+    )
   }
   if (!response.ok) {
-    throw new GitHubApiError(`GitHub responded with ${response.status}.`, response.status)
+    throw new GitHubApiError(`GitHub responded with ${response.status}.`, {
+      status: response.status,
+      kind: response.status >= 500 ? 'server' : 'unknown',
+    })
   }
 
   const payload = (await response.json()) as T
-  if (payload.errors?.length) {
-    throw new GitHubApiError(payload.errors.map((error) => error.message).join('; '))
+  const errors = payload.errors ?? []
+  if (errors.length > 0 && !hasUsableData(payload)) {
+    throw new GitHubApiError(describeGraphQLErrors(errors), {
+      kind: classifyGraphQLErrors(errors),
+      errors,
+    })
   }
   return payload
 }
@@ -407,12 +581,20 @@ async function post<T extends { errors?: Array<{ message: string }> }>(
  * True for the validation error a host without the stacked pull request
  * preview answers with. It arrives as an ordinary GraphQL error rather than a
  * null field, so it has to be recognised by hand.
+ *
+ * Matched against the raw GraphQL text rather than the error's own message,
+ * which by this point may have been rewritten into something a reader can act
+ * on and no longer names the field at all.
  */
 function isUnknownStackField(error: unknown): boolean {
   if (!(error instanceof GitHubApiError)) return false
-  return (
-    /\bstack(entry)?\b/i.test(error.message) &&
-    /(does ?n[o']t exist|cannot query field|undefined field)/i.test(error.message)
+  const messages = error.errors.length
+    ? error.errors.map((entry) => entry.message)
+    : [error.message]
+  return messages.some(
+    (message) =>
+      /\bstack(entry)?\b/i.test(message) &&
+      /(does ?n[o']t exist|cannot query field|undefined field)/i.test(message),
   )
 }
 
@@ -421,7 +603,7 @@ function isUnknownStackField(error: unknown): boolean {
  * first time a host rejects them. A preview field that has not reached this
  * host must cost the sidebar its stack badges, not its list.
  */
-async function postWithStackFallback<T extends { errors?: Array<{ message: string }> }>(
+async function postWithStackFallback<T extends GraphQLPayload>(
   token: string,
   buildQuery: (withStack: boolean) => string,
   variables: Record<string, unknown>,
@@ -457,16 +639,25 @@ export async function searchIssues(
   }
 
   const { search } = body.data
+  if (!search) {
+    throw new GitHubApiError('GitHub returned an empty response.')
+  }
+
   const nodes = (search.nodes ?? []).filter(
     (node): node is GraphQLNode => '__typename' in node && node.__typename !== undefined,
   )
 
+  const errors = body.errors ?? []
   return {
     items: nodes.map(normalise),
     totalCount: search.issueCount,
     endCursor: search.pageInfo.endCursor,
     hasNextPage: search.pageInfo.hasNextPage,
     fetchedAt: Date.now(),
+    // Results GitHub refused to include are reported alongside the ones it
+    // did, rather than instead of them: a single unreachable organisation must
+    // not empty a list that is otherwise perfectly usable.
+    warning: errors.length > 0 ? describeGraphQLErrors(errors) : null,
   }
 }
 
@@ -497,7 +688,18 @@ export async function fetchItem(
 
   const node = body.data?.repository?.issueOrPullRequest
   if (!node) {
-    throw new GitHubApiError(`${repository}#${number} could not be found.`)
+    // A row can be missing because it does not exist, or because this token
+    // cannot see it. Where GitHub said which, say that instead.
+    const errors = body.errors ?? []
+    if (errors.length > 0) {
+      throw new GitHubApiError(describeGraphQLErrors(errors), {
+        kind: classifyGraphQLErrors(errors),
+        errors,
+      })
+    }
+    throw new GitHubApiError(`${repository}#${number} could not be found.`, {
+      kind: 'not-found',
+    })
   }
   return normalise(node)
 }
@@ -518,15 +720,23 @@ export async function fetchViewer(token: string): Promise<string> {
       response.status === 401
         ? 'That token was rejected by GitHub.'
         : `GitHub responded with ${response.status}.`,
-      response.status,
+      {
+        status: response.status,
+        kind: response.status === 401 || response.status === 403 ? 'auth' : 'unknown',
+      },
     )
   }
 
   const body = (await response.json()) as {
-    data?: { viewer: { login: string } }
-    errors?: Array<{ message: string }>
+    data?: { viewer: { login: string } } | null
+    errors?: GraphQLError[]
   }
-  if (body.errors?.length) throw new GitHubApiError(body.errors[0].message)
+  if (body.errors?.length) {
+    throw new GitHubApiError(describeGraphQLErrors(body.errors), {
+      kind: classifyGraphQLErrors(body.errors),
+      errors: body.errors,
+    })
+  }
   if (!body.data) throw new GitHubApiError('GitHub returned an empty response.')
   return body.data.viewer.login
 }

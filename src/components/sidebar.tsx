@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertIcon,
   InboxIcon,
+  KeyIcon,
   MarkGithubIcon,
   SlidersIcon,
   SyncIcon,
+  XIcon,
 } from '@primer/octicons-react'
 
 import {
@@ -28,7 +30,7 @@ import { useSearchUpdates } from '@/hooks/use-search-updates'
 import { useStorageValue } from '@/hooks/use-storage-value'
 import { useTabOpen } from '@/hooks/use-tab-open'
 import type { SearchItem } from '@/lib/github/types'
-import { sendMessage } from '@/lib/messages'
+import { sendMessage, RequestError } from '@/lib/messages'
 import type { SavedQuery, Settings, WindowState } from '@/lib/storage'
 import { cn, relativeTime } from '@/lib/utils'
 
@@ -121,6 +123,10 @@ export function Sidebar() {
   // instead, and stop saying so when the result is broadcast back.
   const isRevalidating = search.data?.pages.some((page) => page.revalidating) ?? false
   const isRefreshing = useRefreshActivity(search.isFetching || isRevalidating)
+
+  // Every page of a query is refused for the same reason, so the first page to
+  // report one speaks for all of them.
+  const warning = search.data?.pages.find((page) => page.warning)?.warning ?? null
 
   // Pinned rows are lifted to the top in the order they were pinned. Only the
   // pages already loaded can be reordered, so a pin on a row that has not been
@@ -278,6 +284,14 @@ export function Sidebar() {
   const body = (
     <div className="flex h-full flex-col">
       {/*
+       * Sits outside the keyed pane below: an unreachable organisation is a
+       * property of the answer, not of which screen is showing, so it must not
+       * be replayed every time the query changes.
+       */}
+      {!editing && hasToken && !search.isError && warning && (
+        <WarningBanner message={warning} />
+      )}
+      {/*
        * Keyed on what the panel is showing, so switching query or state
        * remounts the pane and replays its entrance rather than swapping one
        * screen of content for another between frames.
@@ -294,7 +308,7 @@ export function Sidebar() {
         ) : !hasToken ? (
           <TokenPrompt />
         ) : search.isError ? (
-          <ErrorState message={(search.error as Error).message} onRetry={refetch} />
+          <ErrorState error={search.error} onRetry={refetch} />
         ) : search.isPending ? (
           <LoadingState />
         ) : items.length === 0 ? (
@@ -384,15 +398,65 @@ function TokenPrompt() {
   )
 }
 
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorState({
+  error,
+  onRetry,
+}: {
+  error: unknown
+  onRetry: () => void
+}) {
+  const message = error instanceof Error ? error.message : String(error)
+  // A refused token is the one failure the reader cannot fix from here, so it
+  // gets the settings page rather than a retry that will fail identically.
+  const isAuth = error instanceof RequestError && error.kind === 'auth'
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <AlertIcon className="size-6 text-attention" />
+      {isAuth ? (
+        <KeyIcon className="size-6 text-attention" />
+      ) : (
+        <AlertIcon className="size-6 text-attention" />
+      )}
       <p className="text-[12px] leading-relaxed text-muted-foreground">{message}</p>
-      <Button variant="outline" size="sm" onClick={onRetry}>
-        <SyncIcon />
-        Try again
-      </Button>
+      <div className="flex items-center gap-2">
+        {isAuth && (
+          <Button size="sm" onClick={() => void sendMessage({ type: 'open-options' })}>
+            Open settings
+          </Button>
+        )}
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          <SyncIcon />
+          Try again
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A partial answer: GitHub returned rows *and* told us it was holding some
+ * back. Sits above the list rather than replacing it, and is dismissible,
+ * because a permanently unreachable organisation should not permanently cost
+ * the reader a strip of the panel.
+ */
+function WarningBanner({ message }: { message: string }) {
+  const [dismissed, setDismissed] = useState(false)
+  // A different cause is worth showing again even after the last was dismissed.
+  useEffect(() => setDismissed(false), [message])
+  if (dismissed) return null
+
+  return (
+    <div className="flex items-start gap-2 border-b border-attention/30 bg-attention/10 px-2.5 py-1.5">
+      <AlertIcon className="mt-px size-3.5 shrink-0 text-attention" />
+      <p className="flex-1 text-[11px] leading-snug text-foreground">{message}</p>
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        aria-label="Dismiss warning"
+        className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+      >
+        <XIcon className="size-3" />
+      </button>
     </div>
   )
 }

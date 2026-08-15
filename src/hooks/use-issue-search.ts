@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 
-import { sendMessage, type CachedSearchPage } from '@/lib/messages'
+import { sendMessage, RequestError, type CachedSearchPage } from '@/lib/messages'
 
 export const PAGE_SIZE = 30
 
@@ -51,8 +51,11 @@ export function useIssueSearch({ query, pollIntervalMs, enabled }: Options) {
     // this window.
     staleTime: 15_000,
     gcTime: 5 * 60_000,
+    // A refused token or a query GitHub will not parse fails the same way
+    // however many times it is asked, so the worker says outright whether
+    // trying again could change the answer.
     retry: (failureCount, error) =>
-      failureCount < 2 && !/token|rate limit/i.test((error as Error).message),
+      failureCount < 2 && !(error instanceof RequestError && !error.retryable),
     // Keep the previous query's rows on screen while a new one loads instead of
     // flashing an empty list.
     placeholderData: (previous) => previous,

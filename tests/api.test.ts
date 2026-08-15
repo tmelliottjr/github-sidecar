@@ -11,11 +11,11 @@ import {
 
 const originalFetch = globalThis.fetch
 
-function stubFetch(body: unknown, init: { status?: number } = {}) {
+function stubFetch(body: unknown, init: { status?: number; headers?: HeadersInit } = {}) {
   globalThis.fetch = (async () =>
     new Response(JSON.stringify(body), {
       status: init.status ?? 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...init.headers },
     })) as typeof fetch
 }
 
@@ -458,5 +458,197 @@ describe('labels', () => {
 
     assert.equal(page.items[0].labelCount, 0)
     assert.equal(page.items[1].labelCount, 0)
+  })
+})
+
+/**
+ * GitHub answers a query that spans an organisation the token cannot reach
+ * with *both* the results it could read and an error for each one it could
+ * not. Treating that as a failure would empty a list that is mostly fine.
+ */
+describe('partially refused results', () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  const ssoError = {
+    type: 'FORBIDDEN',
+    message:
+      'Resource protected by organization SAML enforcement. You must grant your OAuth token access to this organization.',
+  }
+
+  it('keeps the results GitHub did return', async () => {
+    stubFetch({ ...searchPayload([issueNode]), errors: [ssoError] })
+
+    const page = await searchIssues('token', { q: 'is:open', first: 30 })
+
+    assert.equal(page.items.length, 1)
+    assert.equal(page.items[0].id, 'I_1')
+  })
+
+  it('reports the refusal as an actionable warning rather than GitHub prose', async () => {
+    stubFetch({ ...searchPayload([issueNode]), errors: [ssoError] })
+
+    const page = await searchIssues('token', { q: 'is:open', first: 30 })
+
+    assert.ok(page.warning)
+    assert.match(page.warning, /authoris/i)
+    // The raw wording is written for an API client, not for a 300px panel.
+    assert.doesNotMatch(page.warning, /OAuth token access/)
+  })
+
+  it('leaves a clean page unmarked', async () => {
+    stubFetch(searchPayload([issueNode]))
+
+    const page = await searchIssues('token', { q: 'is:open', first: 30 })
+
+    assert.equal(page.warning, null)
+  })
+
+  it('collapses the same refusal repeated once per repository', async () => {
+    stubFetch({
+      ...searchPayload([issueNode]),
+      errors: [ssoError, { ...ssoError }, { ...ssoError }],
+    })
+
+    const page = await searchIssues('token', { q: 'is:open', first: 30 })
+
+    assert.doesNotMatch(page.warning!, /\+\d+ more/)
+  })
+
+  it('counts distinct causes without listing them all', async () => {
+    stubFetch({
+      ...searchPayload([issueNode]),
+      errors: [ssoError, { type: 'NOT_FOUND', message: 'Could not resolve to a User.' }],
+    })
+
+    const page = await searchIssues('token', { q: 'is:open', first: 30 })
+
+    assert.match(page.warning!, /\(\+1 more\)$/)
+  })
+
+  it('still fails when GitHub returned nothing to show', async () => {
+    stubFetch({ data: { search: null }, errors: [ssoError] })
+
+    await assert.rejects(
+      () => searchIssues('token', { q: 'is:open', first: 30 }),
+      (error: GitHubApiError) => {
+        assert.equal(error.kind, 'auth')
+        assert.equal(error.retryable, false)
+        return true
+      },
+    )
+  })
+})
+
+describe('error classification', () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  it('marks a rejected token as an auth failure not worth retrying', async () => {
+    stubFetch({}, { status: 401 })
+
+    await assert.rejects(
+      () => searchIssues('bad', { q: 'is:issue', first: 30 }),
+      (error: GitHubApiError) => {
+        assert.equal(error.kind, 'auth')
+        assert.equal(error.retryable, false)
+        return true
+      },
+    )
+  })
+
+  /**
+   * A 403 is only sometimes a rate limit. Reading every one as "try again
+   * shortly" told the reader to wait out a refusal that would never lift.
+   */
+  it('separates a refusal from a spent rate limit', async () => {
+    stubFetch({}, { status: 403 })
+
+    await assert.rejects(
+      () => searchIssues('token', { q: 'is:issue', first: 30 }),
+      (error: GitHubApiError) => {
+        assert.equal(error.kind, 'auth')
+        assert.match(error.message, /authoris/i)
+        return true
+      },
+    )
+  })
+
+  it('reads a spent budget off the response headers', async () => {
+    stubFetch({}, { status: 403, headers: { 'x-ratelimit-remaining': '0' } })
+
+    await assert.rejects(
+      () => searchIssues('token', { q: 'is:issue', first: 30 }),
+      (error: GitHubApiError) => {
+        assert.equal(error.kind, 'rate-limit')
+        assert.match(error.message, /rate limited/i)
+        return true
+      },
+    )
+  })
+
+  it('lets a server error be retried', async () => {
+    stubFetch({}, { status: 502 })
+
+    await assert.rejects(
+      () => searchIssues('token', { q: 'is:issue', first: 30 }),
+      (error: GitHubApiError) => {
+        assert.equal(error.kind, 'server')
+        assert.equal(error.retryable, true)
+        return true
+      },
+    )
+  })
+
+  it('rewrites a missing scope into the step that fixes it', async () => {
+    stubFetch({
+      errors: [
+        {
+          type: 'INSUFFICIENT_SCOPES',
+          message:
+            "Your token has not been granted the required scopes to execute this query. The 'id' field requires one of the following scopes: ['read:org'].",
+        },
+      ],
+    })
+
+    await assert.rejects(
+      () => searchIssues('token', { q: 'is:issue', first: 30 }),
+      (error: GitHubApiError) => {
+        assert.equal(error.kind, 'auth')
+        assert.match(error.message, /permission/i)
+        return true
+      },
+    )
+  })
+
+  it('keeps the raw GraphQL errors for matching that must not read prose', async () => {
+    stubFetch({ errors: [{ type: 'FORBIDDEN', message: 'SAML enforcement' }] })
+
+    await assert.rejects(
+      () => searchIssues('token', { q: 'is:issue', first: 30 }),
+      (error: GitHubApiError) => {
+        assert.equal(error.errors.length, 1)
+        assert.equal(error.errors[0].message, 'SAML enforcement')
+        return true
+      },
+    )
+  })
+
+  it('says why a row is unreadable rather than claiming it is missing', async () => {
+    stubFetch({
+      data: { repository: null },
+      errors: [{ type: 'FORBIDDEN', message: 'Resource protected by organization SAML.' }],
+    })
+
+    await assert.rejects(
+      () => fetchItem('token', { repository: 'acme/app', number: 34 }),
+      (error: GitHubApiError) => {
+        assert.equal(error.kind, 'auth')
+        assert.doesNotMatch(error.message, /could not be found/)
+        return true
+      },
+    )
   })
 })

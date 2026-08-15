@@ -1,4 +1,4 @@
-import type { SearchItem, SearchPage } from './github/types'
+import type { ApiErrorKind, SearchItem, SearchPage } from './github/types'
 
 /** A search page plus where it came from, so the UI can show data age. */
 export interface CachedSearchPage extends SearchPage {
@@ -17,7 +17,9 @@ export type RequestMessage =
   | { type: 'open-item'; url: string; target: 'window' | 'tab' }
   | { type: 'open-options' }
 
-export type ResponseMessage<T> = { ok: true; data: T } | { ok: false; error: string }
+export type ResponseMessage<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; kind?: ApiErrorKind; retryable?: boolean }
 
 /** Broadcast from the toolbar action to every github.com tab. */
 export interface ToggleMessage {
@@ -58,6 +60,24 @@ export type ResultFor<M extends RequestMessage> = M extends { type: 'search' }
         : void
 
 /**
+ * A failure that crossed the worker boundary. `chrome.runtime.sendMessage`
+ * flattens an Error to its message, so anything the panel needs in order to
+ * react — whether retrying could help, whether to offer the settings page —
+ * has to travel as its own field and be rebuilt here.
+ */
+export class RequestError extends Error {
+  readonly kind: ApiErrorKind
+  readonly retryable: boolean
+
+  constructor(message: string, kind: ApiErrorKind = 'unknown', retryable = true) {
+    super(message)
+    this.name = 'RequestError'
+    this.kind = kind
+    this.retryable = retryable
+  }
+}
+
+/**
  * Content scripts cannot call api.github.com directly because github.com's
  * CSP applies to their fetches, so every request is proxied through the
  * background service worker.
@@ -70,10 +90,10 @@ export async function sendMessage<M extends RequestMessage>(
     | undefined
 
   if (!response) {
-    throw new Error('The extension background worker did not respond.')
+    throw new RequestError('The extension background worker did not respond.')
   }
   if (!response.ok) {
-    throw new Error(response.error)
+    throw new RequestError(response.error, response.kind, response.retryable ?? true)
   }
   return response.data
 }

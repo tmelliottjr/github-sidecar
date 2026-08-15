@@ -1,4 +1,4 @@
-import { fetchItem, fetchViewer, searchIssues } from '@/lib/github/api'
+import { GitHubApiError, fetchItem, fetchViewer, searchIssues } from '@/lib/github/api'
 import type { BroadcastMessage, RequestMessage, ResponseMessage } from '@/lib/messages'
 import { readStorage } from '@/lib/storage'
 import { indexedDbStore } from './cache'
@@ -38,7 +38,11 @@ async function writeTabOpen(tabId: number | undefined, open: boolean): Promise<v
 
 async function requireToken(): Promise<string> {
   const { token } = await readStorage('settings')
-  if (!token) throw new Error('Add a GitHub token in settings to load results.')
+  if (!token) {
+    throw new GitHubApiError('Add a GitHub token in settings to load results.', {
+      kind: 'auth',
+    })
+  }
   return token
 }
 
@@ -161,6 +165,11 @@ chrome.runtime.onMessage.addListener((message: RequestMessage, sender, sendRespo
       sendResponse({
         ok: false,
         error: error instanceof Error ? error.message : String(error),
+        // Only the message itself survives the channel, so what the panel is
+        // meant to do about the failure travels beside it.
+        ...(error instanceof GitHubApiError
+          ? { kind: error.kind, retryable: error.retryable }
+          : {}),
       } satisfies ResponseMessage<never>),
     )
 

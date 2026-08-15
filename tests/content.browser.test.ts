@@ -158,6 +158,9 @@ window.chrome = {
             fetchedAt: Date.now(),
             source: 'cache',
             revalidating: window.__revalidating === true,
+            // Set by the partial-results suite; GitHub can hand back rows and
+            // a refusal in the same answer.
+            warning: window.__searchWarning ?? null,
           },
         };
       }
@@ -1582,5 +1585,199 @@ describe('a refresh the worker started on its own', { concurrency: false, skip }
       { timeout: 5_000 },
     )
     assert.equal(await bar(), null)
+  })
+})
+
+/**
+ * github.com binds single-letter shortcuts on `document`, and skips them when
+ * the keystroke came from a form field. That check reads `event.target`, which
+ * for anything inside a shadow root is retargeted to the host element — so
+ * every keystroke this panel receives looks to the page like it came from an
+ * anonymous div, and typing a query name opens the label picker underneath.
+ */
+describe('keyboard isolation', { concurrency: false, skip }, () => {
+  let keyBrowser: Browser
+  let keyPage: Page
+
+  before(async () => {
+    keyBrowser = await puppeteer.launch({ executablePath, headless: true })
+    keyPage = await keyBrowser.newPage()
+    await keyPage.setViewport({ width: 1280, height: 800 })
+    await keyPage.setContent(
+      '<!doctype html><html data-color-mode="light"><body><input id="page-input" /></body></html>',
+    )
+    await keyPage.evaluate(CHROME_STUB)
+
+    // Stands in for github.com's own shortcut handler, bound exactly where
+    // theirs is and reporting what it would have acted on.
+    await keyPage.evaluate(() => {
+      const seen: Array<{ key: string; target: string }> = []
+      ;(window as unknown as { __pageKeys: typeof seen }).__pageKeys = seen
+      document.addEventListener('keydown', (event) => {
+        const target = event.target as HTMLElement
+        seen.push({ key: event.key, target: target.id || target.tagName })
+      })
+    })
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await keyPage.evaluate(bundle)
+    await keyPage.waitForSelector('#github-sidecar-root')
+    await keyPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+
+    // Reach the panel's own inputs, which is where the interruption bites.
+    const trigger = await keyPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = (
+        shadow.querySelector('[aria-haspopup="menu"]') as HTMLElement
+      ).getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+    await keyPage.mouse.click(trigger.x, trigger.y)
+    await keyPage.waitForFunction(() =>
+      Boolean(
+        document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector(
+          '[role="menuitem"]',
+        ),
+      ),
+    )
+    await keyPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[role="menuitem"]')].find((node) =>
+        node.textContent?.includes('Manage queries'),
+      )
+      ;(entry as HTMLElement).click()
+    })
+    await keyPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')
+          ?.shadowRoot?.querySelector('input[placeholder="Query name"]'),
+      ),
+    )
+  })
+
+  after(async () => {
+    await keyBrowser?.close()
+  })
+
+  const pageKeys = () =>
+    keyPage.evaluate(
+      () =>
+        (window as unknown as { __pageKeys: Array<{ key: string; target: string }> })
+          .__pageKeys,
+    )
+
+  const clearKeys = () =>
+    keyPage.evaluate(() => {
+      ;(window as unknown as { __pageKeys: unknown[] }).__pageKeys.length = 0
+    })
+
+  const focusQueryName = () =>
+    keyPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const input = shadow.querySelector(
+        'input[placeholder="Query name"]',
+      ) as HTMLInputElement
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    })
+
+  it('keeps a shortcut key typed into the panel away from the page', async () => {
+    await focusQueryName()
+    await clearKeys()
+    // `l` opens GitHub's label picker on an issue or pull request.
+    await keyPage.keyboard.type('lg')
+
+    assert.deepEqual(await pageKeys(), [])
+  })
+
+  it('still types the character it swallowed the shortcut for', async () => {
+    const value = await keyPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return (shadow.querySelector('input[placeholder="Query name"]') as HTMLInputElement)
+        .value
+    })
+
+    assert.match(value, /lg$/)
+  })
+
+  it('leaves the page shortcuts working outside the panel', async () => {
+    await keyPage.evaluate(() => {
+      ;(document.getElementById('page-input') as HTMLInputElement).focus()
+    })
+    await clearKeys()
+    await keyPage.keyboard.type('l')
+
+    assert.deepEqual(await pageKeys(), [{ key: 'l', target: 'page-input' }])
+  })
+})
+
+describe('results GitHub only partly returned', { concurrency: false, skip }, () => {
+  let warnBrowser: Browser
+  let warnPage: Page
+  const warning = 'Your token is not authorised for every organisation this query covers.'
+
+  before(async () => {
+    warnBrowser = await puppeteer.launch({ executablePath, headless: true })
+    warnPage = await warnBrowser.newPage()
+    await warnPage.setViewport({ width: 1280, height: 800 })
+    await warnPage.setContent(
+      '<!doctype html><html data-color-mode="light"><body></body></html>',
+    )
+    await warnPage.evaluate(CHROME_STUB)
+    await warnPage.evaluate((text) => {
+      ;(window as unknown as { __searchWarning: string }).__searchWarning = text
+    }, warning)
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await warnPage.evaluate(bundle)
+    await warnPage.waitForSelector('#github-sidecar-root')
+    await warnPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+  })
+
+  after(async () => {
+    await warnBrowser?.close()
+  })
+
+  it('shows the rows it did get, with the refusal beside them', async () => {
+    const shown = await warnPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const banner = shadow.querySelector('[aria-label="Dismiss warning"]')?.parentElement
+      return {
+        rows: shadow.querySelectorAll('[data-index]').length,
+        banner: banner?.textContent?.trim() ?? null,
+      }
+    })
+
+    assert.ok(shown.rows > 0, 'expected the readable rows to survive the refusal')
+    assert.match(shown.banner ?? '', /not authorised/)
+  })
+
+  it('can be dismissed without taking the list with it', async () => {
+    await warnPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Dismiss warning"]') as HTMLElement).click()
+    })
+
+    await warnPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[aria-label="Dismiss warning"]'),
+    )
+
+    const rows = await warnPage.evaluate(
+      () =>
+        document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll(
+          '[data-index]',
+        ).length,
+    )
+    assert.ok(rows > 0)
   })
 })

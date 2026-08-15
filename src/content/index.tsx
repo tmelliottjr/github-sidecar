@@ -7,6 +7,7 @@ import { PortalContainerProvider } from '@/components/ui/portal-container'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { watchColorScheme } from '@/content/color-scheme'
 import { resolveFontStack } from '@/content/fonts'
+import { isolateKeyboard } from '@/content/keyboard'
 import { HOST_ID } from '@/content/page-layout'
 import { withShadowRootProperties } from '@/content/stylesheet'
 import styles from '@/styles/app.css?inline'
@@ -50,6 +51,7 @@ function mount(): void {
   document.documentElement.appendChild(host)
 
   const shadow = host.attachShadow({ mode: 'open' })
+  isolateKeyboard(shadow)
 
   const sheet = new CSSStyleSheet()
   sheet.replaceSync(withShadowRootProperties(styles))

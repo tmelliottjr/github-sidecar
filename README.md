@@ -89,7 +89,8 @@ The token is stored in `chrome.storage.local` and is only ever sent to
 ```
 src/
   background/   Service worker: GitHub API proxy, IndexedDB cache, dev reload
-  content/      Shadow-DOM mount, page font/colour-mode sync, page metrics
+  content/      Shadow-DOM mount, page font/colour-mode sync, page metrics,
+                keyboard isolation
   components/   Window chrome, list, rows, and shadcn-style primitives
   hooks/        Storage sync, window geometry, dock layout, search, cache updates
   lib/          GitHub GraphQL client, message protocol, storage schema
@@ -120,6 +121,24 @@ A few decisions worth knowing:
   GitHub's CSS cannot reach it and vice versa. Because the shadow host carries
   `all: initial`, base typography is applied to the container inside the shadow
   tree, where it wins over that inline style.
+- **Key events stop at the shadow boundary.** github.com binds single-letter
+  shortcuts on `document` — `l` opens the label picker, `/` focuses search —
+  and skips them when the keystroke came from a form field. That check reads
+  `event.target`, which for anything in a shadow root is retargeted to the
+  host, so every keystroke the panel receives looks to the page like it came
+  from an anonymous `<div>`: typing a query name here would open the label
+  picker underneath. `src/content/keyboard.ts` stops key events on the shadow
+  root, after React and Radix have seen them and before the page does.
+- **A partial answer is not a failure.** GitHub replies to a query spanning an
+  organisation the token cannot reach with the rows it *could* read plus one
+  error per row it could not. Those results are kept and the refusal is shown
+  as a dismissible banner above the list; only an answer with no usable data
+  becomes an error state. GitHub's own wording for a refused token is written
+  for an API client, so `src/lib/github/api.ts` rewrites the recognised cases
+  into the step that fixes them and dedupes the repeats. The classification
+  keys off what the token cannot do, never off the identity provider enforcing
+  it, and the panel offers the settings page instead of a retry that would fail
+  identically.
 - **Geometry is written straight to the DOM** during a drag and only committed
   to storage on release, so dragging never re-renders the list. The window's
   `style` prop is frozen at mount for the same reason: recomputing it would let
