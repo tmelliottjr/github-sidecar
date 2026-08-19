@@ -5,7 +5,7 @@ import {
   GitHubApiError,
   SEARCH_QUERY,
   fetchItem,
-  resetStackSupport,
+  resetPreviewSupport,
   searchIssues,
 } from '../src/lib/github/api.ts'
 
@@ -59,12 +59,60 @@ const pullRequestNode = {
   updatedAt: '2026-01-04T00:00:00Z',
   additions: 10,
   deletions: 2,
+  headRefName: 'octocat/fix-the-thing',
   reviewDecision: 'CHANGES_REQUESTED',
   repository: { nameWithOwner: 'acme/app' },
   author: null,
   comments: { totalCount: 0 },
   labels: { nodes: null },
-  commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+  headRefOid: 'abc123',
+  mergeable: 'MERGEABLE',
+  mergeStateStatus: 'BEHIND',
+  commits: {
+    nodes: [
+      {
+        commit: {
+          statusCheckRollup: {
+            state: 'FAILURE',
+            contexts: {
+              nodes: [
+                {
+                  __typename: 'CheckRun',
+                  name: 'unit tests',
+                  conclusion: 'FAILURE',
+                  detailsUrl: 'https://github.com/acme/app/runs/1',
+                },
+                {
+                  __typename: 'CheckRun',
+                  name: 'lint',
+                  conclusion: 'SUCCESS',
+                  detailsUrl: 'https://github.com/acme/app/runs/2',
+                },
+                {
+                  __typename: 'CheckRun',
+                  name: 'flaky',
+                  conclusion: 'CANCELLED',
+                  detailsUrl: null,
+                },
+                {
+                  __typename: 'CheckRun',
+                  name: 'skipped step',
+                  conclusion: 'SKIPPED',
+                  detailsUrl: null,
+                },
+                {
+                  __typename: 'StatusContext',
+                  context: 'ci/legacy',
+                  state: 'ERROR',
+                  targetUrl: 'https://ci.example/build/9',
+                },
+              ],
+            },
+          },
+        },
+      },
+    ],
+  },
 }
 
 afterEach(() => {
@@ -100,6 +148,69 @@ describe('searchIssues', () => {
     assert.equal(item.reviewDecision, 'CHANGES_REQUESTED')
     assert.equal(item.authorLogin, null)
     assert.deepEqual(item.labels, [])
+  })
+
+  it('names the checks that are red, and leaves the green ones out', async () => {
+    stubFetch(searchPayload([pullRequestNode]))
+
+    const page = await searchIssues('token', { q: 'is:pr', first: 30 })
+
+    assert.deepEqual(page.items[0].failingChecks, [
+      { name: 'unit tests', url: 'https://github.com/acme/app/runs/1' },
+      // Cancelled counts: GitHub's own rollup fails for it, and a red mark
+      // that can name nothing is worse than naming the check that stopped.
+      { name: 'flaky', url: null },
+      { name: 'ci/legacy', url: 'https://ci.example/build/9' },
+    ])
+    // Skipped and neutral do not fail the rollup, so naming them would be
+    // inventing a problem.
+    assert.equal(
+      page.items[0].failingChecks.some((check) => check.name === 'skipped step'),
+      false,
+    )
+    assert.equal(page.items[0].checksRead, 5)
+  })
+
+  it('flattens how a pull request stands against its base', async () => {
+    const cases: Array<[Record<string, unknown>, string | null]> = [
+      [{ mergeStateStatus: 'BEHIND' }, 'behind'],
+      [{ mergeStateStatus: 'DIRTY' }, 'conflicting'],
+      // The older field is the only one some hosts answer, so a conflict it
+      // reports outranks whatever the preview field says.
+      [{ mergeable: 'CONFLICTING', mergeStateStatus: 'BLOCKED' }, 'conflicting'],
+      [{ mergeStateStatus: 'CLEAN' }, 'clean'],
+      [{ mergeStateStatus: 'UNKNOWN' }, 'clean'],
+      [{ mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' }, null],
+      [{ mergeStateStatus: 'DRAFT', mergeable: 'UNKNOWN' }, null],
+    ]
+
+    // Sequential on purpose: each case restubs the one shared fetch.
+    const seen: Array<string | null> = []
+    for (const [patch] of cases) {
+      stubFetch(searchPayload([{ ...pullRequestNode, ...patch }]))
+      // eslint-disable-next-line no-await-in-loop
+      const page = await searchIssues('token', { q: 'is:pr', first: 30 })
+      seen.push(page.items[0].mergeState)
+    }
+    assert.deepEqual(seen, cases.map(([, expected]) => expected))
+  })
+
+  it('says nothing about merging or checks for an issue', async () => {
+    stubFetch(searchPayload([issueNode]))
+
+    const [item] = (await searchIssues('token', { q: 'is:issue', first: 30 })).items
+    assert.equal(item.mergeState, null)
+    assert.deepEqual(item.failingChecks, [])
+    assert.equal(item.headRefOid, null)
+  })
+
+  it('carries a pull request branch, and none for an issue', async () => {
+    stubFetch(searchPayload([pullRequestNode, issueNode]))
+
+    const page = await searchIssues('token', { q: 'is:open', first: 30 })
+
+    assert.equal(page.items[0].headRefName, 'octocat/fix-the-thing')
+    assert.equal(page.items[1].headRefName, null)
   })
 
   it('prefers MERGED over the draft flag', async () => {
@@ -316,7 +427,7 @@ const stackedPullRequestNode = {
 describe('stacked pull requests', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch
-    resetStackSupport()
+    resetPreviewSupport()
   })
 
   it('asks GitHub for stack membership', () => {

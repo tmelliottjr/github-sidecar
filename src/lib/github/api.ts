@@ -1,8 +1,10 @@
 import type {
   ApiErrorKind,
   CheckState,
+  FailingCheck,
   ItemState,
   Label,
+  MergeState,
   ReviewDecision,
   SearchItem,
   SearchPage,
@@ -32,14 +34,26 @@ const AVATAR_SIZE = 28
 const LABEL_DOTS = 5
 
 /**
- * `stack` and `stackEntry` are a public preview. A host that has not been
- * given the fields answers the whole query with a validation error rather than
- * a null, which would take the list down with it, so the first such failure
- * drops them and everything after it asks the smaller question.
+ * How many of a commit's checks are read. Only the failing ones are kept, and
+ * a rollup with more checks than this still reports the right overall state —
+ * the row simply cannot name the ones it never read. Set high enough to cover
+ * all but the largest repositories, since a red mark that can name nothing is
+ * the confusing case; the response only ever carries the checks that exist.
  */
-let stackFieldsSupported = true
+const CHECK_CONTEXTS = 50
 
-const STACK_FIELDS = /* GraphQL */ `
+/**
+ * `stack`, `stackEntry` and `mergeStateStatus` are all schema previews. A host
+ * that has not been given them answers the whole query with a validation error
+ * rather than a null, which would take the list down with it, so the first
+ * such failure drops them and everything after it asks the smaller question.
+ */
+let previewFieldsSupported = true
+
+/** Opts into every preview the query asks for; ordinary JSON either way. */
+const PREVIEW_ACCEPT = 'application/vnd.github.merge-info-preview+json'
+
+const PREVIEW_FIELDS = /* GraphQL */ `
   stackEntry {
     position
   }
@@ -67,6 +81,7 @@ const STACK_FIELDS = /* GraphQL */ `
       }
     }
   }
+  mergeStateStatus
 `
 
 /**
@@ -74,7 +89,7 @@ const STACK_FIELDS = /* GraphQL */ `
  * refreshed on its own has to be indistinguishable from the same row arriving
  * through a search, or refreshing one would quietly drop a badge.
  */
-const itemFields = (withStack: boolean) => /* GraphQL */ `
+const itemFields = (withPreview: boolean) => /* GraphQL */ `
   fragment IssueFields on Issue {
     id
     number
@@ -115,6 +130,9 @@ const itemFields = (withStack: boolean) => /* GraphQL */ `
     updatedAt
     additions
     deletions
+    headRefName
+    headRefOid
+    mergeable
     reviewDecision
     repository {
       nameWithOwner
@@ -138,11 +156,27 @@ const itemFields = (withStack: boolean) => /* GraphQL */ `
         commit {
           statusCheckRollup {
             state
+            contexts(first: ${CHECK_CONTEXTS}) {
+              totalCount
+              nodes {
+                __typename
+                ... on CheckRun {
+                  name
+                  conclusion
+                  detailsUrl
+                }
+                ... on StatusContext {
+                  context
+                  state
+                  targetUrl
+                }
+              }
+            }
           }
         }
       }
     }
-    ${withStack ? STACK_FIELDS : ''}
+    ${withPreview ? PREVIEW_FIELDS : ''}
   }
 `
 
@@ -160,8 +194,8 @@ const itemFields = (withStack: boolean) => /* GraphQL */ `
  * except that a space between `repo:`, `org:`, or `user:` qualifiers now means
  * AND where it used to mean OR.
  */
-export const searchQuery = (withStack = true) => /* GraphQL */ `
-  ${itemFields(withStack)}
+export const searchQuery = (withPreview = true) => /* GraphQL */ `
+  ${itemFields(withPreview)}
 
   query SidebarSearch($q: String!, $first: Int!, $after: String) {
     search(query: $q, type: ISSUE_ADVANCED, first: $first, after: $after) {
@@ -185,8 +219,8 @@ export const SEARCH_QUERY = searchQuery()
  * Re-reads one row on demand. `issueOrPullRequest` resolves either kind from a
  * number, so the caller does not have to know which it is holding.
  */
-export const itemQuery = (withStack = true) => /* GraphQL */ `
-  ${itemFields(withStack)}
+export const itemQuery = (withPreview = true) => /* GraphQL */ `
+  ${itemFields(withPreview)}
 
   query SidebarItem($owner: String!, $name: String!, $number: Int!) {
     repository(owner: $owner, name: $name) {
@@ -200,6 +234,25 @@ export const itemQuery = (withStack = true) => /* GraphQL */ `
 `
 
 export const ITEM_QUERY = itemQuery()
+
+/**
+ * One entry in a commit's check rollup: either a check run from the Checks
+ * API or a commit status from the older one. They name themselves and their
+ * outcome differently, which is the only reason this has to know about both.
+ */
+type CheckContextNode =
+  | {
+      __typename: 'CheckRun'
+      name: string
+      conclusion: string | null
+      detailsUrl: string | null
+    }
+  | {
+      __typename: 'StatusContext'
+      context: string
+      state: string
+      targetUrl: string | null
+    }
 
 interface StackEntryNode {
   position: number
@@ -230,13 +283,27 @@ interface GraphQLNode {
   updatedAt: string
   additions?: number
   deletions?: number
+  headRefName?: string | null
+  headRefOid?: string | null
+  mergeable?: string | null
+  mergeStateStatus?: string | null
   reviewDecision?: ReviewDecision | null
   repository: { nameWithOwner: string }
   author: { login: string; avatarUrl: string } | null
   comments: { totalCount: number }
   labels: { totalCount: number; nodes: Label[] | null } | null
   commits?: {
-    nodes: Array<{ commit: { statusCheckRollup: { state: CheckState } | null } }> | null
+    nodes: Array<{
+      commit: {
+        statusCheckRollup: {
+          state: CheckState
+          contexts?: {
+            totalCount?: number
+            nodes: Array<CheckContextNode | null> | null
+          } | null
+        } | null
+      }
+    }> | null
   } | null
   stackEntry?: { position: number } | null
   stack?: {
@@ -372,6 +439,76 @@ function toStack(node: GraphQLNode): StackInfo | null {
   }
 }
 
+/**
+ * Flattens GitHub's two answers about merging into one. `mergeable` is the
+ * older, always-available field and only knows about conflicts;
+ * `mergeStateStatus` knows why a mergeable branch still cannot go in. A
+ * conflict is reported from whichever field saw it first, since the older one
+ * is the only one some hosts answer at all.
+ */
+function toMergeState(node: GraphQLNode): MergeState | null {
+  if (node.__typename !== 'PullRequest') return null
+  if (node.mergeable === 'CONFLICTING') return 'conflicting'
+
+  switch (node.mergeStateStatus) {
+    case 'DIRTY':
+      return 'conflicting'
+    case 'BEHIND':
+      return 'behind'
+    case 'BLOCKED':
+      return 'blocked'
+    case 'UNSTABLE':
+      return 'unstable'
+    case 'CLEAN':
+    case 'HAS_HOOKS':
+      return 'clean'
+    // DRAFT says nothing the row's own icon does not, and UNKNOWN is GitHub
+    // saying it has not worked the answer out yet.
+    default:
+      return node.mergeable === 'MERGEABLE' ? 'clean' : null
+  }
+}
+
+/**
+ * Check conclusions that mean a human has to go and look.
+ *
+ * Cancelled and stale are in here because GitHub's own rollup counts them as
+ * failing — neither is a check that passed — and leaving them out was what
+ * made some red rows unable to name a single red check. Neutral and skipped
+ * are left out for the same reason in reverse: the rollup does not fail for
+ * them, so naming them would be inventing a problem.
+ */
+const FAILING_CONCLUSIONS = new Set([
+  'FAILURE',
+  'TIMED_OUT',
+  'STARTUP_FAILURE',
+  'ACTION_REQUIRED',
+  'CANCELLED',
+  'STALE',
+])
+
+const FAILING_STATES = new Set(['FAILURE', 'ERROR'])
+
+function toFailingChecks(node: GraphQLNode): FailingCheck[] {
+  const contexts = node.commits?.nodes?.[0]?.commit.statusCheckRollup?.contexts?.nodes ?? []
+  const failing: FailingCheck[] = []
+
+  for (const context of contexts) {
+    if (!context) continue
+    if (context.__typename === 'CheckRun') {
+      if (context.conclusion && FAILING_CONCLUSIONS.has(context.conclusion)) {
+        failing.push({ name: context.name, url: context.detailsUrl ?? null })
+      }
+      continue
+    }
+    if (FAILING_STATES.has(context.state)) {
+      failing.push({ name: context.context, url: context.targetUrl ?? null })
+    }
+  }
+
+  return failing
+}
+
 function normalise(node: GraphQLNode): SearchItem {
   return {
     id: node.id,
@@ -393,6 +530,16 @@ function normalise(node: GraphQLNode): SearchItem {
     checkState: node.commits?.nodes?.[0]?.commit.statusCheckRollup?.state ?? null,
     additions: node.additions ?? null,
     deletions: node.deletions ?? null,
+    headRefName: node.headRefName ?? null,
+    headRefOid: node.headRefOid ?? null,
+    mergeState: toMergeState(node),
+    failingChecks: toFailingChecks(node),
+    checkCount:
+      node.commits?.nodes?.[0]?.commit.statusCheckRollup?.contexts?.totalCount ?? null,
+    // What was read, not what failed: the query keeps only the red ones, so
+    // the failing list alone cannot say how much of the rollup was seen.
+    checksRead:
+      node.commits?.nodes?.[0]?.commit.statusCheckRollup?.contexts?.nodes?.length ?? 0,
     stack: toStack(node),
   }
 }
@@ -534,7 +681,9 @@ async function post<T extends GraphQLPayload>(
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
-      Accept: 'application/json',
+      // Opts into the schema previews the query asks for. The response is
+      // ordinary JSON either way; without it `mergeStateStatus` is refused.
+      Accept: PREVIEW_ACCEPT,
     },
     body: JSON.stringify(body),
   })
@@ -578,58 +727,58 @@ async function post<T extends GraphQLPayload>(
 }
 
 /**
- * True for the validation error a host without the stacked pull request
- * preview answers with. It arrives as an ordinary GraphQL error rather than a
- * null field, so it has to be recognised by hand.
+ * True for the validation error a host without one of the preview fields
+ * answers with. It arrives as an ordinary GraphQL error rather than a null
+ * field, so it has to be recognised by hand.
  *
  * Matched against the raw GraphQL text rather than the error's own message,
  * which by this point may have been rewritten into something a reader can act
  * on and no longer names the field at all.
  */
-function isUnknownStackField(error: unknown): boolean {
+function isUnknownPreviewField(error: unknown): boolean {
   if (!(error instanceof GitHubApiError)) return false
   const messages = error.errors.length
     ? error.errors.map((entry) => entry.message)
     : [error.message]
   return messages.some(
     (message) =>
-      /\bstack(entry)?\b/i.test(message) &&
+      /\b(stack(entry)?|mergestatestatus)\b/i.test(message) &&
       /(does ?n[o']t exist|cannot query field|undefined field)/i.test(message),
   )
 }
 
 /**
- * Asks for the stack fields, and drops them for the life of the worker the
+ * Asks for the preview fields, and drops them for the life of the worker the
  * first time a host rejects them. A preview field that has not reached this
- * host must cost the sidebar its stack badges, not its list.
+ * host must cost the sidebar its stack badges and merge marks, not its list.
  */
-async function postWithStackFallback<T extends GraphQLPayload>(
+async function postWithPreviewFallback<T extends GraphQLPayload>(
   token: string,
-  buildQuery: (withStack: boolean) => string,
+  buildQuery: (withPreview: boolean) => string,
   variables: Record<string, unknown>,
 ): Promise<T> {
-  if (!stackFieldsSupported) {
+  if (!previewFieldsSupported) {
     return post<T>(token, { query: buildQuery(false), variables })
   }
   try {
     return await post<T>(token, { query: buildQuery(true), variables })
   } catch (error) {
-    if (!isUnknownStackField(error)) throw error
-    stackFieldsSupported = false
+    if (!isUnknownPreviewField(error)) throw error
+    previewFieldsSupported = false
     return post<T>(token, { query: buildQuery(false), variables })
   }
 }
 
 /** Test hook: forgets that a host rejected the preview fields. */
-export function resetStackSupport(): void {
-  stackFieldsSupported = true
+export function resetPreviewSupport(): void {
+  previewFieldsSupported = true
 }
 
 export async function searchIssues(
   token: string,
   { q, first, after }: SearchParams,
 ): Promise<SearchPage> {
-  const body = await postWithStackFallback<GraphQLResponse>(token, searchQuery, {
+  const body = await postWithPreviewFallback<GraphQLResponse>(token, searchQuery, {
     q,
     first,
     after: after ?? null,
@@ -680,7 +829,7 @@ export async function fetchItem(
     throw new GitHubApiError(`Cannot parse the repository name "${repository}".`)
   }
 
-  const body = await postWithStackFallback<ItemResponse>(token, itemQuery, {
+  const body = await postWithPreviewFallback<ItemResponse>(token, itemQuery, {
     owner,
     name,
     number,

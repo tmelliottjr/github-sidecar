@@ -16,6 +16,8 @@ export type RequestMessage =
   | { type: 'validate-token'; token: string }
   | { type: 'open-item'; url: string; target: 'window' | 'tab' }
   | { type: 'open-options' }
+  /** Developer mode: proves the notification path end to end. */
+  | { type: 'test-notification' }
 
 export type ResponseMessage<T> =
   | { ok: true; data: T }

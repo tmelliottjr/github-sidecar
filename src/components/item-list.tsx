@@ -2,13 +2,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { SyncIcon } from '@primer/octicons-react'
 
+import { CurrentRowMarker } from '@/components/current-row-marker'
 import { ItemRow } from '@/components/item-row'
+import {
+  changesSince,
+  reminderState,
+  type ChangeKind,
+  type ItemMemory,
+  type ReminderChoice,
+  type ReminderOverrides,
+} from '@/lib/attention'
 import type { SearchItem } from '@/lib/github/types'
+import type { FeatureFlags } from '@/lib/storage'
 import { cn } from '@/lib/utils'
 
 interface Props {
   items: SearchItem[]
   pinnedIds: string[]
+  /** The row for the page this tab is on, when the list holds it. */
+  currentId: string | null
+  /** What the reader has already seen, keyed by node id. */
+  memory: Record<string, ItemMemory>
+  /** Rows the reader has hidden; only present while hidden rows are showing. */
+  hiddenIds: ReadonlySet<string>
+  features: FeatureFlags
+  /** Set in developer mode, where the named reminder times are seconds. */
+  reminderOverrides: ReminderOverrides | null
   hasNextPage: boolean
   isFetchingNextPage: boolean
   onLoadMore: () => void
@@ -16,6 +35,11 @@ interface Props {
   onOpenUrl: (url: string, event: React.MouseEvent) => void
   onRefreshItem: (item: SearchItem) => Promise<void>
   onTogglePin: (item: SearchItem) => void
+  onMarkSeen: (item: SearchItem) => void
+  onRemind: (item: SearchItem, choice: ReminderChoice) => void
+  onClearReminder: (item: SearchItem) => void
+  onHide: (item: SearchItem) => void
+  onUnhide: (item: SearchItem) => void
 }
 
 const ESTIMATED_ROW_HEIGHT = 78
@@ -23,10 +47,40 @@ const ESTIMATED_ROW_HEIGHT = 78
 const PREFETCH_THRESHOLD = 6
 
 const NO_IDS: ReadonlySet<string> = new Set()
+const NO_CHANGES: ChangeKind[] = []
+
+/**
+ * How many frames the list is given to mount a row it has just scrolled to.
+ * Only rows on screen exist, so moving to one that was not costs a render
+ * before there is anything to put the focus on.
+ */
+const FOCUS_ATTEMPTS = 5
+
+/** Adds an id to a set, or takes it out again. */
+function toggled(current: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  const next = new Set(current)
+  if (!next.delete(id)) next.add(id)
+  return next
+}
+
+/** Keys typed into a field are the field's, whatever they would otherwise do. */
+function isTyping(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement
+  )
+}
 
 export function ItemList({
   items,
   pinnedIds,
+  currentId,
+  memory,
+  hiddenIds,
+  features,
+  reminderOverrides,
   hasNextPage,
   isFetchingNextPage,
   onLoadMore,
@@ -34,19 +88,31 @@ export function ItemList({
   onOpenUrl,
   onRefreshItem,
   onTogglePin,
+  onMarkSeen,
+  onRemind,
+  onClearReminder,
+  onHide,
+  onUnhide,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  // The element the marker is drawn against, held in state so the marker
+  // re-places itself when the virtualiser mounts or drops that row.
+  const [currentRow, setCurrentRow] = useState<HTMLElement | null>(null)
   const pinned = useMemo(() => new Set(pinnedIds), [pinnedIds])
   // An opened stack is a way of reading the list, not a property of the row,
   // so it lives here and is forgotten when the panel closes.
   const [openStacks, setOpenStacks] = useState<ReadonlySet<string>>(() => new Set())
 
   const toggleStack = useCallback((item: SearchItem) => {
-    setOpenStacks((current) => {
-      const next = new Set(current)
-      if (!next.delete(item.id)) next.add(item.id)
-      return next
-    })
+    setOpenStacks((current) => toggled(current, item.id))
+  }, [])
+
+  // Which rows have their failing checks open, held here for the same reason
+  // an open stack is: it is a way of reading the list, not a property of a row.
+  const [openChecks, setOpenChecks] = useState<ReadonlySet<string>>(() => new Set())
+
+  const toggleChecks = useCallback((item: SearchItem) => {
+    setOpenChecks((current) => toggled(current, item.id))
   }, [])
 
   // A trailing row renders the loading indicator when more pages exist.
@@ -82,6 +148,117 @@ export function ItemList({
     ),
   })
 
+  // Both refs measure; only the current row's also reports where it is.
+  const measureCurrent = useCallback(
+    (node: HTMLDivElement | null) => {
+      virtualizer.measureElement(node)
+      setCurrentRow(node)
+    },
+    [virtualizer],
+  )
+
+  /**
+   * Keyboard focus is the browser's own, not a highlight of this list's
+   * invention: moving to a row focuses that row's button, so Enter opens it
+   * without any handler here, and a screen reader is told where it landed.
+   */
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (activeIndex === null) return
+    let frame = 0
+    let attempts = 0
+
+    const focus = () => {
+      const row = scrollRef.current?.querySelector(`[data-index="${activeIndex}"] button`)
+      if (row instanceof HTMLElement) {
+        row.focus()
+        return
+      }
+      if (attempts++ < FOCUS_ATTEMPTS) frame = requestAnimationFrame(focus)
+    }
+
+    focus()
+    return () => cancelAnimationFrame(frame)
+  }, [activeIndex])
+
+  const move = useCallback(
+    (delta: number) => {
+      if (items.length === 0) return
+      setActiveIndex((current) => {
+        const next = current === null ? 0 : current + delta
+        const clamped = Math.min(Math.max(next, 0), items.length - 1)
+        virtualizer.scrollToIndex(clamped, { align: 'auto' })
+        return clamped
+      })
+    },
+    [items.length, virtualizer],
+  )
+
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (!features.keyboard || isTyping(event.target)) return
+      const active = activeIndex === null ? null : items[activeIndex]
+
+      switch (event.key) {
+        case 'j':
+        case 'ArrowDown':
+          event.preventDefault()
+          move(1)
+          return
+        case 'k':
+        case 'ArrowUp':
+          event.preventDefault()
+          move(-1)
+          return
+        case 'o':
+          if (!active) return
+          event.preventDefault()
+          onOpen(active, event as unknown as React.MouseEvent)
+          return
+        case 'p':
+          if (!active) return
+          event.preventDefault()
+          onTogglePin(active)
+          return
+        case 'h': {
+          if (!active || !features.hide) return
+          event.preventDefault()
+          if (hiddenIds.has(active.id)) onUnhide(active)
+          else onHide(active)
+          return
+        }
+        case 'r': {
+          if (!active || !features.reminders) return
+          event.preventDefault()
+          // The one reminder worth a single key: the others are a choice, and
+          // a choice belongs in the menu that lists them.
+          onRemind(active, 'change')
+          return
+        }
+        case 'Escape':
+          if (activeIndex === null) return
+          event.preventDefault()
+          setActiveIndex(null)
+          scrollRef.current?.focus()
+      }
+    },
+    [
+      activeIndex,
+      features.hide,
+      features.keyboard,
+      features.reminders,
+      hiddenIds,
+      items,
+      move,
+      onHide,
+      onOpen,
+      onRemind,
+      onTogglePin,
+      onUnhide,
+    ],
+  )
+
   const virtualItems = virtualizer.getVirtualItems()
   const lastIndex = virtualItems.at(-1)?.index ?? 0
 
@@ -90,8 +267,18 @@ export function ItemList({
     if (lastIndex >= items.length - PREFETCH_THRESHOLD) onLoadMore()
   }, [hasNextPage, isFetchingNextPage, items.length, lastIndex, onLoadMore])
 
+  // `onLoadMore` above must keep its identity between renders, or the effect
+  // re-runs on every one of them and a short list asks for the next page
+  // without end. See the sidebar, which builds it from the query's own stable
+  // `fetchNextPage`.
+
   return (
-    <div ref={scrollRef} className="scrollbar-slim h-full overflow-y-auto overscroll-contain">
+    <div
+      ref={scrollRef}
+      onKeyDown={onKeyDown}
+      tabIndex={-1}
+      className="scrollbar-slim h-full overflow-y-auto overscroll-contain focus:outline-none"
+    >
       <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
         {virtualItems.map((virtualRow) => {
           const item = items[virtualRow.index]
@@ -99,7 +286,7 @@ export function ItemList({
             <div
               key={virtualRow.key}
               data-index={virtualRow.index}
-              ref={virtualizer.measureElement}
+              ref={item?.id === currentId ? measureCurrent : virtualizer.measureElement}
               className="absolute left-0 top-0 w-full border-b border-border/60 last:border-b-0"
               style={{ transform: `translateY(${virtualRow.start}px)` }}
             >
@@ -113,12 +300,37 @@ export function ItemList({
                   <ItemRow
                     item={item}
                     isPinned={pinned.has(item.id)}
+                    isCurrent={item.id === currentId}
                     isStackOpen={openStacks.has(item.id)}
+                    // Worked out per rendered row rather than for the whole
+                    // list: only the rows on screen are mounted, so this is
+                    // the smaller of the two sums by a wide margin.
+                    changes={
+                      features.changes ? changesSince(memory[item.id]?.seen, item) : NO_CHANGES
+                    }
+                    seen={memory[item.id]?.seen}
+                    reminder={
+                      features.reminders ? reminderState(memory[item.id], item) : 'none'
+                    }
+                    reminderDetail={memory[item.id]?.reminder}
+                    isHidden={hiddenIds.has(item.id)}
+                    isChecksOpen={openChecks.has(item.id)}
+                    canRemind={features.reminders}
+                    reminderOverrides={reminderOverrides}
+                    canHide={features.hide}
+                    showFailingChecks={features.failingChecks}
+                    showMergeState={features.mergeState}
                     onOpen={onOpen}
                     onOpenUrl={onOpenUrl}
                     onRefresh={onRefreshItem}
                     onTogglePin={onTogglePin}
                     onToggleStack={toggleStack}
+                    onToggleChecks={toggleChecks}
+                    onMarkSeen={onMarkSeen}
+                    onRemind={onRemind}
+                    onClearReminder={onClearReminder}
+                    onHide={onHide}
+                    onUnhide={onUnhide}
                   />
                 ) : (
                   <div className="flex items-center justify-center gap-2 py-4 text-[12px] text-muted-foreground">
@@ -131,6 +343,8 @@ export function ItemList({
           )
         })}
       </div>
+
+      <CurrentRowMarker row={currentRow} viewportRef={scrollRef} />
     </div>
   )
 }

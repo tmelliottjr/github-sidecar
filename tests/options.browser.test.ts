@@ -91,6 +91,20 @@ window.chrome = {
     },
     onChanged: { addListener() {}, removeListener() {} },
   },
+  // Notifications are the one feature behind a permission. The stub grants or
+  // refuses it on demand so both answers can be exercised.
+  permissions: {
+    granted: false,
+    request: async () => {
+      window.chrome.permissions.granted = window.__grantPermission !== false;
+      return window.chrome.permissions.granted;
+    },
+    remove: async () => {
+      window.chrome.permissions.granted = false;
+      return true;
+    },
+    contains: async () => window.chrome.permissions.granted,
+  },
 };
 `
 
@@ -131,6 +145,8 @@ describe('options page', { concurrency: false, skip }, () => {
       'Access token',
       'Refresh',
       'Opening items',
+      'Features',
+      'Notifications',
       'Saved queries',
     ])
   })
@@ -187,5 +203,489 @@ describe('options page', { concurrency: false, skip }, () => {
 
   it('reports no console errors', () => {
     assert.deepEqual(consoleErrors, [])
+  })
+})
+
+/** Reads a feature switch by the title it sits beside. */
+async function switchFor(target: Page, title: string) {
+  return target.$(`[role="switch"][aria-label="${title}"]`)
+}
+
+describe('feature switches', { concurrency: false, skip }, () => {
+  let featureServer: Server
+  let featureBrowser: Browser
+  let featurePage: Page
+
+  before(async () => {
+    const served = await serveDist()
+    featureServer = served.server
+    featureBrowser = await puppeteer.launch({ executablePath, headless: true })
+    featurePage = await featureBrowser.newPage()
+    await featurePage.evaluateOnNewDocument(CHROME_STUB)
+    await featurePage.goto(`${served.origin}/options.html`, { waitUntil: 'networkidle0' })
+    await featurePage.waitForSelector('[role="switch"]')
+  })
+
+  after(async () => {
+    await featureBrowser?.close()
+    featureServer?.close()
+  })
+
+  it('offers every feature, and starts with the quiet one off', async () => {
+    // Scoped to the features section: developer mode has a switch of its own,
+    // and it is deliberately not one of these.
+    const switches = await featurePage.$$eval('section', (sections) => {
+      const features = sections.find((section) => section.querySelector('h2')?.textContent === 'Features')
+      return [...features!.querySelectorAll('[role="switch"]')].map((node) => [
+        node.getAttribute('aria-label'),
+        node.getAttribute('aria-checked'),
+      ])
+    })
+
+    assert.deepEqual(switches, [
+      ['What changed since you looked', 'true'],
+      ['Merge conflicts and stale branches', 'true'],
+      ['List the failing checks', 'true'],
+      ['Remind me about a row', 'true'],
+      ['Hide a row', 'true'],
+      ['Keyboard navigation', 'true'],
+      ['Filter and reorder', 'true'],
+      // Notifications are not in this list: they have a section of their own,
+      // because everything about being interrupted is decided together.
+      ['Count on the toolbar icon', 'true'],
+    ])
+  })
+
+  it('writes a switched-off feature straight to storage', async () => {
+    const control = await switchFor(featurePage, 'Keyboard navigation')
+    await control!.click()
+
+    await featurePage.waitForFunction(
+      () =>
+        (document.querySelector('[aria-label="Keyboard navigation"]') as HTMLElement)
+          ?.getAttribute('aria-checked') === 'false',
+    )
+
+    const stored = await featurePage.evaluate(async () =>
+      (await chrome.storage.local.get('settings')).settings.features,
+    )
+    assert.equal(stored.keyboard, false)
+    // Switching one off leaves the rest exactly as they were.
+    assert.equal(stored.changes, true)
+  })
+
+})
+
+describe('choosing a sound', { concurrency: false, skip }, () => {
+  let soundServer: Server
+  let soundBrowser: Browser
+  let soundPage: Page
+
+  before(async () => {
+    const served = await serveDist()
+    soundServer = served.server
+    soundBrowser = await puppeteer.launch({ executablePath, headless: true })
+    soundPage = await soundBrowser.newPage()
+    await soundPage.evaluateOnNewDocument(CHROME_STUB)
+    // Records what would have been heard, since a headless browser hears
+    // nothing and a chosen sound has to prove it played.
+    await soundPage.evaluateOnNewDocument(`
+      window.__heard = [];
+      class FakeAudioContext {
+        constructor() { this.currentTime = 0; this.destination = {} }
+        async resume() {}
+        createOscillator() {
+          const note = {};
+          window.__heard.push(note);
+          return {
+            set type(value) { note.type = value },
+            frequency: { set value(hz) { note.hz = hz } },
+            connect: (target) => target,
+            start() {}, stop() {},
+          };
+        }
+        createGain() {
+          const note = window.__heard.at(-1);
+          return {
+            gain: {
+              setValueAtTime() {},
+              linearRampToValueAtTime: (value) => { note.peak = value },
+              exponentialRampToValueAtTime() {},
+            },
+            connect: (target) => target,
+          };
+        }
+      }
+      window.AudioContext = FakeAudioContext;
+    `)
+    await soundPage.goto(`${served.origin}/options.html`, { waitUntil: 'networkidle0' })
+    // The tones live inside the kinds, which live inside the notification
+    // switch; nothing here can be heard until that is on.
+    await soundPage.waitForSelector('[aria-label="Desktop notifications"]')
+    await soundPage.click('[aria-label="Desktop notifications"]')
+    await soundPage.waitForSelector('[aria-label="Reminders you set sound"]')
+  })
+
+  after(async () => {
+    await soundBrowser?.close()
+    soundServer?.close()
+  })
+
+  const heard = () =>
+    soundPage.evaluate(
+      () => (window as unknown as { __heard: Array<{ hz: number; peak: number }> }).__heard,
+    )
+
+  const clickSound = (group: 'reminder' | 'change', label: string) =>
+    soundPage.evaluate(
+      ({ group: which, label: name }) => {
+        // Each kind's sounds live under the kind itself, named for it.
+        const block = document.querySelector(
+          `[aria-label="${which === 'reminder' ? 'Reminders you set' : 'Rows that changed'} sound"]`,
+        )!
+        const button = [...block.querySelectorAll('button')].find(
+          (node) => node.textContent?.trim() === name,
+        )
+        ;(button as HTMLElement).click()
+      },
+      { group, label },
+    )
+
+  it('offers every sound for both kinds, and marks the chosen ones', async () => {
+    const chosen = await soundPage.evaluate(() =>
+      [...document.querySelectorAll('button[aria-pressed="true"]')].map((node) =>
+        node.textContent?.trim(),
+      ),
+    )
+    assert.deepEqual(chosen, ['Chime', 'Ping'])
+  })
+
+  it('plays what it is about the moment it is chosen', async () => {
+    await soundPage.evaluate(() => {
+      ;(window as unknown as { __heard: unknown[] }).__heard.length = 0
+    })
+    await clickSound('reminder', 'Marimba')
+
+    const notes = await heard()
+    assert.deepEqual(
+      notes.map((note) => note.hz),
+      [587.3, 880, 1174.7],
+    )
+
+    const stored = await soundPage.evaluate(
+      async () => (await chrome.storage.local.get('settings')).settings.notifications.sounds,
+    )
+    assert.equal(stored.reminder, 'marimba')
+    // The other kind is left exactly as it was.
+    assert.equal(stored.change, 'ping')
+  })
+
+  it('remembers a quieter volume, and plays at it', async () => {
+    await soundPage.evaluate(() => {
+      ;(window as unknown as { __heard: unknown[] }).__heard.length = 0
+      const slider = document.querySelector('input[type="range"]') as HTMLInputElement
+      // React listens for `input`, and a controlled range ignores a value set
+      // straight onto the element, so the native setter is used first.
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )!.set!
+      setter.call(slider, '20')
+      slider.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    await soundPage.waitForFunction(async () => {
+      const stored = (await chrome.storage.local.get('settings')).settings
+      return stored?.notifications?.sounds?.volume === 0.2
+    })
+
+    const quiet = await heard()
+    assert.ok(quiet.length > 0, 'expected the new volume to be played')
+    assert.ok(quiet.every((note) => note.peak <= 0.12 * 0.2 + 1e-9))
+  })
+})
+
+describe('notifications, gathered in one place', { concurrency: false, skip }, () => {
+  let notifyServer: Server
+  let notifyBrowser: Browser
+  let notifyPage: Page
+
+  before(async () => {
+    const served = await serveDist()
+    notifyServer = served.server
+    notifyBrowser = await puppeteer.launch({ executablePath, headless: true })
+    notifyPage = await notifyBrowser.newPage()
+    await notifyPage.evaluateOnNewDocument(CHROME_STUB)
+    await notifyPage.goto(`${served.origin}/options.html`, { waitUntil: 'networkidle0' })
+    await notifyPage.waitForSelector('[aria-label="Desktop notifications"]')
+  })
+
+  after(async () => {
+    await notifyBrowser?.close()
+    notifyServer?.close()
+  })
+
+  const labels = () =>
+    notifyPage.evaluate(() => {
+      const section = document
+        .querySelector('[aria-label="Desktop notifications"]')!
+        .closest('section')!
+      return [...section.querySelectorAll('[role="switch"]')].map((node) => [
+        node.getAttribute('aria-label'),
+        node.getAttribute('aria-checked'),
+        node.hasAttribute('disabled'),
+      ])
+    })
+
+  it('nests what depends on the switch above it, and disables it until then', async () => {
+    assert.deepEqual(await labels(), [
+      ['Desktop notifications', 'false', false],
+      // Offered, so the reader can see what saying yes would get them, but not
+      // usable until they have.
+      ['Notify me about reminders', 'true', true],
+      ['Notify me about changes', 'true', true],
+    ])
+
+    // The sounds hang off the kind they belong to, not off notifications as a
+    // whole, and are disabled with it.
+    const groups = await notifyPage.evaluate(() =>
+      [...document.querySelectorAll('[role="group"]')].map((node) => [
+        node.getAttribute('aria-label'),
+        [...node.querySelectorAll('button')].every((button) => button.hasAttribute('disabled')),
+      ]),
+    )
+    assert.deepEqual(groups, [
+      ['Reminders you set sound', true],
+      ['Rows that changed sound', true],
+    ])
+  })
+
+  it('lets the two kinds be chosen separately', async () => {
+    await notifyPage.click('[aria-label="Desktop notifications"]')
+    await notifyPage.waitForFunction(
+      () =>
+        !document.querySelector('[aria-label="Notify me about changes"]')?.hasAttribute('disabled'),
+    )
+
+    await notifyPage.click('[aria-label="Notify me about changes"]')
+    await notifyPage.waitForFunction(async () => {
+      const stored = (await chrome.storage.local.get('settings')).settings
+      return stored?.notifications?.changes === false
+    })
+
+    const stored = await notifyPage.evaluate(
+      async () => (await chrome.storage.local.get('settings')).settings.notifications,
+    )
+    // One kind off, the other and the master untouched.
+    assert.equal(stored.changes, false)
+    assert.equal(stored.reminders, true)
+    assert.equal(stored.enabled, true)
+  })
+
+  it('silences one kind without silencing the other', async () => {
+    // The test above switched one kind off, and a kind that is off has no
+    // sound to choose. Both are back on for this one.
+    await notifyPage.evaluate(() => {
+      const control = document.querySelector(
+        '[aria-label="Notify me about changes"]',
+      ) as HTMLElement
+      if (control.getAttribute('aria-checked') === 'false') control.click()
+    })
+    await notifyPage.waitForFunction(
+      () =>
+        ![
+          ...document.querySelectorAll('[aria-label="Rows that changed sound"] button'),
+        ].some((button) => button.hasAttribute('disabled')),
+    )
+
+    const silence = (kind: string) =>
+      notifyPage.evaluate((which) => {
+        const group = document.querySelector(`[aria-label="${which} sound"]`)!
+        const button = [...group.querySelectorAll('button')].find(
+          (node) => node.textContent?.trim() === 'Silent',
+        )
+        ;(button as HTMLElement).click()
+      }, kind)
+
+    await silence('Rows that changed')
+    await notifyPage.waitForFunction(async () => {
+      const stored = (await chrome.storage.local.get('settings')).settings
+      return stored?.notifications?.sounds?.change === 'none'
+    })
+
+    const one = await notifyPage.evaluate(
+      async () => (await chrome.storage.local.get('settings')).settings.notifications.sounds,
+    )
+    // Silence is one of the sounds rather than a switch beside them, so the
+    // other kind is untouched.
+    assert.equal(one.change, 'none')
+    assert.equal(one.reminder, 'chime')
+    assert.ok(await notifyPage.$('input[type="range"]'), 'one sound left, so a volume')
+
+    await silence('Reminders you set')
+    // Nothing left to play: the volume has nothing to be the volume of.
+    await notifyPage.waitForFunction(() => !document.querySelector('input[type="range"]'))
+  })
+  it('asks for permission before turning notifications on, and gives it back', async () => {
+    const control = await switchFor(notifyPage, 'Desktop notifications')
+
+    // Whatever the tests above left it as, this one is about turning it on.
+    const on = await notifyPage.$eval(
+      '[aria-label="Desktop notifications"]',
+      (node) => node.getAttribute('aria-checked') === 'true',
+    )
+    if (on) {
+      await control!.click()
+      await notifyPage.waitForFunction(
+        () =>
+          document
+            .querySelector('[aria-label="Desktop notifications"]')
+            ?.getAttribute('aria-checked') === 'false',
+      )
+    }
+
+    await control!.click()
+
+    await notifyPage.waitForFunction(
+      () =>
+        (document.querySelector('[aria-label="Desktop notifications"]') as HTMLElement)
+          ?.getAttribute('aria-checked') === 'true',
+    )
+    assert.equal(
+      await notifyPage.evaluate(() => chrome.permissions.contains({})),
+      true,
+    )
+
+    await control!.click()
+    await notifyPage.waitForFunction(
+      () =>
+        (document.querySelector('[aria-label="Desktop notifications"]') as HTMLElement)
+          ?.getAttribute('aria-checked') === 'false',
+    )
+    // The permission goes back with the switch, so nothing keeps one it has
+    // stopped using.
+    assert.equal(await notifyPage.evaluate(() => chrome.permissions.contains({})), false)
+  })
+
+  it('stays off when the permission is refused', async () => {
+    await notifyPage.evaluate(() => {
+      ;(window as unknown as { __grantPermission: boolean }).__grantPermission = false
+    })
+
+    const control = await switchFor(notifyPage, 'Desktop notifications')
+    await control!.click()
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    assert.equal(
+      await notifyPage.$eval('[aria-label="Desktop notifications"]', (node) =>
+        node.getAttribute('aria-checked'),
+      ),
+      'false',
+    )
+    const stored = await notifyPage.evaluate(async () =>
+      (await chrome.storage.local.get('settings')).settings.notifications,
+    )
+    assert.equal(stored.enabled, false)
+  })
+
+})
+
+describe('developer mode', { concurrency: false, skip }, () => {
+  let devServer: Server
+  let devBrowser: Browser
+  let devPage: Page
+
+  before(async () => {
+    const served = await serveDist()
+    devServer = served.server
+    devBrowser = await puppeteer.launch({ executablePath, headless: true })
+    devPage = await devBrowser.newPage()
+    await devPage.evaluateOnNewDocument(CHROME_STUB)
+    await devPage.goto(`${served.origin}/options.html`, { waitUntil: 'networkidle0' })
+    await devPage.waitForSelector('[aria-label="Developer mode"]')
+  })
+
+  after(async () => {
+    await devBrowser?.close()
+    devServer?.close()
+  })
+
+  it('keeps itself apart from the features, and off', async () => {
+    const placed = await devPage.evaluate(() => {
+      const control = document.querySelector('[aria-label="Developer mode"]')!
+      const section = control.closest('section')!
+      const features = [...document.querySelectorAll('section')].find(
+        (node) => node.querySelector('h2')?.textContent === 'Features',
+      )
+      return {
+        checked: control.getAttribute('aria-checked'),
+        inFeatures: features === section,
+        // Nothing to configure until it is switched on.
+        fields: section.querySelectorAll('input[type="number"]').length,
+      }
+    })
+
+    assert.deepEqual(placed, { checked: 'false', inFeatures: false, fields: 0 })
+  })
+
+  it('offers a time for every named reminder, and remembers a change', async () => {
+    await devPage.click('[aria-label="Developer mode"]')
+    await devPage.waitForSelector('input[type="number"]')
+
+    const labels = await devPage.$$eval('section:last-of-type label span:first-child', (nodes) =>
+      nodes.map((node) => node.textContent),
+    )
+    assert.deepEqual(labels.slice(-4), [
+      'In an hour',
+      'This evening',
+      'Tomorrow morning',
+      'Next week',
+    ])
+
+    // Selected rather than appended to, so the field holds exactly what was
+    // typed however wide the default was.
+    await devPage.focus('input[type="number"]')
+    await devPage.evaluate(() =>
+      (document.querySelector('input[type="number"]') as HTMLInputElement).select(),
+    )
+    await devPage.keyboard.type('5')
+
+    await devPage.waitForFunction(async () => {
+      const stored = (await chrome.storage.local.get('settings')).settings
+      return stored?.developer?.reminderSeconds?.hour === 5
+    })
+
+    const stored = await devPage.evaluate(
+      async () => (await chrome.storage.local.get('settings')).settings.developer,
+    )
+    assert.equal(stored.enabled, true)
+    // The others keep their defaults rather than being rewritten alongside it.
+    assert.deepEqual(stored.reminderSeconds, { hour: 5, evening: 60, tomorrow: 120, week: 300 })
+  })
+
+  it('says what went wrong when a test notification cannot be sent', async () => {
+    await devPage.evaluate(() => {
+      const scope = window as unknown as { chrome: typeof chrome }
+      scope.chrome.runtime.sendMessage = (async () => ({
+        ok: false,
+        error: 'Chrome has not been given permission to post notifications.',
+      })) as typeof chrome.runtime.sendMessage
+    })
+
+    const index = await devPage.$$eval('button', (nodes) =>
+      nodes.findIndex((node) => node.textContent?.includes('Send a test notification')),
+    )
+    assert.ok(index >= 0, 'expected a test notification button')
+
+    await devPage.evaluate(() => {
+      const node = [...document.querySelectorAll('button')].find((button) =>
+        button.textContent?.includes('Send a test notification'),
+      )
+      ;(node as HTMLElement).click()
+    })
+
+    await devPage.waitForFunction(() =>
+      document.body.textContent?.includes('permission to post notifications'),
+    )
   })
 })

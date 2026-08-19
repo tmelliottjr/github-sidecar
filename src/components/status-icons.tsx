@@ -1,8 +1,12 @@
 import type { Icon } from '@primer/octicons-react'
 import {
+  AlertIcon,
+  BellFillIcon,
+  BellIcon,
   CheckCircleFillIcon,
   CheckIcon,
   DotFillIcon,
+  EyeClosedIcon,
   EyeIcon,
   FileDiffIcon,
   GitMergeIcon,
@@ -13,12 +17,21 @@ import {
   IssueClosedIcon,
   IssueOpenedIcon,
   SkipIcon,
+  SyncIcon,
   XCircleFillIcon,
 } from '@primer/octicons-react'
 
 import { Hint } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { CheckState, Label, ReviewDecision, SearchItem } from '@/lib/github/types'
+import { describeChange, describeChanges, type ChangeKind, type ItemSignature } from '@/lib/attention'
+import type {
+  CheckState,
+  FailingCheck,
+  Label,
+  MergeState,
+  ReviewDecision,
+  SearchItem,
+} from '@/lib/github/types'
 
 const STATE_META: Record<
   SearchItem['state'],
@@ -76,6 +89,8 @@ function pickIcon(item: Pick<SearchItem, 'kind' | 'state' | 'stateReason'>) {
   }
 }
 
+const NO_CHECKS: readonly FailingCheck[] = []
+
 const CHECK_META: Record<CheckState, { label: string; className: string; Icon: Icon }> = {
   SUCCESS: { label: 'All checks passing', className: 'text-open', Icon: CheckCircleFillIcon },
   FAILURE: { label: 'Checks failing', className: 'text-closed', Icon: XCircleFillIcon },
@@ -84,19 +99,187 @@ const CHECK_META: Record<CheckState, { label: string; className: string; Icon: I
   EXPECTED: { label: 'Checks expected', className: 'text-attention', Icon: DotFillIcon },
 }
 
-export function CheckIndicator({ state }: { state: CheckState | null }) {
+/**
+ * The check rollup. Red is the only state with anything more to say, so it is
+ * the only one that says it: the mark counts what failed and opens the list of
+ * them below the row, where each one links to the run that failed. That is the
+ * trip the reader would otherwise make through the pull request and its Checks
+ * tab to find out what "failing" meant.
+ */
+export function CheckIndicator({
+  state,
+  failing = NO_CHECKS,
+  isOpen = false,
+  partial = false,
+  onToggle,
+}: {
+  state: CheckState | null
+  failing?: readonly FailingCheck[]
+  isOpen?: boolean
+  /** True when the rollup had more checks than the query read. */
+  partial?: boolean
+  onToggle?: () => void
+}) {
   if (!state) return null
   const { label, className, Icon } = CHECK_META[state]
+  const count = onToggle ? failing.length : 0
+
+  if (count === 0) {
+    // A red rollup with nothing to name is otherwise the panel's most
+    // arbitrary-looking mark: identical to the one beside it, minus the count
+    // and the drawer, for reasons only the query knows.
+    const unnamed =
+      onToggle && (state === 'FAILURE' || state === 'ERROR')
+        ? partial
+          ? `${label}, and this query reads only the first checks of a rollup this large`
+          : `${label}, though GitHub names none of them as red`
+        : label
+
+    return (
+      <Hint label={unnamed}>
+        <span data-check={state} className={cn('flex items-center', className)}>
+          {/*
+           * In-progress checks are GitHub's amber dot, which is drawn still:
+           * the mark is rotationally symmetric, so the slow spin the pending
+           * state used to carry would have been motion nobody could see.
+           */}
+          <Icon className="size-3.5 shrink-0" />
+          {/* Says what the tooltip says: the explanation is the mark's meaning,
+              not a decoration on top of it. */}
+          <span className="sr-only">{unnamed}</span>
+        </span>
+      </Hint>
+    )
+  }
+
+  const said = `${count} failing ${count === 1 ? 'check' : 'checks'}`
+  return (
+    <Hint label={`${said}. Click to ${isOpen ? 'hide' : 'show'} them.`}>
+      <button
+        type="button"
+        data-check={state}
+        onClick={onToggle}
+        aria-expanded={isOpen}
+        aria-label={isOpen ? 'Hide the failing checks' : 'Show the failing checks'}
+        className={cn(
+          'flex shrink-0 cursor-pointer items-center gap-0.5 rounded-full border px-1.5 py-px text-[10px] font-semibold leading-[1.5]',
+          'transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+          isOpen
+            ? 'border-closed/40 bg-closed/15 text-closed'
+            : 'border-border bg-muted text-closed hover:border-closed/40',
+        )}
+      >
+        <Icon className="size-2.5" aria-hidden />
+        <span className="tabular-nums">{count}</span>
+        <span className="sr-only">{said}</span>
+      </button>
+    </Hint>
+  )
+}
+
+const MERGE_META: Partial<
+  Record<MergeState, { label: string; className: string; Icon: Icon }>
+> = {
+  conflicting: {
+    label: 'Conflicts with the base branch',
+    className: 'text-closed',
+    Icon: AlertIcon,
+  },
+  behind: {
+    label: 'Behind the base branch',
+    className: 'text-attention',
+    Icon: SyncIcon,
+  },
+}
+
+/**
+ * Why a pull request cannot go in, where the rest of the row cannot say it.
+ * Only conflicts and a stale branch are drawn: blocked and unstable are
+ * GitHub's words for a missing review or a red check, both of which already
+ * have their own mark on this line.
+ */
+export function MergeIndicator({ state }: { state: MergeState | null }) {
+  const meta = state ? MERGE_META[state] : undefined
+  if (!meta) return null
+  const { label, className, Icon } = meta
+
   return (
     <Hint label={label}>
       <span className={cn('flex items-center', className)}>
-        {/*
-         * In-progress checks are GitHub's amber dot, which is drawn still: the
-         * mark is rotationally symmetric, so the slow spin the pending state
-         * used to carry would have been motion nobody could see.
-         */}
         <Icon className="size-3.5" />
         <span className="sr-only">{label}</span>
+      </span>
+    </Hint>
+  )
+}
+
+const REMINDER_META = {
+  waiting: { className: 'text-muted-foreground', Icon: BellIcon },
+  // A reminder that has come round is the one mark on the line that is asking
+  // for something, so it is drawn in the colour the rest of the panel uses for
+  // exactly that.
+  due: { className: 'text-attention', Icon: BellFillIcon },
+} as const
+
+/** A reminder the reader set on this row, waiting or come round. */
+export function ReminderMark({
+  state,
+  label,
+}: {
+  state: 'waiting' | 'due'
+  label: string
+}) {
+  const { className, Icon } = REMINDER_META[state]
+
+  return (
+    <Hint label={label}>
+      <span data-reminder={state} className={cn('flex items-center', className)}>
+        <Icon className="size-3.5" />
+        <span className="sr-only">{label}</span>
+      </span>
+    </Hint>
+  )
+}
+
+/** Says why a row is on screen at all, when the reader had hidden it. */
+export function HiddenMark() {
+  return (
+    <Hint label="Hidden from the list">
+      <span data-hidden className="flex items-center text-muted-foreground">
+        <EyeClosedIcon className="size-3.5" />
+        <span className="sr-only">Hidden from the list</span>
+      </span>
+    </Hint>
+  )
+}
+
+/**
+ * What has happened to a row since the reader last looked at it. The loudest
+ * change leads, because a row has one line to make its case; the rest arrive
+ * on hover.
+ */
+export function ChangeBadge({
+  kinds,
+  item,
+  seen,
+}: {
+  kinds: readonly ChangeKind[]
+  item: SearchItem
+  seen: ItemSignature
+}) {
+  if (kinds.length === 0) return null
+
+  return (
+    <Hint label={describeChanges(kinds, item, seen)}>
+      <span
+        data-change={kinds[0]}
+        className="flex items-center gap-1 text-[11px] font-semibold text-foreground"
+      >
+        <DotFillIcon className="size-2.5 shrink-0 text-ring" />
+        <span className="max-w-[140px] truncate">{describeChange(kinds[0], item, seen)}</span>
+        {kinds.length > 1 && (
+          <span className="text-muted-foreground tabular-nums">+{kinds.length - 1}</span>
+        )}
       </span>
     </Hint>
   )

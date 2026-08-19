@@ -9,7 +9,15 @@ import type { SearchItem, SearchPage } from '@/lib/github/types'
  * own extension origin, giving every github.com tab one shared cache.
  */
 const DB_NAME = 'github-sidecar'
-const DB_VERSION = 1
+/**
+ * Bumped whenever a cached row gains a field the panel then reads.
+ *
+ * A cache holds a *shape* as well as a value, and a row written before a field
+ * existed is not a hit for a panel that expects it — it is a row that will
+ * crash the list. Dropping the store on upgrade costs one refetch and is the
+ * only version of this that cannot be got wrong.
+ */
+const DB_VERSION = 2
 const STORE = 'search-pages'
 const QUERY_INDEX = 'query'
 const UPDATED_INDEX = 'updatedAt'
@@ -24,11 +32,15 @@ export interface CacheEntry {
 
 export interface CacheStore {
   read(key: string): Promise<CacheEntry | undefined>
+  /** Every page cached for one query, in no particular order. */
+  readQuery(query: string): Promise<CacheEntry[]>
   write(entry: CacheEntry): Promise<void>
   deleteQuery(query: string): Promise<void>
   prune(maxAgeMs: number): Promise<void>
   /** Replaces one row wherever it is cached. Returns how many pages changed. */
   updateItem(item: SearchItem): Promise<number>
+  /** Looks rows up by node id, wherever they happen to be cached. */
+  findItems(ids: readonly string[]): Promise<SearchItem[]>
 }
 
 /** Swaps a refreshed row into a page, or returns null if it is not in it. */
@@ -56,7 +68,9 @@ function openDatabase(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = () => {
       const database = request.result
-      if (database.objectStoreNames.contains(STORE)) return
+      // Rebuilt rather than migrated: every entry is re-fetchable, and one
+      // wrong migration would put a row of the old shape on screen.
+      if (database.objectStoreNames.contains(STORE)) database.deleteObjectStore(STORE)
       const store = database.createObjectStore(STORE, { keyPath: 'key' })
       store.createIndex(QUERY_INDEX, 'query', { unique: false })
       store.createIndex(UPDATED_INDEX, 'updatedAt', { unique: false })
@@ -97,6 +111,28 @@ export const indexedDbStore: CacheStore = {
 
   async write(entry) {
     await withStore('readwrite', (store) => promisify(store.put(entry)))
+  },
+
+  async readQuery(query) {
+    return withStore('readonly', (store) =>
+      promisify<CacheEntry[]>(store.index(QUERY_INDEX).getAll(query)),
+    )
+  },
+
+  async findItems(ids) {
+    const wanted = new Set(ids)
+    if (wanted.size === 0) return []
+
+    return withStore('readonly', async (store) => {
+      const entries = await promisify<CacheEntry[]>(store.getAll())
+      const found = new Map<string, SearchItem>()
+      for (const entry of entries) {
+        for (const item of entry.page.items) {
+          if (wanted.has(item.id)) found.set(item.id, item)
+        }
+      }
+      return [...found.values()]
+    })
   },
 
   async deleteQuery(query) {

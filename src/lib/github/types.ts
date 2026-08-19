@@ -21,6 +21,20 @@ export type ReviewDecision = 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED
 
 export type CheckState = 'EXPECTED' | 'ERROR' | 'FAILURE' | 'PENDING' | 'SUCCESS'
 
+/**
+ * How a pull request stands against its base branch, flattened from GitHub's
+ * `mergeable` and `mergeStateStatus`. Only the two the row cannot otherwise
+ * say are drawn — a conflict and a stale branch — but the rest are kept so the
+ * distinction is not lost on the way in.
+ */
+export type MergeState = 'clean' | 'conflicting' | 'behind' | 'blocked' | 'unstable'
+
+/** A check that is red, and where to go and look at it. */
+export interface FailingCheck {
+  name: string
+  url: string | null
+}
+
 export interface Label {
   name: string
   color: string
@@ -77,6 +91,18 @@ export interface SearchItem {
   checkState: CheckState | null
   additions: number | null
   deletions: number | null
+  /** The pull request's own branch. Null for issues. */
+  headRefName: string | null
+  /** The head commit, which is how a new push is told from an edit. */
+  headRefOid: string | null
+  /** Null for issues, and where GitHub has not worked it out yet. */
+  mergeState: MergeState | null
+  /** The red checks, named. Empty where nothing is failing. */
+  failingChecks: FailingCheck[]
+  /** How many checks the rollup had, read or not, so a partial list says so. */
+  checkCount: number | null
+  /** How many of them this query actually read; the rest are unknown. */
+  checksRead: number
   /** Null for issues, and for pull requests that are not part of a stack. */
   stack: StackInfo | null
 }

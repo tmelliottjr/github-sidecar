@@ -29,6 +29,15 @@ function createMemoryStore(seed: CacheEntry[] = []) {
     async read(key) {
       return entries.get(key)
     },
+    async readQuery(query) {
+      return [...entries.values()].filter((entry) => entry.query === query)
+    },
+    async findItems(ids) {
+      const wanted = new Set(ids)
+      return [...entries.values()]
+        .flatMap((entry) => entry.page.items)
+        .filter((item) => wanted.has(item.id))
+    },
     async write(entry) {
       entries.set(entry.key, entry)
     },

@@ -32,7 +32,8 @@ function devManifest(enabled: boolean): Plugin {
 }
 
 /**
- * Builds the extension pages (options UI) and the background service worker.
+ * Builds the extension pages (options UI, offscreen sound) and the background
+ * service worker.
  * The content script is built separately by vite.content.config.ts because it
  * must be emitted as a single self-executing file.
  */
@@ -58,6 +59,9 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         input: {
           options: fileURLToPath(new URL('./options.html', import.meta.url)),
+          // Never seen: the only document allowed to make a sound, since a
+          // service worker cannot.
+          offscreen: fileURLToPath(new URL('./offscreen.html', import.meta.url)),
           background: fileURLToPath(new URL('./src/background/index.ts', import.meta.url)),
         },
         output: {

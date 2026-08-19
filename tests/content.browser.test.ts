@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createServer, type Server } from 'node:http'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { after, before, describe, it } from 'node:test'
@@ -80,6 +81,26 @@ const items = Array.from({ length: 40 }, (_, index) => ({
   checkState: index % 3 === 2 ? 'PENDING' : index % 2 ? 'FAILURE' : 'SUCCESS',
   additions: 1,
   deletions: 1,
+  headRefName: index % 2 ? 'octocat/branch-' + index : null,
+  headRefOid: index % 2 ? 'sha' + index : null,
+  // Row 1 conflicts, row 3 has fallen behind, the rest are fine.
+  mergeState: index === 1 ? 'conflicting' : index === 3 ? 'behind' : index % 2 ? 'clean' : null,
+  // Row 1 has more failing checks than the drawer shows at once, so it also
+  // covers the list scrolling; the last has no link at all.
+  failingChecks: index === 1
+    ? [
+        { name: 'unit tests', url: 'https://github.com/acme/app/runs/1' },
+        { name: 'typecheck', url: 'https://github.com/acme/app/runs/2' },
+        { name: 'lint', url: 'https://github.com/acme/app/runs/3' },
+        { name: 'build (macos)', url: 'https://github.com/acme/app/runs/4' },
+        { name: 'build (linux)', url: 'https://github.com/acme/app/runs/5' },
+        { name: 'e2e', url: 'https://github.com/acme/app/runs/6' },
+        { name: 'docs', url: 'https://github.com/acme/app/runs/7' },
+        { name: 'legacy status', url: null },
+      ]
+    : [],
+  checkCount: index === 1 ? 40 : null,
+  checksRead: index === 1 ? 30 : 0,
   // Row 1 is the middle layer of a three-deep stack; every other row is on
   // its own, so the list has to cope with both.
   stack: index === 1
@@ -123,6 +144,7 @@ const items = Array.from({ length: 40 }, (_, index) => ({
       }
     : null,
 }));
+window.__items = items;
 window.chrome = {
   runtime: {
     id: 'stub',
@@ -1000,6 +1022,14 @@ describe('row context menu', { concurrency: false, skip }, () => {
   }
 
   const clickMenuItem = async (label: string) => {
+    await menuPage.waitForFunction(
+      (text: string) =>
+        [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[role="menuitem"]')].some(
+          (node) => node.textContent?.includes(text),
+        ),
+      {},
+      label,
+    )
     await menuPage.evaluate((text) => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const entry = [...shadow.querySelectorAll('[role="menuitem"]')].find((node) =>
@@ -1019,7 +1049,15 @@ describe('row context menu', { concurrency: false, skip }, () => {
       )
     })
 
-    assert.deepEqual(labels, ['Pin item', 'Refresh this item'])
+    assert.deepEqual(labels, [
+      'Pin item',
+      'Remind me…',
+      'Hide this row',
+      'Refresh this item',
+      // Every way of copying is one entry: they are the same verb on the same
+      // row, and listing six of them alongside the actions read as neither.
+      'Copy',
+    ])
   })
 
   it('asks the worker for that row alone, then applies the result', async () => {
@@ -1073,7 +1111,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
   it('draws the pending checks mark as a still amber dot', async () => {
     const mark = await menuPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const dot = shadow.querySelector('[data-index] svg.octicon-dot-fill')
+      const dot = shadow.querySelector('[data-check] svg.octicon-dot-fill')
       if (!dot) return null
       const styles = getComputedStyle(dot)
       return { animationName: styles.animationName, colour: styles.color }
@@ -1119,7 +1157,13 @@ describe('row context menu', { concurrency: false, skip }, () => {
         node.textContent?.trim(),
       )
     })
-    assert.deepEqual(labels, ['Unpin item', 'Refresh this item'])
+    assert.deepEqual(labels, [
+      'Unpin item',
+      'Remind me…',
+      'Hide this row',
+      'Refresh this item',
+      'Copy',
+    ])
 
     await clickMenuItem('Unpin item')
     await menuPage.waitForFunction(
@@ -1174,7 +1218,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
     const layers = await menuPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      return [...shadow.querySelectorAll('[data-index="1"] li button')].map((node) =>
+      return [...shadow.querySelectorAll('[data-index="1"] [data-stack] li button')].map((node) =>
         node.textContent?.trim(),
       )
     })
@@ -1196,7 +1240,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
   it('opens a related pull request from the stack', async () => {
     await menuPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const layer = [...shadow.querySelectorAll('[data-index="1"] li button')].find(
+      const layer = [...shadow.querySelectorAll('[data-index="1"] [data-stack] li button')].find(
         (node) => node.textContent?.includes('The last layer'),
       ) as HTMLButtonElement
       layer.click()
@@ -1272,7 +1316,14 @@ describe('row context menu', { concurrency: false, skip }, () => {
         node.textContent?.trim(),
       )
     })
-    assert.deepEqual(labels, ['Pin item', 'Hide the stack', 'Refresh this item'])
+    assert.deepEqual(labels, [
+      'Pin item',
+      'Hide the stack',
+      'Remind me…',
+      'Hide this row',
+      'Refresh this item',
+      'Copy',
+    ])
 
     await clickMenuItem('Hide the stack')
     await menuPage.waitForFunction(() => {
@@ -1288,6 +1339,246 @@ describe('row context menu', { concurrency: false, skip }, () => {
         region!.hasAttribute('inert')
       )
     })
+  })
+
+  /**
+   * A test page is not a secure context, so it has no async clipboard API at
+   * all. Standing one up is what puts the row on the path it takes on
+   * github.com, and recording what it was handed is as close to the system
+   * clipboard as a headless browser gets.
+   */
+  const stubClipboard = () =>
+    menuPage.evaluate(() => {
+      const scope = window as unknown as {
+        __copied: Array<Record<string, string>>
+        ClipboardItem: unknown
+      }
+      scope.__copied = []
+      scope.ClipboardItem = class {
+        readonly flavours: Record<string, Blob>
+        constructor(flavours: Record<string, Blob>) {
+          this.flavours = flavours
+        }
+        get types() {
+          return Object.keys(this.flavours)
+        }
+        async getType(type: string) {
+          return this.flavours[type]
+        }
+      }
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          write: async (items: ClipboardItem[]) => {
+            const flavours = items.flatMap((item) =>
+              item.types.map(async (type) => [type, await (await item.getType(type)).text()]),
+            )
+            scope.__copied.push(Object.fromEntries(await Promise.all(flavours)))
+          },
+        },
+      })
+    })
+
+  const copiedCount = () =>
+    menuPage.evaluate(
+      () => (window as unknown as { __copied: unknown[] }).__copied.length,
+    )
+
+  const lastCopy = () =>
+    menuPage.evaluate(
+      () =>
+        (window as unknown as { __copied: Array<Record<string, string>> }).__copied.at(-1)!,
+    )
+
+  const waitForCopy = () =>
+    menuPage.waitForFunction(
+      () => (window as unknown as { __copied: unknown[] }).__copied.length > 0,
+    )
+
+  /** Opens the copy submenu and picks one of the ways of copying. */
+  const clickCopyItem = async (label: string) => {
+    await menuPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const trigger = [...shadow.querySelectorAll('[role="menuitem"]')].find(
+        (node) => node.textContent?.trim() === 'Copy',
+      )
+      ;(trigger as HTMLElement).click()
+    })
+    await menuPage.waitForFunction(
+      (text: string) =>
+        [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[role="menuitem"]')].some(
+          (node) => node.textContent?.trim() === text,
+        ),
+      {},
+      label,
+    )
+    await menuPage.evaluate((text) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[role="menuitem"]')].find(
+        (node) => node.textContent?.trim() === text,
+      )
+      ;(entry as HTMLElement).click()
+    }, label)
+    await menuPage.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector('[role="menu"]'),
+    )
+  }
+
+  /** What the copy submenu offers for the row its menu is open on. */
+  const copyChoices = async () => {
+    await menuPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const trigger = [...shadow.querySelectorAll('[role="menuitem"]')].find(
+        (node) => node.textContent?.trim() === 'Copy',
+      )
+      ;(trigger as HTMLElement).click()
+    })
+    await menuPage.waitForFunction(
+      () =>
+        document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[role="menu"]')
+          .length > 1,
+    )
+
+    return menuPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const submenu = [...shadow.querySelectorAll('[role="menu"]')].at(-1)!
+      return [...submenu.querySelectorAll('[role="menuitem"]')].map(
+        (node) => node.textContent?.trim() ?? '',
+      )
+    })
+  }
+
+  it('copies a link as rich text, with the bare URL underneath it', async () => {
+    await stubClipboard()
+    await openMenuOn(0)
+    await clickCopyItem('Link')
+
+    await waitForCopy()
+    const copied = await lastCopy()
+
+    assert.equal(copied['text/plain'], 'https://github.com/acme/app/pull/1')
+    // Row 0 is the row the refresh suite above re-read, hence its title.
+    assert.equal(
+      copied['text/html'],
+      '<a href="https://github.com/acme/app/pull/1">A refreshed title</a>',
+    )
+  })
+
+  it('copies a title on its own', async () => {
+    await stubClipboard()
+    await openMenuOn(0)
+    await clickCopyItem('Title')
+
+    await waitForCopy()
+    const copied = await lastCopy()
+
+    assert.equal(copied['text/plain'], 'A refreshed title')
+    assert.equal(copied['text/html'], undefined)
+  })
+
+  it('copies a pull request branch, and offers no branch for an issue', async () => {
+    await stubClipboard()
+    await openMenuOn(1)
+    await clickCopyItem('Branch')
+
+    await waitForCopy()
+    assert.equal((await lastCopy())['text/plain'], 'octocat/branch-1')
+
+    // Row 0 is an issue: no branch, and no stack either.
+    await openMenuOn(0)
+    const choices = await copyChoices()
+    assert.deepEqual(choices, ['Link', 'Link as Markdown', 'Title'])
+    assert.equal(await copiedCount(), 1)
+  })
+
+  it('copies a link as Markdown, carrying the layer of a stacked row', async () => {
+    await stubClipboard()
+    await openMenuOn(0)
+    await clickCopyItem('Link as Markdown')
+
+    await waitForCopy()
+    assert.equal(
+      (await lastCopy())['text/plain'],
+      '[A refreshed title](https://github.com/acme/app/pull/1)',
+    )
+
+    // Row 1 is the middle layer of a stack, which its title says so that a
+    // pasted list of them reads in order.
+    await stubClipboard()
+    await openMenuOn(1)
+    await clickCopyItem('Link as Markdown')
+
+    await waitForCopy()
+    assert.equal(
+      (await lastCopy())['text/plain'],
+      '[Item number 1 with a reasonably long title to wrap <2/3>](https://github.com/acme/app/pull/2)',
+    )
+  })
+
+  it('copies a whole stack, base first, plainly or as Markdown', async () => {
+    await stubClipboard()
+    await openMenuOn(1)
+    await clickCopyItem('Stack links')
+
+    await waitForCopy()
+    assert.equal(
+      (await lastCopy())['text/plain'],
+      [
+        'https://github.com/acme/app/pull/101',
+        'https://github.com/acme/app/pull/2',
+        'https://github.com/acme/app/pull/103',
+      ].join('\n'),
+    )
+
+    await stubClipboard()
+    await openMenuOn(1)
+    await clickCopyItem('Stack links as Markdown')
+
+    await waitForCopy()
+    assert.equal(
+      (await lastCopy())['text/plain'],
+      [
+        '[Groundwork for the feature <1/3>](https://github.com/acme/app/pull/101)',
+        '[Item number 1 with a reasonably long title to wrap <2/3>](https://github.com/acme/app/pull/2)',
+        '[The last layer <3/3>](https://github.com/acme/app/pull/103)',
+      ].join('\n'),
+    )
+  })
+
+  it('falls back to the copy command where the async API is refused', async () => {
+    await menuPage.evaluate(() => {
+      const scope = window as unknown as {
+        __copied: Array<Record<string, string>>
+        ClipboardItem: unknown
+      }
+      scope.__copied = []
+      scope.ClipboardItem = undefined
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+      // Listens on the way back up, after the row's own capturing handler has
+      // put both flavours on the event.
+      document.addEventListener('copy', (event) => {
+        scope.__copied.push({
+          'text/plain': event.clipboardData?.getData('text/plain') ?? '',
+          'text/html': event.clipboardData?.getData('text/html') ?? '',
+        })
+      })
+    })
+
+    await openMenuOn(0)
+    await clickCopyItem('Link')
+
+    await waitForCopy()
+    const copied = await lastCopy()
+
+    assert.equal(copied['text/plain'], 'https://github.com/acme/app/pull/1')
+    // Row 0 is the row the refresh suite above re-read, hence its title.
+    assert.equal(
+      copied['text/html'],
+      '<a href="https://github.com/acme/app/pull/1">A refreshed title</a>',
+    )
+
+    // The throwaway field the command needs must not be left behind.
+    assert.equal(await menuPage.evaluate(() => document.querySelectorAll('textarea').length), 0)
   })
 })
 
@@ -1779,5 +2070,908 @@ describe('results GitHub only partly returned', { concurrency: false, skip }, ()
         ).length,
     )
     assert.ok(rows > 0)
+  })
+})
+
+/**
+ * The row for whatever this tab is showing. Served from a real origin rather
+ * than `setContent`, because the panel reads the path it is on and a test page
+ * has to be able to navigate between paths the way github.com does.
+ */
+describe('the page this tab is on', { concurrency: false, skip }, () => {
+  let server: Server
+  let origin: string
+  let pageBrowser: Browser
+  let onPage: Page
+
+  before(async () => {
+    ;({ server, origin } = await serveBlankPages())
+
+    pageBrowser = await puppeteer.launch({ executablePath, headless: true })
+    onPage = await pageBrowser.newPage()
+    await onPage.setViewport({ width: 1280, height: 800 })
+    // Row 1 of the seeded list is acme/app#2.
+    await onPage.goto(`${origin}/acme/app/pull/2`)
+    await onPage.evaluate(CHROME_STUB)
+    // Turbo and the back button are what the panel has to hear on github.com;
+    // the Navigation API is a shortcut it may not be given in an isolated
+    // world, so it is taken away here to leave the route that must work.
+    await onPage.evaluate(() => {
+      Object.defineProperty(window, 'navigation', { configurable: true, value: undefined })
+    })
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await onPage.evaluate(bundle)
+    await onPage.waitForSelector('#github-sidecar-root')
+    await onPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+  })
+
+  after(async () => {
+    await pageBrowser?.close()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  /** Which rows carry the mark, by their index in the list. */
+  const markedRows = () =>
+    onPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return [...shadow.querySelectorAll('[data-index]')]
+        .filter((row) => row.querySelector('[data-current]'))
+        .map((row) => Number(row.getAttribute('data-index')))
+    })
+
+  const navigate = (path: string) =>
+    onPage.evaluate((to) => {
+      history.pushState({}, '', to)
+      document.dispatchEvent(new Event('turbo:load'))
+    }, path)
+
+  it('marks the row for the item the tab is showing, and only that row', async () => {
+    await onPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-current]'),
+      ),
+    )
+
+    assert.deepEqual(await markedRows(), [1])
+
+    // The mark is stated for assistive technology too, not just drawn.
+    const current = await onPage.evaluate(
+      () =>
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="1"] [aria-current="page"]')
+          ?.textContent?.includes('Item number 1'),
+    )
+    assert.equal(current, true)
+  })
+
+  it('stays on the same item across that pull request\'s own tabs', async () => {
+    await navigate('/acme/app/pull/2/files')
+    assert.deepEqual(await markedRows(), [1])
+  })
+
+  it('follows a Turbo navigation to another item', async () => {
+    await navigate('/acme/app/issues/1')
+    await onPage.waitForFunction(
+      () =>
+        Boolean(
+          document
+            .getElementById('github-sidecar-root')!
+            .shadowRoot!.querySelector('[data-index="0"] [data-current]'),
+        ),
+    )
+    assert.deepEqual(await markedRows(), [0])
+  })
+
+  it('marks nothing on a page that is not an item', async () => {
+    await navigate('/acme/app/issues')
+    await onPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-current]'),
+    )
+    assert.deepEqual(await markedRows(), [])
+  })
+
+  it('follows the back button, which announces nothing of its own', async () => {
+    await onPage.goBack()
+    await onPage.waitForFunction(
+      () =>
+        Boolean(
+          document
+            .getElementById('github-sidecar-root')!
+            .shadowRoot!.querySelector('[data-index="0"] [data-current]'),
+        ),
+    )
+    assert.deepEqual(await markedRows(), [0])
+  })
+
+  /** Where the marker sits, against the panel edge and the row it points at. */
+  const markerGeometry = () =>
+    onPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const marker = shadow.querySelector('[data-current-marker]') as HTMLElement | null
+      if (!marker) return null
+      const panel = shadow.querySelector('[role="complementary"]')!.getBoundingClientRect()
+      const box = marker.getBoundingClientRect()
+      const row = shadow
+        .querySelector('[data-current] [data-item-body]')
+        ?.getBoundingClientRect()
+      return {
+        visible: getComputedStyle(marker).visibility === 'visible',
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        height: box.height,
+        panelRight: panel.right,
+        rowTop: row?.top ?? null,
+        rowHeight: row?.height ?? null,
+      }
+    })
+
+  it('points at the row from outside the panel, level with it', async () => {
+    await navigate('/acme/app/pull/2')
+    await onPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const marker = shadow.querySelector('[data-current-marker]')
+      return marker ? getComputedStyle(marker).visibility === 'visible' : false
+    })
+
+    const marker = (await markerGeometry())!
+
+    // Anchored just inside the panel's edge, with its point out over the page.
+    assert.ok(marker.left < marker.panelRight, 'expected the marker to meet the panel')
+    // Past the edge, but only just: the point is a hint, not a tab.
+    const overhang = marker.right - marker.panelRight
+    assert.ok(overhang > 1 && overhang < 8, `overhang was ${overhang}px`)
+    assert.equal(Math.round(marker.top), Math.round(marker.rowTop!))
+    assert.equal(Math.round(marker.height), Math.round(marker.rowHeight!))
+  })
+
+  it('follows the list as it scrolls, and goes once the row has', async () => {
+    const start = (await markerGeometry())!
+
+    const scrollBy = (amount: number) =>
+      onPage.evaluate((delta) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const list = shadow.querySelector('.scrollbar-slim')!
+        list.scrollTop += delta
+      }, amount)
+
+    await scrollBy(40)
+    await onPage.waitForFunction(
+      (top: number) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const marker = shadow.querySelector('[data-current-marker]') as HTMLElement
+        return Math.abs(marker.getBoundingClientRect().top - (top - 40)) < 2
+      },
+      {},
+      start.top,
+    )
+
+    // Far enough that the row itself is gone; the marker must not be left
+    // pointing at whatever took its place.
+    await scrollBy(2000)
+    await onPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const marker = shadow.querySelector('[data-current-marker]')
+      return !marker || getComputedStyle(marker).visibility === 'hidden'
+    })
+
+    await scrollBy(-2040)
+    await onPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const marker = shadow.querySelector('[data-current-marker]')
+      return Boolean(marker) && getComputedStyle(marker!).visibility === 'visible'
+    })
+  })
+
+  it('follows the panel as the window is dragged', async () => {
+    const start = (await markerGeometry())!
+
+    const handle = await onPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const region = shadow.querySelector('[data-drag-region]') as HTMLElement
+      const box = region.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+
+    await onPage.mouse.move(handle.x, handle.y)
+    await onPage.mouse.down()
+    await onPage.mouse.move(handle.x - 70, handle.y - 30, { steps: 8 })
+    await onPage.mouse.up()
+
+    await onPage.waitForFunction(
+      (left: number) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const marker = shadow.querySelector('[data-current-marker]') as HTMLElement
+        return Math.abs(marker.getBoundingClientRect().left - (left - 70)) < 2
+      },
+      {},
+      start.left,
+    )
+
+    const moved = (await markerGeometry())!
+    assert.ok(moved.left < moved.panelRight)
+    assert.equal(
+      Math.round(moved.right - moved.panelRight),
+      Math.round(start.right - start.panelRight),
+    )
+  })
+
+  it('marks nothing for an item this query does not hold', async () => {
+    await navigate('/other/repo/pull/2')
+    await onPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-current]'),
+    )
+    assert.deepEqual(await markedRows(), [])
+  })
+})
+
+/** Any path answers with the same empty page, so navigation is all that varies. */
+function serveBlankPages(): Promise<{ server: Server; origin: string }> {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'text/html' })
+    response.end('<!doctype html><html data-color-mode="light"><head><title>acme/app</title></head><body></body></html>')
+  })
+
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      resolve({ server, origin: `http://127.0.0.1:${port}` })
+    })
+  })
+}
+
+/**
+ * The features that turn a list of state into a list of what has moved: change
+ * marks, reminders, hidden rows, the failing-check drawer, the filter, and the
+ * keyboard. All are switched on by default, which is what the stub's settings
+ * leave them as.
+ */
+describe('changes, reminders, hidden rows, and filtering', { concurrency: false, skip }, () => {
+  let panelBrowser: Browser
+  let panel: Page
+
+  before(async () => {
+    panelBrowser = await puppeteer.launch({ executablePath, headless: true })
+    panel = await panelBrowser.newPage()
+    await panel.setViewport({ width: 1280, height: 900 })
+    await panel.setContent('<!doctype html><html data-color-mode="light"><body></body></html>')
+    await panel.evaluate(CHROME_STUB)
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await panel.evaluate(bundle)
+    await panel.waitForSelector('#github-sidecar-root')
+    await panel.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+  })
+
+  after(async () => {
+    await panelBrowser?.close()
+  })
+
+  const shadowText = (selector: string) =>
+    panel.evaluate((query) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return shadow.querySelector(query)?.textContent?.trim() ?? null
+    }, selector)
+
+  const openMenuOn = async (index: number) => {
+    const point = await panel.evaluate((rowIndex) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const row = shadow.querySelector(`[data-index="${rowIndex}"] button`)!
+      const box = row.getBoundingClientRect()
+      return { x: box.x + 40, y: box.y + 20 }
+    }, index)
+
+    await panel.mouse.click(point.x, point.y, { button: 'right' })
+    await panel.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector('[role="menu"]')),
+    )
+  }
+
+  const clickMenuItem = async (label: string) => {
+    // The menu is mounted before the items that depend on the row's state
+    // have rendered, so the entry is waited for rather than assumed.
+    await panel.waitForFunction(
+      (text: string) =>
+        [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[role="menuitem"]')].some(
+          (node) => node.textContent?.includes(text),
+        ),
+      {},
+      label,
+    )
+    await panel.evaluate((text) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[role="menuitem"]')].find((node) =>
+        node.textContent?.includes(text),
+      )
+      ;(entry as HTMLElement).click()
+    }, label)
+    await panel.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector('[role="menu"]'),
+    )
+  }
+
+  /**
+   * Pushes a changed copy of one seeded row back, as a poll would, and leaves
+   * the seeded row changed so a later refetch agrees with it.
+   *
+   * Order matters both ways round. The broadcast has to go first, because the
+   * panel's query cache holds the seeded array itself and editing it in place
+   * would make the update deep-equal to what is already there — react-query
+   * would drop it as a no-op. The seed has to be updated after, or the next
+   * search would hand the old row back and undo the change.
+   */
+  const changeItem = (index: number, patch: Record<string, unknown>) =>
+    panel.evaluate(
+      ({ index: at, patch: fields }) => {
+        const scope = window as unknown as {
+          __items: Array<Record<string, unknown>>
+          __broadcast: (message: unknown) => void
+        }
+        const item = { ...scope.__items[at], ...fields }
+        scope.__broadcast({ type: 'item-updated', item })
+        scope.__items[at] = item
+      },
+      { index, patch },
+    )
+
+  it('starts every row seen, so nothing is marked on first sight', async () => {
+    const remembered = await panel.evaluate(
+      async () => Object.keys((await chrome.storage.local.get('itemMemory')).itemMemory ?? {}).length,
+    )
+    assert.ok(remembered > 0, 'expected the rows on screen to have been remembered')
+
+    assert.equal(await shadowText('[data-change]'), null)
+  })
+
+  it('marks a row that moved, in the words of what happened', async () => {
+    await changeItem(0, { commentCount: 12 })
+
+    await panel.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-index="0"] [data-change]')),
+    )
+    assert.equal(await shadowText('[data-index="0"] [data-change]'), '12 new comments')
+  })
+
+  it('clears the mark once the row has been marked as seen', async () => {
+    await openMenuOn(0)
+    await clickMenuItem('Mark as seen')
+
+    await panel.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-change]'),
+    )
+  })
+
+  it('hides a row, says where it went, and brings it back', async () => {
+    await openMenuOn(1)
+    await clickMenuItem('Hide this row')
+
+    await panel.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.textContent?.includes('Item number 1 '),
+    )
+
+    const control = () =>
+      panel.evaluate(() => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        return [...shadow.querySelectorAll('button')]
+          .map((node) => node.textContent?.trim())
+          .find((text) => text?.includes('hidden'))
+      })
+    assert.equal(await control(), 'show 1 hidden')
+
+    const clickControl = () =>
+      panel.evaluate(() => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const node = [...shadow.querySelectorAll('button')].find((button) =>
+          button.textContent?.includes('hidden'),
+        )
+        ;(node as HTMLElement).click()
+      })
+
+    // Reviewing them is what makes hiding safe: they are listed, marked as
+    // hidden, and one menu away from coming back.
+    await clickControl()
+    await panel.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-row-hidden]')),
+    )
+
+    await openMenuOn(1)
+    const labels = await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return [...shadow.querySelectorAll('[role="menuitem"]')].map((node) =>
+        node.textContent?.trim(),
+      )
+    })
+    assert.ok(labels.includes('Show it again'), labels.join(', '))
+    await clickMenuItem('Show it again')
+
+    await panel.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-row-hidden]'),
+    )
+    assert.equal(await control(), undefined)
+  })
+
+  it('offers to show hidden rows only where this view holds one', async () => {
+    const control = () =>
+      panel.evaluate(() =>
+        [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('button')]
+          .map((node) => node.textContent?.trim())
+          .find((text) => text?.includes('hidden')),
+      )
+
+    await openMenuOn(0)
+    await clickMenuItem('Hide this row')
+    await panel.waitForFunction(() =>
+      [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('button')].some(
+        (node) => node.textContent?.includes('hidden'),
+      ),
+    )
+    assert.equal(await control(), 'show 1 hidden')
+
+    // A filter that the hidden row does not match makes the offer an empty
+    // one: clicking it would change nothing, so it is not made.
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Filter these rows"]') as HTMLElement).click()
+    })
+    await panel.waitForSelector('#github-sidecar-root')
+    await panel.keyboard.type('regression')
+    await panel.waitForFunction(
+      () =>
+        ![...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('button')].some(
+          (node) => node.textContent?.includes('hidden'),
+        ),
+    )
+
+    await panel.keyboard.press('Escape')
+    await panel.waitForFunction(() =>
+      [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('button')].some(
+        (node) => node.textContent?.includes('hidden'),
+      ),
+    )
+    assert.equal(await control(), 'show 1 hidden')
+
+    // Put it back, so the rows that follow are the rows that were seeded.
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const node = [...shadow.querySelectorAll('button')].find((button) =>
+        button.textContent?.includes('hidden'),
+      )
+      ;(node as HTMLElement).click()
+    })
+    await panel.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-row-hidden]')),
+    )
+    await openMenuOn(0)
+    await clickMenuItem('Show it again')
+    await panel.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-row-hidden]'),
+    )
+  })
+
+  it('leaves a row where it is when a reminder is set on it', async () => {
+    await openMenuOn(1)
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const trigger = [...shadow.querySelectorAll('[role="menuitem"]')].find((node) =>
+        node.textContent?.includes('Remind me'),
+      )
+      ;(trigger as HTMLElement).click()
+    })
+    await panel.waitForFunction(() =>
+      Boolean(
+        [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[role="menuitem"]')].some(
+          (node) => node.textContent?.trim() === 'When it changes',
+        ),
+      ),
+    )
+    await clickMenuItem('When it changes')
+
+    // Still listed, and now marked as waiting: a reminder is not a way of
+    // getting rid of a row.
+    await panel.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="1"] [data-reminder="waiting"]'),
+      ),
+    )
+    const row = await shadowText('[data-index="1"]')
+    assert.match(row ?? '', /Item number 1 /)
+  })
+
+  it('speaks up when the row a reminder was set on moves', async () => {
+    await changeItem(1, { commentCount: 44 })
+
+    await panel.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="1"] [data-reminder="due"]'),
+      ),
+    )
+  })
+
+  it('retires a reminder that has been answered, and cancels one that has not', async () => {
+    // Reading the row is the answer to a reminder that has come round.
+    await openMenuOn(1)
+    await clickMenuItem('Mark as seen')
+    await panel.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-reminder]'),
+    )
+
+    // One still waiting stays until it is cancelled outright: the reader asked
+    // for a time, and looking at the row now is not that time.
+    await openMenuOn(1)
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const trigger = [...shadow.querySelectorAll('[role="menuitem"]')].find((node) =>
+        node.textContent?.includes('Remind me'),
+      )
+      ;(trigger as HTMLElement).click()
+    })
+    await panel.waitForFunction(() =>
+      Boolean(
+        [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[role="menuitem"]')].some(
+          (node) => node.textContent?.trim() === 'Tomorrow morning',
+        ),
+      ),
+    )
+    await clickMenuItem('Tomorrow morning')
+    await panel.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-reminder="waiting"]')),
+    )
+
+    // Reading the row now is not the time they asked for, so opening it —
+    // which is as read as a row gets — leaves the reminder standing.
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[data-index="1"] button') as HTMLElement).click()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    const stillWaiting = await panel.evaluate(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-reminder="waiting"]')),
+    )
+    assert.equal(stillWaiting, true)
+
+    await openMenuOn(1)
+    await clickMenuItem('Clear the reminder')
+    await panel.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-reminder]'),
+    )
+  })
+
+  it('opens the failing checks under the row, and each one links out', async () => {
+    const mark = await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const button = shadow.querySelector('[data-check="FAILURE"]') as HTMLElement
+      const text = button.textContent?.trim() ?? ''
+      button.click()
+      return text
+    })
+    // The mark counts them rather than naming one of them.
+    assert.match(mark, /^8/)
+
+    await panel.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const drawer = shadow.querySelector('[data-checks="open"]') as HTMLElement | null
+      return Boolean(drawer) && drawer!.getBoundingClientRect().height > 0
+    })
+
+    const listed = await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const list = shadow.querySelector('[data-checks="open"] ul') as HTMLElement
+      return {
+        names: [...list.querySelectorAll('li')].map((node) => node.textContent?.trim()),
+        // More checks than fit, so the list scrolls rather than growing.
+        scrolls: list.scrollHeight > list.clientHeight,
+      }
+    })
+
+    assert.deepEqual(listed.names, [
+      'unit tests',
+      'typecheck',
+      'lint',
+      'build (macos)',
+      'build (linux)',
+      'e2e',
+      'docs',
+      'legacy status',
+      // The rollup had more checks than the query read, and says so — counted
+      // against what was read, not against what failed.
+      'and 10 more checks not read',
+    ])
+    assert.equal(listed.scrolls, true)
+
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[data-checks="open"] button')].find((node) =>
+        node.textContent?.includes('build (linux)'),
+      )
+      ;(entry as HTMLElement).click()
+    })
+
+    const opened = await panel.evaluate(
+      () =>
+        (window as unknown as { __sentMessages: Array<{ type?: string; url?: string }> })
+          .__sentMessages.filter((message) => message.type === 'open-item'),
+    )
+    assert.equal(opened.at(-1)?.url, 'https://github.com/acme/app/runs/5')
+
+    // The lid shuts it again, as the stack's does.
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Hide the failing checks"]') as HTMLElement).click()
+    })
+    await panel.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const drawer = shadow.querySelector('[data-checks="closed"]') as HTMLElement | null
+      return Boolean(drawer) && drawer!.getBoundingClientRect().height === 0
+    })
+  })
+
+  it('says why a red row cannot name a check, rather than looking arbitrary', async () => {
+    // A rollup GitHub calls red while naming nothing red is the case that made
+    // two rows with the same mark behave differently.
+    await changeItem(0, { checkState: 'FAILURE', failingChecks: [], checkCount: null })
+
+    await panel.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="0"] [data-check="FAILURE"]'),
+      ),
+    )
+
+    const mark = await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const node = shadow.querySelector('[data-index="0"] [data-check="FAILURE"]')!
+      return { tag: node.tagName, text: node.textContent?.trim() }
+    })
+
+    // No count and no drawer, because there is nothing to list — and the mark
+    // says as much rather than leaving the difference unexplained.
+    assert.equal(mark.tag, 'SPAN')
+    assert.equal(mark.text, 'Checks failing, though GitHub names none of them as red')
+  })
+
+  it('narrows the loaded rows from the keyboard, and asks GitHub for nothing', async () => {
+    const searches = () =>
+      panel.evaluate(
+        () =>
+          (window as unknown as { __sentMessages: Array<{ type?: string }> }).__sentMessages.filter(
+            (message) => message.type === 'search',
+          ).length,
+      )
+    const searchesBefore = await searches()
+
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[data-index="0"] button') as HTMLElement).focus()
+    })
+    await panel.keyboard.press('/')
+    await panel.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('input[aria-label="Filter the rows already loaded"]'),
+      ),
+    )
+
+    // A label only one row carries, so what is left is unambiguous. The rows
+    // are matched on everything they show, labels included.
+    await panel.keyboard.type('regression')
+    await panel.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      // The trailing row is the loader for the next page, not a result.
+      const rows = [...shadow.querySelectorAll('[data-index]')].filter(
+        (row) => !row.textContent?.includes('Loading more'),
+      )
+      return rows.length > 0 && rows.every((row) => row.textContent?.includes('Item number 1 '))
+    })
+
+    // Filtering reads what is loaded. It must not go looking for matches in
+    // pages nobody asked for — which is also what stops a short filtered list
+    // paging through the whole result set.
+    assert.equal(await searches(), searchesBefore)
+
+    await panel.keyboard.press('Escape')
+    await panel.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return (
+        !shadow.querySelector('input[aria-label="Filter the rows already loaded"]') &&
+        [...shadow.querySelectorAll('[data-index]')].some(
+          (row) => !row.textContent?.includes('Item number 1 '),
+        )
+      )
+    })
+  })
+
+  it('survives a row cached before the newer fields existed', async () => {
+    // Exactly what an extension update leaves behind: a tab still holding rows
+    // fetched by the build before it. The row must cost the panel those marks,
+    // never the list.
+    await panel.evaluate(() => {
+      const scope = window as unknown as {
+        __items: Array<Record<string, unknown>>
+        __broadcast: (message: unknown) => void
+      }
+      const old = { ...scope.__items[2] }
+      for (const field of ['failingChecks', 'checkCount', 'checksRead', 'mergeState', 'headRefOid']) {
+        delete old[field]
+      }
+      old.title = 'A row from an older build'
+      scope.__broadcast({ type: 'item-updated', item: old })
+    })
+
+    await panel.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.textContent?.includes('A row from an older build'),
+      ),
+    )
+
+    const rows = await panel.evaluate(
+      () =>
+        document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[data-index]')
+          .length,
+    )
+    assert.ok(rows > 1, 'expected the list to survive the older row')
+  })
+
+  it('moves through the list with j and k, and pins with p', async () => {
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('.scrollbar-slim') as HTMLElement).focus()
+    })
+
+    await panel.keyboard.press('j')
+    await panel.keyboard.press('j')
+    await panel.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const row = shadow.querySelector('[data-index="1"] button')
+      return shadow.activeElement === row
+    })
+
+    await panel.keyboard.press('k')
+    await panel.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return shadow.activeElement === shadow.querySelector('[data-index="0"] button')
+    })
+
+    await panel.keyboard.press('p')
+    await panel.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return Boolean(shadow.querySelector('[data-pinned]'))
+    })
+
+    const stored = await panel.evaluate(() => chrome.storage.local.get('pinnedIds'))
+    assert.equal(stored.pinnedIds.length, 1)
+  })
+})
+
+/**
+ * Developer mode, which is how a reminder set for tomorrow morning can be seen
+ * to work today. The panel is given a stub whose settings ask for reminders in
+ * a second or two.
+ */
+describe('reminders in developer mode', { concurrency: false, skip }, () => {
+  let devBrowser: Browser
+  let devPanel: Page
+
+  before(async () => {
+    devBrowser = await puppeteer.launch({ executablePath, headless: true })
+    devPanel = await devBrowser.newPage()
+    await devPanel.setViewport({ width: 1280, height: 900 })
+    await devPanel.setContent('<!doctype html><html data-color-mode="light"><body></body></html>')
+    await devPanel.evaluate(
+      CHROME_STUB.replace(
+        "activeQueryId: 'seeded',",
+        "activeQueryId: 'seeded',\n    developer: { enabled: true, reminderSeconds: { hour: 1, evening: 2, tomorrow: 3, week: 4 } },",
+      ),
+    )
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await devPanel.evaluate(bundle)
+    await devPanel.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+  })
+
+  after(async () => {
+    await devBrowser?.close()
+  })
+
+  it('says in the menu what the named times have become', async () => {
+    const point = await devPanel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = shadow.querySelector('[data-index="0"] button')!.getBoundingClientRect()
+      return { x: box.x + 40, y: box.y + 20 }
+    })
+    await devPanel.mouse.click(point.x, point.y, { button: 'right' })
+    await devPanel.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[role="menu"]')),
+    )
+
+    await devPanel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const trigger = [...shadow.querySelectorAll('[role="menuitem"]')].find((node) =>
+        node.textContent?.includes('Remind me'),
+      )
+      ;(trigger as HTMLElement).click()
+    })
+
+    await devPanel.waitForFunction(() =>
+      [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[role="menuitem"]')].some(
+        (node) => node.textContent?.trim() === 'In an hour · 1s',
+      ),
+    )
+
+    const choices = await devPanel.evaluate(() =>
+      [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[role="menuitem"]')]
+        .map((node) => node.textContent?.trim())
+        .filter((text) => text?.includes('·') || text === 'When it changes'),
+    )
+    assert.deepEqual(choices, [
+      'In an hour · 1s',
+      'This evening · 2s',
+      'Tomorrow morning · 3s',
+      'Next week · 4s',
+      // The one that waits on the row is untouched: it has no clock to
+      // override, so it says what it always says.
+      'When it changes',
+    ])
+  })
+
+  it('comes round on its own, without waiting for anything else to happen', async () => {
+    await devPanel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[role="menuitem"]')].find(
+        (node) => node.textContent?.trim() === 'In an hour · 1s',
+      )
+      ;(entry as HTMLElement).click()
+    })
+
+    await devPanel.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="0"] [data-reminder="waiting"]'),
+      ),
+    )
+
+    // Nothing polls, nothing is broadcast, nothing is clicked: the mark has to
+    // change itself.
+    await devPanel.waitForFunction(
+      () =>
+        Boolean(
+          document
+            .getElementById('github-sidecar-root')!
+            .shadowRoot!.querySelector('[data-index="0"] [data-reminder="due"]'),
+        ),
+      { timeout: 8000 },
+    )
   })
 })

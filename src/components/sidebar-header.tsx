@@ -1,5 +1,7 @@
 import {
+  CheckIcon,
   ChevronDownIcon,
+  FilterIcon,
   FoldDownIcon,
   FoldUpIcon,
   GearIcon,
@@ -41,8 +43,14 @@ interface Props {
    */
   isRefreshing: boolean
   canRefresh: boolean
+  /** Whether the filter is offered at all, and whether it is currently open. */
+  canFilter: boolean
+  isFiltering: boolean
+  canMarkAllSeen: boolean
   onSelectQuery: (id: string) => void
   onManageQueries: () => void
+  onToggleFilter: () => void
+  onMarkAllSeen: () => void
   onRefresh: () => void
   onPatchWindow: (patch: Partial<WindowState>) => void
   onToggleDock: () => void
@@ -57,8 +65,13 @@ export function SidebarHeader({
   isFetching,
   isRefreshing,
   canRefresh,
+  canFilter,
+  isFiltering,
+  canMarkAllSeen,
   onSelectQuery,
   onManageQueries,
+  onToggleFilter,
+  onMarkAllSeen,
   onRefresh,
   onPatchWindow,
   onToggleDock,
@@ -110,6 +123,12 @@ export function SidebarHeader({
           ))}
 
           <DropdownMenuSeparator />
+          {canMarkAllSeen && (
+            <DropdownMenuItem onSelect={onMarkAllSeen}>
+              <CheckIcon />
+              Mark all as seen
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem onSelect={onManageQueries}>
             <SlidersIcon />
             Manage queries
@@ -128,6 +147,20 @@ export function SidebarHeader({
       />
 
       <div className="flex shrink-0 items-center gap-0.5" onPointerDown={stopDrag}>
+        {canFilter && (
+          <Hint label="Filter these rows">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onToggleFilter}
+              aria-pressed={isFiltering}
+              aria-label="Filter these rows"
+            >
+              <FilterIcon className={cn(isFiltering && 'text-foreground')} />
+            </Button>
+          </Hint>
+        )}
+
         <Hint label="Refresh">
           <Button
             variant="ghost"
