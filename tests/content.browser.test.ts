@@ -64,6 +64,13 @@ const items = Array.from({ length: 40 }, (_, index) => ({
     : index % 2
       ? AVATAR_DATA_URL
       : null,
+  // A couple of rows are assigned, so grouping by assignee has something to
+  // gather; the rest fall into the unassigned section.
+  assignees: index % 5 === 0
+    ? [{ login: 'octocat', avatarUrl: null }]
+    : index % 5 === 1
+      ? [{ login: 'hubot', avatarUrl: null }]
+      : [],
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
   state: index % 2 ? 'draft' : 'open',
@@ -1580,6 +1587,50 @@ describe('row context menu', { concurrency: false, skip }, () => {
     // The throwaway field the command needs must not be left behind.
     assert.equal(await menuPage.evaluate(() => document.querySelectorAll('textarea').length), 0)
   })
+
+  it('lets an open submenu fall away once the pointer leaves it', async () => {
+    await openMenuOn(0)
+
+    // Open the Copy submenu the way the copy tests do.
+    await menuPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const trigger = [...shadow.querySelectorAll('[role="menuitem"]')].find(
+        (node) => node.textContent?.trim() === 'Copy',
+      )!
+      ;(trigger as HTMLElement).click()
+    })
+    await menuPage.waitForFunction(
+      () =>
+        document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll(
+          '[role="menu"]',
+        ).length > 1,
+    )
+
+    // Slide a real pointer onto the submenu, then off it into empty space.
+    const submenu = await menuPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const menu = [...shadow.querySelectorAll('[role="menu"]')].at(-1)!
+      const box = menu.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+    await menuPage.mouse.move(submenu.x, submenu.y)
+    await menuPage.mouse.move(5, 795)
+
+    // Radix leaves it open over the empty page; we close it, and only it — the
+    // parent menu stays put.
+    await menuPage.waitForFunction(
+      () =>
+        document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll(
+          '[role="menu"]',
+        ).length === 1,
+    )
+
+    await menuPage.keyboard.press('Escape')
+    await menuPage.waitForFunction(
+      () =>
+        !document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector('[role="menu"]'),
+    )
+  })
 })
 
 describe('a tab that was never asked', { concurrency: false, skip }, () => {
@@ -2973,5 +3024,134 @@ describe('reminders in developer mode', { concurrency: false, skip }, () => {
         ),
       { timeout: 8000 },
     )
+  })
+})
+
+describe('grouping the loaded rows', { concurrency: false, skip }, () => {
+  let groupBrowser: Browser
+  let groupPage: Page
+
+  before(async () => {
+    groupBrowser = await puppeteer.launch({ executablePath, headless: true })
+    groupPage = await groupBrowser.newPage()
+    await groupPage.setViewport({ width: 1280, height: 800 })
+    await groupPage.setContent(
+      '<!doctype html><html data-color-mode="light"><body></body></html>',
+    )
+    // Two queries so grouping can be shown to stay with the one it was set on.
+    await groupPage.evaluate(
+      CHROME_STUB.replace(
+        "savedQueries: [{ id: 'seeded', name: 'Needs my review', query: 'is:open is:pr' }],",
+        "savedQueries: [{ id: 'seeded', name: 'Needs my review', query: 'is:open is:pr' }, { id: 'second', name: 'My pull requests', query: 'is:open is:pr author:@me' }],",
+      ),
+    )
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await groupPage.evaluate(bundle)
+    await groupPage.waitForSelector('#github-sidecar-root')
+    await groupPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+  })
+
+  after(async () => {
+    await groupBrowser?.close()
+  })
+
+  const savedQueries = () =>
+    groupPage.evaluate(async () => {
+      const api = (
+        window as unknown as {
+          chrome: {
+            storage: { local: { get: (key: string) => Promise<Record<string, unknown>> } }
+          }
+        }
+      ).chrome
+      const result = await api.storage.local.get('savedQueries')
+      return result.savedQueries as Array<{ id: string; groupBy?: string }>
+    })
+
+  const groupHeaderCount = () =>
+    groupPage.evaluate(
+      () =>
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelectorAll(
+            'button[aria-label^="Collapse "], button[aria-label^="Expand "]',
+          ).length,
+    )
+
+  it('keeps a grouping with the query it was chosen on, and saves it', async () => {
+    // A flat list to begin with: no section headers.
+    assert.equal(await groupHeaderCount(), 0)
+
+    // Reveal the filter bar (a plain button, so a synthetic click is enough).
+    await groupPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Filter these rows"]') as HTMLElement).click()
+    })
+    await groupPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[aria-label="Group the rows"]'),
+      ),
+    )
+
+    // The grouping control is a Radix trigger, which opens only on a real
+    // pointer, so click it by its coordinates.
+    const trigger = await groupPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = shadow
+        .querySelector('[aria-label="Group the rows"]')!
+        .getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+    await groupPage.mouse.click(trigger.x, trigger.y)
+    await groupPage.waitForFunction(() =>
+      [
+        ...document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelectorAll('[role="menuitem"]'),
+      ].some((node) => node.textContent?.trim() === 'By status'),
+    )
+
+    // The menu item selects on click, so a synthetic one carries.
+    await groupPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const item = [...shadow.querySelectorAll('[role="menuitem"]')].find(
+        (node) => node.textContent?.trim() === 'By status',
+      )
+      ;(item as HTMLElement).click()
+    })
+
+    // The rows break into sections, so headers appear.
+    await groupPage.waitForFunction(
+      () =>
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelectorAll(
+            'button[aria-label^="Collapse "], button[aria-label^="Expand "]',
+          ).length > 0,
+    )
+
+    // The grouping is written onto the query it was set on, and no other.
+    await groupPage.waitForFunction(async () => {
+      const api = (
+        window as unknown as {
+          chrome: {
+            storage: { local: { get: (key: string) => Promise<Record<string, unknown>> } }
+          }
+        }
+      ).chrome
+      const result = await api.storage.local.get('savedQueries')
+      const queries = result.savedQueries as Array<{ id: string; groupBy?: string }>
+      return queries[0]?.groupBy === 'status'
+    })
+
+    const stored = await savedQueries()
+    assert.equal(stored[0]?.groupBy, 'status')
+    assert.equal(stored[1]?.groupBy, undefined)
   })
 })

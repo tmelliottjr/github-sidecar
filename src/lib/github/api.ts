@@ -34,6 +34,12 @@ const AVATAR_SIZE = 28
 const LABEL_DOTS = 5
 
 /**
+ * How many assignees are read. Grouping the list by assignee needs every one
+ * of them, and GitHub caps a row at ten, so this reads the lot.
+ */
+const ASSIGNEES = 10
+
+/**
  * How many of a commit's checks are read. Only the failing ones are kept, and
  * a rollup with more checks than this still reports the right overall state —
  * the row simply cannot name the ones it never read. Set high enough to cover
@@ -116,6 +122,12 @@ const itemFields = (withPreview: boolean) => /* GraphQL */ `
         color
       }
     }
+    assignees(first: ${ASSIGNEES}) {
+      nodes {
+        login
+        avatarUrl(size: ${AVATAR_SIZE})
+      }
+    }
   }
 
   fragment PullRequestFields on PullRequest {
@@ -149,6 +161,12 @@ const itemFields = (withPreview: boolean) => /* GraphQL */ `
       nodes {
         name
         color
+      }
+    }
+    assignees(first: ${ASSIGNEES}) {
+      nodes {
+        login
+        avatarUrl(size: ${AVATAR_SIZE})
       }
     }
     commits(last: 1) {
@@ -290,6 +308,7 @@ interface GraphQLNode {
   reviewDecision?: ReviewDecision | null
   repository: { nameWithOwner: string }
   author: { login: string; avatarUrl: string } | null
+  assignees?: { nodes: Array<{ login: string; avatarUrl: string }> | null }
   comments: { totalCount: number }
   labels: { totalCount: number; nodes: Label[] | null } | null
   commits?: {
@@ -519,6 +538,7 @@ function normalise(node: GraphQLNode): SearchItem {
     repository: node.repository.nameWithOwner,
     authorLogin: node.author?.login ?? null,
     authorAvatarUrl: node.author?.avatarUrl ?? null,
+    assignees: node.assignees?.nodes ?? [],
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
     state: toState(node),

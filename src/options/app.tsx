@@ -13,6 +13,7 @@ import { QueryEditor } from '@/components/query-editor'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { ManagementPanel } from '@/options/management-panel'
 import { useStorageValue } from '@/hooks/use-storage-value'
 import { sendMessage } from '@/lib/messages'
 import { REMINDER_LABELS, type ReminderOverrides } from '@/lib/attention'
@@ -273,6 +274,14 @@ export function OptionsApp() {
           />
         </div>
       </Section>
+
+      <ManagementPanel
+        reminderOverrides={
+          settings.developer.enabled ? settings.developer.reminderSeconds : null
+        }
+        SectionComponent={Section}
+      />
+
       <DeveloperSection settings={settings} onPatch={patch} />
     </main>
   )

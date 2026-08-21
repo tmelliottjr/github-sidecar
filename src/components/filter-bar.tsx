@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { SortDescIcon, XIcon } from '@primer/octicons-react'
+import { FoldIcon, RowsIcon, SortDescIcon, UnfoldIcon, XIcon } from '@primer/octicons-react'
 
 import {
   DropdownMenu,
@@ -9,18 +9,26 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Hint } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
-import { SORT_LABELS, type SortOrder } from '@/lib/list-view'
+import { GROUP_LABELS, SORT_LABELS, type GroupBy, type SortOrder } from '@/lib/list-view'
 import { cn } from '@/lib/utils'
 
-export type { SortOrder }
+export type { GroupBy, SortOrder }
 
 interface Props {
   text: string
   sort: SortOrder
+  group: GroupBy
+  /**
+   * Whether every group is folded, or null when the list is flat and there is
+   * nothing to fold — which is how the bar knows to leave the control off.
+   */
+  allGroupsCollapsed: boolean | null
   /** How many rows are left, so the bar can say when it has hidden them all. */
   matches: number
   onTextChange: (text: string) => void
   onSortChange: (sort: SortOrder) => void
+  onGroupChange: (group: GroupBy) => void
+  onToggleAllGroups: () => void
   onClose: () => void
 }
 
@@ -35,9 +43,13 @@ interface Props {
 export function FilterBar({
   text,
   sort,
+  group,
+  allGroupsCollapsed,
   matches,
   onTextChange,
   onSortChange,
+  onGroupChange,
+  onToggleAllGroups,
   onClose,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -77,6 +89,49 @@ export function FilterBar({
           </span>
         )}
       </div>
+
+      <DropdownMenu>
+        <Hint label={`Group: ${GROUP_LABELS[group]}`}>
+          <DropdownMenuTrigger
+            className={cn(
+              'flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground',
+              'hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+              group !== 'none' && 'text-foreground',
+            )}
+            aria-label="Group the rows"
+          >
+            <RowsIcon className="size-3.5" />
+          </DropdownMenuTrigger>
+        </Hint>
+        <DropdownMenuContent align="end">
+          {(Object.keys(GROUP_LABELS) as GroupBy[]).map((option) => (
+            <DropdownMenuItem
+              key={option}
+              onSelect={() => onGroupChange(option)}
+              data-selected={option === group || undefined}
+            >
+              {GROUP_LABELS[option]}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {allGroupsCollapsed !== null && (
+        <Hint label={allGroupsCollapsed ? 'Expand all groups' : 'Collapse all groups'}>
+          <button
+            type="button"
+            onClick={onToggleAllGroups}
+            aria-label={allGroupsCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            {allGroupsCollapsed ? (
+              <UnfoldIcon className="size-3.5" />
+            ) : (
+              <FoldIcon className="size-3.5" />
+            )}
+          </button>
+        </Hint>
+      )}
 
       <DropdownMenu>
         <Hint label={`Order: ${SORT_LABELS[sort]}`}>

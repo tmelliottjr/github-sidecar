@@ -11,6 +11,14 @@ export type RequestMessage =
   | { type: 'search'; q: string; first: number; after?: string | null }
   | { type: 'invalidate'; q: string }
   | { type: 'refresh-item'; repository: string; number: number }
+  /**
+   * Resolves node ids to the rows behind them, from the worker's shared cache.
+   * The management panel keeps only ids — a hidden row, a reminder, a pin are
+   * each just a node id — so the title, repository and link it shows have to be
+   * looked up from wherever the panel last saw the row. Ids the cache has since
+   * dropped simply do not come back.
+   */
+  | { type: 'lookup-items'; ids: string[] }
   | { type: 'tab-open' }
   | { type: 'set-tab-open'; open: boolean }
   | { type: 'validate-token'; token: string }
@@ -57,9 +65,11 @@ export type ResultFor<M extends RequestMessage> = M extends { type: 'search' }
     ? { login: string }
     : M extends { type: 'refresh-item' }
       ? SearchItem
-      : M extends { type: 'tab-open' }
-        ? boolean
-        : void
+      : M extends { type: 'lookup-items' }
+        ? SearchItem[]
+        : M extends { type: 'tab-open' }
+          ? boolean
+          : void
 
 /**
  * A failure that crossed the worker boundary. `chrome.runtime.sendMessage`

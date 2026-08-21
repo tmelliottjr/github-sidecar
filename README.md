@@ -37,6 +37,10 @@ about.
   it is; the reminder is what speaks up.
 - **Hide what you do not want to see.** Hidden rows leave the list without
   leaving your records: the footer counts them and brings them back.
+- **Manage what you put aside.** The settings page gathers everything you have
+  set apart — the rows you hid, the reminders you set, the rows you pinned — so
+  you can bring a hidden row back, move a reminder to a different time or drop
+  it, and reorder or lift a pin, all from one place.
 - **Filter, reorder, and drive it from the keyboard.** Narrow the rows already
   loaded without asking GitHub for anything, order them by what has waited
   longest, and move through the list with `j`/`k`.
@@ -117,8 +121,10 @@ The token is stored in `chrome.storage.local` and is only ever sent to
 | Cancel that           | Right-click it → **Clear the reminder**          |
 | Hide a row            | Right-click it → **Hide this row** (`h`)         |
 | Review what is hidden | The count in the footer, then right-click → **Show it again** |
+| Manage all of it      | Settings → **Hidden rows** / **Reminders** / **Pinned rows** |
 | Filter the loaded rows| The funnel in the header, or `/`                 |
 | Reorder them          | The sort control in the filter bar               |
+| Group them            | The grouping control in the filter bar (remembered per query) |
 | Move through the list | `j` and `k`, then Enter or `o` to open, `p` to pin |
 | Spot the page you are on | Its row is washed, and a rule on the panel's outer edge points out at it |
 | Hear about it            | Settings → **Notifications** → **Desktop notifications** |
@@ -486,7 +492,9 @@ fast as it can be typed, it cannot lose the reader's place, and it costs no
 rate limit. It also stops the list pulling in further pages while it is on,
 because a filter matching little enough would otherwise page through the whole
 result set looking for matches nobody asked it to fetch. The order can be changed to what has waited longest, which is what
-a review queue loses first, or grouped by repository.
+a review queue loses first, or grouped by repository. A grouping is remembered
+with the query it was chosen on, so each saved query keeps its own way of being
+read while sharing the one filter box.
 
 `j` and `k` move through the list by moving the browser's own focus onto a
 row's button, so Enter opens it without a handler of the panel's own and a
@@ -629,6 +637,23 @@ Pins are stored as node ids under `pinnedIds`, apart from the queries that
 surface them, so a pinned row keeps its place whichever query it turns up in.
 Only rows already loaded can be lifted, so a pin on an item further down a
 result set surfaces once its page arrives.
+
+### Managing what is set aside
+
+Hiding a row, setting a reminder and pinning a row all leave the same kind of
+trace: a node id in `itemMemory` or `pinnedIds`, apart from the row it stands
+for. The settings page gathers those three back into one panel — hidden rows,
+reminders, pinned rows — so what was set apart one row at a time can be
+reviewed and undone in one place.
+
+The panel holds only ids, so it asks the worker to resolve them against the
+shared cache and shows each row's title, repository and link from whatever the
+cache still holds. A row the cache has since dropped is listed by its id
+instead and stays fully actionable: bringing it back, moving or dropping its
+reminder, and lifting its pin each need only the id. Every action writes to the
+same `itemMemory` or `pinnedIds` the sidebar and worker already watch, so the
+count on the toolbar, the alarm for the next timed reminder and every open tab
+follow along without the panel telling any of them directly.
 
 ### Collapsing a dock
 

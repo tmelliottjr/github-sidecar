@@ -1,4 +1,5 @@
 import type { ItemMemory } from './attention'
+import type { GroupBy } from './list-view'
 import type { SoundName } from './sound'
 
 export interface SavedQuery {
@@ -6,6 +7,12 @@ export interface SavedQuery {
   name: string
   /** GitHub search syntax, e.g. `is:open is:pr review-requested:@me`. */
   query: string
+  /**
+   * How this query's loaded rows are broken into sections on screen. Kept with
+   * the query rather than in global settings so each list remembers its own
+   * grouping. Absent means no grouping.
+   */
+  groupBy?: GroupBy
 }
 
 /**

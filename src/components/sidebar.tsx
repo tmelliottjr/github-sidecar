@@ -23,7 +23,7 @@ import { SidebarHeader } from '@/components/sidebar-header'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Hint } from '@/components/ui/tooltip'
-import { FilterBar, type SortOrder } from '@/components/filter-bar'
+import { FilterBar, type GroupBy, type SortOrder } from '@/components/filter-bar'
 import { useDockLayout } from '@/hooks/use-dock-layout'
 import { useCurrentPageItem } from '@/hooks/use-current-page-item'
 import { useDocumentVisible } from '@/hooks/use-document-visible'
@@ -35,7 +35,7 @@ import { useStorageValue } from '@/hooks/use-storage-value'
 import { useTabOpen } from '@/hooks/use-tab-open'
 import { changesSince, isHidden, nextReminderAt } from '@/lib/attention'
 import type { SearchItem } from '@/lib/github/types'
-import { filterItems, sortItems } from '@/lib/list-view'
+import { filterItems, sortItems, buildRows, groupKeysOf } from '@/lib/list-view'
 import { sendMessage, RequestError } from '@/lib/messages'
 import { DEFAULT_FEATURES, type SavedQuery, type Settings, type WindowState } from '@/lib/storage'
 import { cn, relativeTime } from '@/lib/utils'
@@ -58,6 +58,7 @@ export function Sidebar() {
   const [filtering, setFiltering] = useState(false)
   const [filterText, setFilterText] = useState('')
   const [sortOrder, setSortOrder] = useState<SortOrder>('default')
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set())
   const [showHidden, setShowHidden] = useState(false)
 
   const features = settings?.features ?? DEFAULT_FEATURES
@@ -101,6 +102,19 @@ export function Sidebar() {
       savedQueries.find((query) => query.id === settings?.activeQueryId) ?? savedQueries[0]
     )
   }, [savedQueries, settings?.activeQueryId])
+
+  // Grouping belongs to the query it was chosen on, so each list keeps its own.
+  const groupBy = activeQuery?.groupBy ?? 'none'
+  const setGroupBy = useCallback(
+    (next: GroupBy) => {
+      const id = activeQuery?.id
+      if (!id) return
+      setSavedQueries((queries) =>
+        queries.map((query) => (query.id === id ? { ...query, groupBy: next } : query)),
+      )
+    },
+    [activeQuery?.id, setSavedQueries],
+  )
 
   const hasToken = Boolean(settings?.token)
   const isVisible = isOpen ?? false
@@ -191,7 +205,9 @@ export function Sidebar() {
   const view = useMemo(() => {
     const shape = (group: SearchItem[]) =>
       sortItems(filterItems(group, filterText), sortOrder)
-    const matched = [...shape(groups.pinned), ...shape(groups.rest)]
+    const shapedPinned = shape(groups.pinned)
+    const shapedRest = shape(groups.rest)
+    const matched = [...shapedPinned, ...shapedRest]
 
     const hiddenIds = new Set(
       features.hide
@@ -199,14 +215,55 @@ export function Sidebar() {
         : [],
     )
 
+    const keep = (item: SearchItem) => showHidden || !hiddenIds.has(item.id)
+    const visiblePinned = shapedPinned.filter(keep)
+    const visibleRest = shapedRest.filter(keep)
+
     return {
       hiddenIds,
-      items: showHidden ? matched : matched.filter((item) => !hiddenIds.has(item.id)),
+      // The unique rows on screen, for the footer's count and the empty check.
+      // Grouping by assignee can draw a row more than once, so this is counted
+      // apart from the flattened rows the list actually renders.
+      items: [...visiblePinned, ...visibleRest],
+      rows: buildRows(visiblePinned, visibleRest, groupBy),
     }
-  }, [features.hide, filterText, groups, memory, showHidden, sortOrder])
+  }, [features.hide, filterText, groupBy, groups, memory, showHidden, sortOrder])
 
   const { hiddenIds } = view
   const visibleItems = view.items
+
+  // Every group on screen, in header order, so folding "all" of them knows the
+  // full set and can tell when there is nothing left unfolded.
+  const groupKeys = useMemo(() => groupKeysOf(view.rows), [view.rows])
+
+  const toggleGroup = useCallback((groupKey: string) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current)
+      if (!next.delete(groupKey)) next.add(groupKey)
+      return next
+    })
+  }, [])
+
+  // Null when the list is flat: with no groups there is nothing to fold, and
+  // the control has nothing to show. Otherwise, are they every one folded?
+  const allGroupsCollapsed =
+    groupKeys.length === 0 ? null : groupKeys.every((key) => collapsedGroups.has(key))
+
+  const toggleAllGroups = useCallback(() => {
+    setCollapsedGroups((current) => {
+      const everyCollapsed = groupKeys.length > 0 && groupKeys.every((key) => current.has(key))
+      return everyCollapsed ? new Set() : new Set(groupKeys)
+    })
+  }, [groupKeys])
+
+  /*
+   * A fold is a way of reading one list, not a lasting choice. Switching polls
+   * swaps the groups underneath, so a key folded away in the old list would
+   * silently fold a same-named group in the new one — start each poll open.
+   */
+  useEffect(() => {
+    setCollapsedGroups(new Set())
+  }, [activeQuery?.id, groupBy])
 
   /*
    * Revealing hidden rows is a look, not a setting. Left switched on after the
@@ -467,9 +524,13 @@ export function Sidebar() {
         <FilterBar
           text={filterText}
           sort={sortOrder}
+          group={groupBy}
+          allGroupsCollapsed={allGroupsCollapsed}
           matches={visibleItems.length}
           onTextChange={setFilterText}
           onSortChange={setSortOrder}
+          onGroupChange={setGroupBy}
+          onToggleAllGroups={toggleAllGroups}
           onClose={() => {
             setFiltering(false)
             setFilterText('')
@@ -507,13 +568,14 @@ export function Sidebar() {
           />
         ) : (
           <ItemList
-            items={visibleItems}
+            rows={view.rows}
             pinnedIds={pinnedIds ?? []}
             currentId={currentId}
             memory={memory}
             hiddenIds={hiddenIds}
             features={features}
             reminderOverrides={reminderOverrides}
+            collapsed={collapsedGroups}
             /*
              * A filter narrows the rows already loaded, so it stops the list
              * pulling in more. Otherwise a filter that matches little enough
@@ -523,6 +585,7 @@ export function Sidebar() {
             hasNextPage={search.hasNextPage && filterText.trim().length === 0}
             isFetchingNextPage={search.isFetchingNextPage}
             onLoadMore={loadMore}
+            onToggleGroup={toggleGroup}
             onOpen={openItem}
             onOpenUrl={openUrl}
             onRefreshItem={refreshItem}

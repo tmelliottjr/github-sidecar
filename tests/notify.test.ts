@@ -22,6 +22,7 @@ function item(overrides: Partial<SearchItem> = {}): SearchItem {
     repository: 'acme/app',
     authorLogin: 'octocat',
     authorAvatarUrl: 'https://avatars.example/u/1',
+    assignees: [],
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-02T00:00:00Z',
     state: 'open',

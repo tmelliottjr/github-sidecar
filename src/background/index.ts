@@ -466,6 +466,11 @@ async function handle(
       scheduleAttention()
       return item
     }
+    case 'lookup-items': {
+      // Best-effort: rows the cache has dropped simply do not come back, and
+      // the panel lists those by id and can still act on them without one.
+      return indexedDbStore.findItems(message.ids)
+    }
     case 'validate-token': {
       const login = await fetchViewer(message.token)
       return { login }

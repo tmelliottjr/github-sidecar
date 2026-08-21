@@ -148,6 +148,9 @@ describe('options page', { concurrency: false, skip }, () => {
       'Features',
       'Notifications',
       'Saved queries',
+      'Hidden rows',
+      'Reminders',
+      'Pinned rows',
     ])
   })
 
@@ -689,3 +692,187 @@ describe('developer mode', { concurrency: false, skip }, () => {
     )
   })
 })
+
+/**
+ * Seeds the three things the management panel gathers — a hidden row, a
+ * reminder, a pair of pins — and resolves their ids to rows the way the worker
+ * would from its cache. Everything the panel manages is stored as a bare id, so
+ * the lookup is the only thing standing between an id and a legible row.
+ */
+const MANAGE_STUB = `
+const signature = {
+  state: 'open', reviewDecision: null, checkState: null, commentCount: 0, headRefOid: null,
+};
+const store = {
+  settings: {
+    token: '', pollIntervalMs: 60000, openIn: 'tab', activeQueryId: 'seeded',
+    developer: { enabled: false, reminderSeconds: { hour: 30, evening: 60, tomorrow: 120, week: 300 } },
+  },
+  savedQueries: [{ id: 'seeded', name: 'Needs my review', query: 'is:open is:pr' }],
+  itemMemory: {
+    HID_1: { seen: signature, seenAt: 0, hiddenAt: 1000 },
+    REM_1: { seen: signature, seenAt: 0, reminder: { dueAt: 2524608000000, signature, setAt: 0 } },
+  },
+  pinnedIds: ['PIN_1', 'PIN_2'],
+};
+const rows = {
+  HID_1: { id: 'HID_1', kind: 'pull-request', title: 'Hidden pull request', url: 'https://github.com/acme/app/pull/1', repository: 'acme/app', number: 1 },
+  REM_1: { id: 'REM_1', kind: 'issue', title: 'Reminded issue', url: 'https://github.com/acme/app/issues/2', repository: 'acme/app', number: 2 },
+  PIN_1: { id: 'PIN_1', kind: 'pull-request', title: 'First pin', url: 'https://github.com/acme/app/pull/3', repository: 'acme/app', number: 3 },
+  PIN_2: { id: 'PIN_2', kind: 'pull-request', title: 'Second pin', url: 'https://github.com/acme/app/pull/4', repository: 'acme/app', number: 4 },
+};
+window.chrome = {
+  runtime: {
+    id: 'stub',
+    getURL: (path) => '/' + path,
+    sendMessage: async (message) => {
+      if (message.type === 'lookup-items') {
+        return { ok: true, data: message.ids.map((id) => rows[id]).filter(Boolean) };
+      }
+      return { ok: true, data: undefined };
+    },
+    onMessage: { addListener() {}, removeListener() {} },
+  },
+  storage: {
+    local: {
+      get: async (key) => ({ [key]: store[key] }),
+      set: async (patch) => Object.assign(store, patch),
+    },
+    onChanged: { addListener() {}, removeListener() {} },
+  },
+  permissions: {
+    granted: false,
+    request: async () => true,
+    remove: async () => true,
+    contains: async () => false,
+  },
+};
+`
+
+describe('managing what is set aside', { concurrency: false, skip }, () => {
+  let manageServer: Server
+  let manageBrowser: Browser
+  let managePage: Page
+
+  before(async () => {
+    const served = await serveDist()
+    manageServer = served.server
+    manageBrowser = await puppeteer.launch({ executablePath, headless: true })
+    managePage = await manageBrowser.newPage()
+    await managePage.evaluateOnNewDocument(MANAGE_STUB)
+    await managePage.goto(`${served.origin}/options.html`, { waitUntil: 'networkidle0' })
+    await managePage.waitForSelector('main')
+  })
+
+  after(async () => {
+    await manageBrowser?.close()
+    manageServer?.close()
+  })
+
+  /** Reads the rows a management section lists, by the title beside each. */
+  const rowsUnder = (heading: string) =>
+    managePage.evaluate((title) => {
+      const section = [...document.querySelectorAll('section')].find(
+        (node) => node.querySelector('h2')?.textContent === title,
+      )!
+      return [...section.querySelectorAll('a[target="_blank"]')].map((node) =>
+        node.textContent?.trim(),
+      )
+    }, heading)
+
+  /** Clicks the first button under a section whose text matches. */
+  const clickIn = (heading: string, label: string) =>
+    managePage.evaluate(
+      ({ title, text }) => {
+        const section = [...document.querySelectorAll('section')].find(
+          (node) => node.querySelector('h2')?.textContent === title,
+        )!
+        const button = [...section.querySelectorAll('button')].find(
+          (node) => node.textContent?.trim() === text,
+        )!
+        ;(button as HTMLElement).click()
+      },
+      { title: heading, text: label },
+    )
+
+  it('lists every row it has set aside, resolved to a title and a link', async () => {
+    assert.deepEqual(await rowsUnder('Hidden rows'), ['Hidden pull request'])
+    assert.deepEqual(await rowsUnder('Reminders'), ['Reminded issue'])
+    assert.deepEqual(await rowsUnder('Pinned rows'), ['First pin', 'Second pin'])
+  })
+
+  it('moves a reminder to a different time', async () => {
+    // The reminder's "Change" is a Radix trigger, which opens on real pointer
+    // events rather than a synthetic click, so it and the menu are clicked the
+    // way a reader would rather than through the DOM.
+    const buttons = await managePage.$$('button')
+    const labels = await Promise.all(
+      buttons.map((button) => button.evaluate((node) => node.textContent?.trim())),
+    )
+    await buttons[labels.indexOf('Change')].click()
+
+    await managePage.waitForSelector('[role="menuitem"]')
+    const items = await managePage.$$('[role="menuitem"]')
+    const choices = await Promise.all(
+      items.map((item) => item.evaluate((node) => node.textContent?.trim())),
+    )
+    await items[choices.indexOf('In an hour')].click()
+
+    await managePage.waitForFunction(async () => {
+      const memory = (await chrome.storage.local.get('itemMemory')).itemMemory
+      return memory.REM_1.reminder.dueAt !== 2524608000000
+    })
+    const reminder = await managePage.evaluate(
+      async () => (await chrome.storage.local.get('itemMemory')).itemMemory.REM_1.reminder,
+    )
+    // Roughly an hour out now, not the far-future time it was seeded with.
+    assert.ok(reminder.dueAt < 2524608000000)
+    assert.ok(reminder.dueAt > Date.now())
+  })
+
+  it('drops a reminder, leaving nothing to manage', async () => {
+    await clickIn('Reminders', 'Remove')
+    await managePage.waitForFunction(async () => {
+      const memory = (await chrome.storage.local.get('itemMemory')).itemMemory
+      return memory.REM_1.reminder === undefined
+    })
+    assert.deepEqual(await rowsUnder('Reminders'), [])
+  })
+
+  it('reorders the pins', async () => {
+    await managePage.evaluate(() => {
+      const section = [...document.querySelectorAll('section')].find(
+        (node) => node.querySelector('h2')?.textContent === 'Pinned rows',
+      )!
+      ;(section.querySelector('[aria-label="Move down"]') as HTMLElement).click()
+    })
+    await managePage.waitForFunction(async () => {
+      const pins = (await chrome.storage.local.get('pinnedIds')).pinnedIds
+      return pins[0] === 'PIN_2'
+    })
+    assert.deepEqual(await rowsUnder('Pinned rows'), ['Second pin', 'First pin'])
+  })
+
+  it('lifts a pin', async () => {
+    await clickIn('Pinned rows', 'Unpin')
+    await managePage.waitForFunction(async () => {
+      const pins = (await chrome.storage.local.get('pinnedIds')).pinnedIds
+      return pins.length === 1
+    })
+    // The reorder above put the second pin first, so lifting the first leaves
+    // the one that started at the top.
+    assert.deepEqual(await managePage.evaluate(async () =>
+      (await chrome.storage.local.get('pinnedIds')).pinnedIds,
+    ), ['PIN_1'])
+  })
+
+  it('brings a hidden row back', async () => {
+    await clickIn('Hidden rows', 'Show')
+    await managePage.waitForFunction(async () => {
+      const memory = (await chrome.storage.local.get('itemMemory')).itemMemory
+      return memory.HID_1.hiddenAt === undefined
+    })
+    assert.deepEqual(await rowsUnder('Hidden rows'), [])
+  })
+})
+

@@ -40,6 +40,12 @@ export interface Label {
   color: string
 }
 
+/** Someone the issue or pull request is assigned to. */
+export interface Assignee {
+  login: string
+  avatarUrl: string | null
+}
+
 /** One layer of a stack, as much of it as a row needs to list its neighbours. */
 export interface StackEntry {
   id: string
@@ -78,6 +84,8 @@ export interface SearchItem {
   repository: string
   authorLogin: string | null
   authorAvatarUrl: string | null
+  /** Everyone the row is assigned to, in GitHub's own order. Empty when none. */
+  assignees: Assignee[]
   createdAt: string
   updatedAt: string
   state: ItemState
