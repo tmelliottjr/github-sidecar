@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useQueryClient, type InfiniteData } from '@tanstack/react-query'
 
+import { browser } from '@/lib/browser'
 import type { BroadcastMessage, CachedSearchPage } from '@/lib/messages'
 import { ISSUE_SEARCH_KEY, issueSearchKey } from './use-issue-search'
 
@@ -60,7 +61,7 @@ export function useSearchUpdates(): void {
       }
     }
 
-    chrome.runtime.onMessage.addListener(listener)
-    return () => chrome.runtime.onMessage.removeListener(listener)
+    browser.runtime.onMessage.addListener(listener)
+    return () => browser.runtime.onMessage.removeListener(listener)
   }, [queryClient])
 }

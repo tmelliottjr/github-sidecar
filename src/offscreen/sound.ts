@@ -7,6 +7,7 @@
  * the one piece of the extension that has to be a whole HTML page as small as
  * a page can be.
  */
+import { browser } from '@/lib/browser'
 import { isSoundName, playSound, type SoundName } from '@/lib/sound'
 
 interface PlayMessage {
@@ -18,7 +19,7 @@ interface PlayMessage {
 /** Kept between sounds: a context per note is slow, and there is a limit. */
 let context: AudioContext | null = null
 
-chrome.runtime.onMessage.addListener((message: PlayMessage, _sender, sendResponse) => {
+browser.runtime.onMessage.addListener((message: PlayMessage, _sender, sendResponse) => {
   if (message?.type !== 'play-sound') return false
 
   try {

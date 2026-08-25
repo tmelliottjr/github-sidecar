@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { browser } from '@/lib/browser'
 import { readStorage, writeStorage, type StorageShape } from '@/lib/storage'
 
 type Updater<T> = T | ((current: T) => T)
 
 /**
- * Reads a value from chrome.storage.local and keeps it in sync across every
+ * Reads a value from browser.storage.local and keeps it in sync across every
  * open github.com tab, so moving the window in one tab updates the others.
  * Supports functional updates because window geometry and settings are patched
  * from callbacks that would otherwise capture a stale value.
@@ -39,8 +40,8 @@ export function useStorageValue<K extends keyof StorageShape>(
       if (area !== 'local' || !(key in changes)) return
       commit((changes[key].newValue ?? null) as StorageShape[K] | null)
     }
-    chrome.storage.onChanged.addListener(listener)
-    return () => chrome.storage.onChanged.removeListener(listener)
+    browser.storage.onChanged.addListener(listener)
+    return () => browser.storage.onChanged.removeListener(listener)
   }, [commit, key])
 
   const update = useCallback(
