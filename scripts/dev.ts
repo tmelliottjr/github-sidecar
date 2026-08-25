@@ -5,21 +5,36 @@ import { createServer, type ServerResponse } from 'node:http'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { BROWSER_TARGETS, isBrowserTarget, type BrowserTarget } from './manifest.ts'
+
 /**
  * Development workflow for the extension.
  *
  * Runs both Vite builds in watch mode and serves a long-poll endpoint that the
- * background service worker subscribes to. When a rebuild lands, the worker
- * reloads the extension and refreshes any open github.com tabs.
+ * background worker subscribes to. When a rebuild lands, the worker reloads the
+ * extension and refreshes any open github.com tabs.
  *
- * This is live reload rather than hot module replacement: Chrome will not pick
- * up content script changes without reloading the extension, and github.com's
- * CSP blocks the connection an HMR client inside a content script would need.
- * Window position, saved queries, and settings all live in chrome.storage, so
- * they survive the reload.
+ * One browser at a time, named as an argument — `node scripts/dev.ts firefox` —
+ * because watching all three at once would triple the rebuild for two copies
+ * nobody has loaded.
+ *
+ * This is live reload rather than hot module replacement: no browser picks up
+ * content script changes without reloading the extension, and github.com's CSP
+ * blocks the connection an HMR client inside a content script would need.
+ * Window position, saved queries, and settings all live in extension storage,
+ * so they survive the reload.
  */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const distDir = resolve(root, 'dist')
+
+const requested = process.argv[2] ?? 'chrome'
+if (!isBrowserTarget(requested)) {
+  console.error(`Unknown browser ${JSON.stringify(requested)}.`)
+  console.error(`Expected one of: ${BROWSER_TARGETS.join(', ')}`)
+  process.exit(1)
+}
+const target: BrowserTarget = requested
+
+const distDir = resolve(root, 'dist', target)
 
 const PORT = Number(process.env.DEV_RELOAD_PORT ?? 5599)
 const HOLD_MS = 25_000
@@ -83,7 +98,7 @@ function run(label: string, args: string[]) {
   const child = spawn('npx', args, {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, DEV_RELOAD_PORT: String(PORT), FORCE_COLOR: '1' },
+    env: { ...process.env, DEV_RELOAD_PORT: String(PORT), BROWSER: target, FORCE_COLOR: '1' },
   })
   children.add(child)
 
@@ -140,14 +155,25 @@ watch(distDir, { recursive: true }, (_event, filename) => {
   }, DEBOUNCE_MS)
 })
 
+/** What loading an unpacked build looks like, which no two of them agree on. */
+const FIRST_TIME: Record<BrowserTarget, string> = {
+  chrome: `    1. Open chrome://extensions and enable Developer mode
+    2. Load unpacked -> ${distDir}`,
+  firefox: `    1. Open about:debugging#/runtime/this-firefox
+    2. Load Temporary Add-on… -> ${distDir}/manifest.json
+    Temporary add-ons are dropped when Firefox quits; load it again next time.`,
+  safari: `    Safari cannot load a directory. Wrap this build in an app once:
+      xcrun safari-web-extension-converter ${distDir}
+    then rebuild in Xcode after each change. See docs/safari/README.md.`,
+}
+
 console.log(`
-  GitHub Sidecar — development
+  GitHub Sidecar — development (${target})
 
   Watching for changes. Reload server on http://127.0.0.1:${PORT}
 
   First time:
-    1. Open chrome://extensions and enable Developer mode
-    2. Load unpacked -> ${distDir}
+${FIRST_TIME[target]}
 
   Saving a file rebuilds, reloads the extension, and refreshes github.com tabs.
   Press Ctrl+C to stop.

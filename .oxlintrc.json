@@ -34,6 +34,7 @@
           "__revalidating",
           "__searchWarning",
           "__tabOpen",
+          "__BROWSER__",
           "__DEV_RELOAD_ORIGIN__"
         ]
       }
@@ -67,6 +68,14 @@
       ],
       "rules": {
         "unicorn/prefer-add-event-listener": "off"
+      }
+    },
+    {
+      "files": [
+        "scripts/build.ts"
+      ],
+      "rules": {
+        "no-await-in-loop": "off"
       }
     }
   ]

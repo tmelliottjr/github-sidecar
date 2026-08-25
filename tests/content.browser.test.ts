@@ -14,7 +14,7 @@ const CHROME_PATHS = [
   '/usr/bin/chromium',
 ]
 
-const distRoot = new URL('../dist/', import.meta.url)
+const distRoot = new URL('../dist/chrome/', import.meta.url)
 
 const executablePath = CHROME_PATHS.find((candidate) => existsSync(candidate))
 /** These suites drive a real browser; skip rather than fail where none exists. */

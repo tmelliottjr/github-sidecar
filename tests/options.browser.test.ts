@@ -18,7 +18,7 @@ const CHROME_PATHS = [
 const executablePath = CHROME_PATHS.find((candidate) => existsSync(candidate))
 const skip = executablePath ? false : 'no Chrome binary available'
 
-const distDir = fileURLToPath(new URL('../dist/', import.meta.url))
+const distDir = fileURLToPath(new URL('../dist/chrome/', import.meta.url))
 
 const MIME: Record<string, string> = {
   '.html': 'text/html',
