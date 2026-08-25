@@ -107,6 +107,59 @@ describe('one notification', () => {
   })
 })
 
+describe('where the browser shows less', () => {
+  // Firefox takes a title, a body, and an icon that ships with the extension.
+  // No buttons, no list, no dim third line. What Chrome puts in that line has
+  // to survive somewhere, or the notification names a row without saying which
+  // repository it is in.
+  it('folds the third line into the body rather than dropping it', () => {
+    const { options } = buildNotification(change, ICON, { rich: false })
+
+    assert.equal(options.type, 'basic')
+    assert.equal(options.title, 'Cache the search results')
+    assert.equal(options.message, 'Checks failed · 3 new comments\nacme/app #34 · by octocat')
+    assert.equal(options.contextMessage, undefined)
+  })
+
+  it('wears the extension’s own icon, the only one that will load', () => {
+    assert.equal(buildNotification(change, ICON, { rich: false }).options.iconUrl, ICON)
+  })
+
+  it('offers no button, and no action behind one that is not there', () => {
+    const { options, target } = buildNotification(reminder, ICON, { rich: false })
+
+    assert.equal(options.buttons, undefined)
+    assert.equal(target.action, null)
+    // Clicking the body still opens the row, which is the answer most wanted.
+    assert.equal(target.url, 'https://github.com/acme/app/pull/34')
+    assert.deepEqual(target.itemIds, ['PR_1'])
+  })
+
+  it('writes a group into the body, since there is no list to put it in', () => {
+    const many = Array.from({ length: 7 }, (_, index) => ({
+      ...change,
+      item: item({ id: `PR_${index}`, number: index }),
+      summary: `${index} new comments`,
+    }))
+
+    const { options, target } = buildGroupNotification(many, ICON, {
+      queryName: 'Needs my review',
+      url: null,
+      rich: false,
+    })
+
+    assert.equal(options.type, 'basic')
+    assert.equal(options.title, '7 rows need you')
+    assert.equal(options.items, undefined)
+    assert.match(options.message ?? '', /acme\/app #0/)
+    // Named and counted, the same as the list would have done.
+    assert.match(options.message ?? '', /and 2 more/)
+    assert.match(options.message ?? '', /Needs my review/)
+    assert.equal(target.action, null)
+    assert.equal(target.itemIds.length, 7)
+  })
+})
+
 describe('several at once', () => {
   const many = Array.from({ length: 7 }, (_, index) => ({
     ...change,

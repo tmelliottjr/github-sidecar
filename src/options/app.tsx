@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { ManagementPanel } from '@/options/management-panel'
 import { useStorageValue } from '@/hooks/use-storage-value'
+import { browser, can, browserName } from '@/lib/browser'
 import { sendMessage } from '@/lib/messages'
 import { REMINDER_LABELS, type ReminderOverrides } from '@/lib/attention'
 import { playSound, SOUNDS, SOUND_NAMES, type SoundName } from '@/lib/sound'
@@ -315,13 +316,13 @@ function NotificationsSection({
 
   /**
    * The permission is asked for from the click that switched this on, because
-   * Chrome will only prompt during a gesture — and given back when it goes
+   * a browser will only prompt during a gesture — and given back when it goes
    * off, so nothing keeps a permission it has stopped using.
    */
   const setEnabled = async (enabled: boolean) => {
     const granted = enabled
-      ? await chrome.permissions.request({ permissions: ['notifications'] })
-      : !(await chrome.permissions.remove({ permissions: ['notifications'] }))
+      ? await browser.permissions.request({ permissions: ['notifications'] })
+      : !(await browser.permissions.remove({ permissions: ['notifications'] }))
     if (enabled && !granted) return
     patch({ enabled })
   }
@@ -331,6 +332,27 @@ function NotificationsSection({
     preview(heard, next.volume ?? sounds.volume)
   }
 
+  /**
+   * Safari has no notifications API for extensions at all, so there is no
+   * permission to ask for and no switch worth showing. Saying so is the whole
+   * of what can be done about it — and better than a switch that would look
+   * like it worked.
+   */
+  if (!can.notifications) {
+    return (
+      <Section
+        title="Notifications"
+        description="Whether the panel may interrupt you, what for, and what each of those sounds like."
+      >
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
+          {browserName} does not give extensions a way to post desktop notifications, so
+          the panel cannot offer them here. Everything the panel would have said out loud
+          is still counted on the toolbar icon and marked on the rows themselves.
+        </p>
+      </Section>
+    )
+  }
+
   return (
     <Section
       title="Notifications"
@@ -338,7 +360,7 @@ function NotificationsSection({
     >
       <SettingRow
         title="Desktop notifications"
-        description="Needs Chrome’s permission to post them, which is asked for when you switch this on."
+        description={`Needs ${browserName}’s permission to post them, which is asked for when you switch this on.`}
       >
         <Switch
           label="Desktop notifications"
@@ -514,7 +536,10 @@ function DeveloperSection({
   const sendTest = async () => {
     try {
       await sendMessage({ type: 'test-notification' })
-      setTest({ ok: true, message: 'Sent. If nothing appeared, Chrome or the system is holding it back.' })
+      setTest({
+        ok: true,
+        message: `Sent. If nothing appeared, ${browserName} or the system is holding it back.`,
+      })
     } catch (error) {
       setTest({
         ok: false,
@@ -547,8 +572,8 @@ function DeveloperSection({
             <p className="text-[12px] leading-relaxed text-muted-foreground">
               Each named choice waits this long instead of reading the clock, and says so in
               the menu. The panel marks a reminder due the moment it is; the toolbar count and
-              any notification wait for Chrome, which will not wake an extension more often
-              than every 30 seconds.
+              any notification wait for the browser, which will not wake an extension more
+              often than every 30 seconds.
             </p>
           </div>
 
@@ -569,22 +594,25 @@ function DeveloperSection({
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => void sendTest()}>
-              <BellIcon />
-              Send a test notification
-            </Button>
-            {test && (
-              <span
-                className={cn(
-                  'text-[12px]',
-                  test.ok ? 'text-muted-foreground' : 'text-closed',
-                )}
-              >
-                {test.message}
-              </span>
-            )}
-          </div>
+          {/* Nothing to test where the browser has no notifications to post. */}
+          {can.notifications && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => void sendTest()}>
+                <BellIcon />
+                Send a test notification
+              </Button>
+              {test && (
+                <span
+                  className={cn(
+                    'text-[12px]',
+                    test.ok ? 'text-muted-foreground' : 'text-closed',
+                  )}
+                >
+                  {test.message}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </section>

@@ -1,4 +1,5 @@
 import type { WaitingItem } from './attention'
+import { can } from './browser.ts'
 
 /**
  * What a notification says, and what acting on it should do.
@@ -9,6 +10,13 @@ import type { WaitingItem } from './attention'
  * one tracking it — and a body carrying everything else. So the item's own
  * title leads, what happened comes next, and where it lives goes in the dim
  * line underneath, which is the order the reader asks the questions in.
+ *
+ * Firefox gives a notification a title, a body, an icon that has to come from
+ * the extension itself, and nothing else: no buttons, no list, no dim third
+ * line, no say in how loud it is. What Chrome puts in the third line is folded
+ * into the body there rather than dropped, because a notification naming a row
+ * without saying which repository it is in is a notification that has to be
+ * clicked to be understood.
  */
 export interface Notification {
   options: chrome.notifications.NotificationCreateOptions
@@ -38,9 +46,49 @@ const MAX_LISTED = 5
 const PRIORITY_REMINDER = 2
 const PRIORITY_CHANGE = 0
 
-export function buildNotification(entry: WaitingItem, icon: string): Notification {
+/**
+ * How much of a notification this browser will actually show. Defaults to the
+ * answer for the browser this was built for; named so the tests can ask for
+ * either without a bundler.
+ */
+export interface NotificationStyle {
+  rich?: boolean
+}
+
+export function buildNotification(
+  entry: WaitingItem,
+  icon: string,
+  { rich = can.richNotifications }: NotificationStyle = {},
+): Notification {
   const { item, reason } = entry
   const isReminder = reason === 'reminder'
+
+  const context = [
+    `${item.repository} #${item.number}`,
+    item.authorLogin ? `by ${item.authorLogin}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
+  if (!rich) {
+    return {
+      options: {
+        type: 'basic',
+        // Only an icon the extension ships with will load here, so the
+        // author's face is not on offer.
+        iconUrl: icon,
+        title: item.title,
+        message: `${entry.summary}\n${context}`,
+      },
+      target: {
+        itemIds: [item.id],
+        url: item.url,
+        // No buttons, so nothing to press: clicking the body still opens the
+        // row, which is the answer the reader wanted most of the time anyway.
+        action: null,
+      },
+    }
+  }
 
   return {
     options: {
@@ -52,12 +100,7 @@ export function buildNotification(entry: WaitingItem, icon: string): Notificatio
       iconUrl: item.authorAvatarUrl ?? icon,
       title: item.title,
       message: entry.summary,
-      contextMessage: [
-        `${item.repository} #${item.number}`,
-        item.authorLogin ? `by ${item.authorLogin}` : null,
-      ]
-        .filter(Boolean)
-        .join(' · '),
+      contextMessage: context,
       eventTime: Date.now(),
       // A reminder was asked for by name, so it is allowed to interrupt and to
       // stay until it is dealt with. A change was not, so it is neither.
@@ -77,21 +120,47 @@ export function buildNotification(entry: WaitingItem, icon: string): Notificatio
 /**
  * Several at once, as one notification. Chrome's list type is made for exactly
  * this, and it keeps the count honest: five rows moving is one thing that
- * happened, not five.
+ * happened, not five. Where there is no list type the same rows are written
+ * into the body instead, which says the same thing with less ceremony.
  */
 export function buildGroupNotification(
   entries: readonly WaitingItem[],
   icon: string,
-  { queryName, url }: { queryName: string | null; url: string | null },
+  {
+    queryName,
+    url,
+    rich = can.richNotifications,
+  }: { queryName: string | null; url: string | null } & NotificationStyle,
 ): Notification {
   const listed = entries.slice(0, MAX_LISTED)
   const rest = entries.length - listed.length
+  const title = `${entries.length} rows need you`
+  const lines = [
+    ...listed.map((entry) => `${entry.item.repository} #${entry.item.number}`),
+    ...(rest > 0 ? [`and ${rest} more`] : []),
+  ]
+
+  if (!rich) {
+    return {
+      options: {
+        type: 'basic',
+        iconUrl: icon,
+        title,
+        message: [...lines, queryName].filter(Boolean).join('\n'),
+      },
+      target: {
+        itemIds: entries.map((entry) => entry.item.id),
+        url,
+        action: null,
+      },
+    }
+  }
 
   return {
     options: {
       type: 'list',
       iconUrl: icon,
-      title: `${entries.length} rows need you`,
+      title,
       // Repeated as the message because Chrome shows the list only where it
       // has the room, and a notification that says nothing without it is a
       // notification that sometimes says nothing.
