@@ -1,8 +1,11 @@
 # GitHub Sidecar
 
-GitHub Sidecar is a Chrome extension that keeps a small, draggable sidebar on
+GitHub Sidecar is a browser extension that keeps a small, draggable sidebar on
 every github.com page, showing the issues and pull requests you actually care
 about.
+
+It runs on Chrome, Firefox, and Safari. See [Browser support](#browser-support)
+for the two places they differ.
 
 ## Features
 
@@ -57,14 +60,23 @@ about.
 
 ## Install
 
+The extension is not published, so it is built from source and loaded by hand.
+Loading it is different in each browser, so each has its own guide:
+
+- **[Chrome](docs/chrome/README.md)** — and Edge, Brave, Arc, or any Chromium
+  browser
+- **[Firefox](docs/firefox/README.md)**
+- **[Safari](docs/safari/README.md)** — needs Xcode, since Safari cannot load a
+  directory
+
 **Prerequisites**
 
 - **Node.js 22.18+** (or 23.6+). The build and dev scripts are TypeScript files
   run directly by Node, so they need a version with type stripping enabled by
   default. Check with `node -v`.
 - **npm 10+** (ships with the Node versions above).
-- **Google Chrome** (or another Chromium browser) to load the extension. Chrome
-  is also required for the browser test suite.
+- The browser you intend to load it in. Chrome is also required for the browser
+  test suite.
 
 **Build it**
 
@@ -72,23 +84,49 @@ about.
 git clone https://github.com/tmelliottjr/github-sidecar.git
 cd github-sidecar
 npm install
-npm run build
+npm run build            # all three
+npm run build:chrome     # or just the one you want
+npm run build:firefox
+npm run build:safari
 ```
 
-`npm run build` writes the unpacked extension to `dist/`. Neither `dist/` nor
-`node_modules/` is committed, so a fresh clone must be built before it can be
-loaded.
+Each browser gets its own unpacked extension under `dist/chrome/`,
+`dist/firefox/`, and `dist/safari/`, because no two of them accept the same
+manifest. Neither `dist/` nor `node_modules/` is committed, so a fresh clone
+must be built before it can be loaded.
 
-Then load it in Chrome:
+Whichever browser you use, the settings page opens on first install — paste a
+GitHub personal access token and click **Verify**. A classic token needs `repo`
+and `read:org` scope to see private repositories. The token is stored in
+extension storage and is only ever sent to `api.github.com`.
 
-1. Visit `chrome://extensions` and enable **Developer mode**.
-2. Choose **Load unpacked** and select the `dist/` directory.
-3. The options page opens on first install — paste a GitHub personal access
-   token and click **Verify**.
+## Browser support
 
-A classic token needs `repo` and `read:org` scope to see private repositories.
-The token is stored in `chrome.storage.local` and is only ever sent to
-`api.github.com`.
+Everything the panel does — the list, queries, reminders, change marks, hiding,
+pinning, stacks, filtering, grouping, the keyboard, and the count on the toolbar
+icon — works the same in all three. The differences are entirely in what each
+browser will let an extension do when the panel is *not* on screen.
+
+| | Chrome | Firefox | Safari |
+| --- | --- | --- | --- |
+| The panel, and everything in it | Yes | Yes | Yes |
+| Count on the toolbar icon | Yes | Yes | Yes |
+| Desktop notifications | Yes | Plain | Not offered |
+| Buttons on a notification | Yes | No | — |
+| Several at once as one grouped list | Yes | Written into the body | — |
+| The author's face as the icon | Yes | Extension icon only | — |
+| Notification sounds | Yes | Yes | Not offered |
+
+Safari gives web extensions no notifications API at all, so the settings page
+says so where those switches would otherwise be rather than offering a switch
+that does nothing. Firefox has notifications but shows only a title, a body, and
+an icon that ships with the extension, so what Chrome puts in the dim third line
+is folded into the body instead of being dropped.
+
+The sound is made differently in each: Chrome's background is a service worker
+and cannot play audio, so it borrows an offscreen document; Firefox's background
+is an event page with a DOM of its own and needs nothing borrowed; Safari has
+neither, and no notification to play a sound alongside.
 
 ## Usage
 
@@ -135,17 +173,20 @@ The token is stored in `chrome.storage.local` and is only ever sent to
 
 ```
 src/
-  background/   Service worker: GitHub API proxy, IndexedDB cache, dev reload
+  background/   Background worker: GitHub API proxy, IndexedDB cache, the
+                notification sound, dev reload
   content/      Shadow-DOM mount, page font/colour-mode sync, page metrics,
                 keyboard isolation, current-page tracking
-  offscreen/    The notification sound, which a service worker cannot play
+  offscreen/    Chrome only: the document the sound is played in, since a
+                service worker cannot play audio
   components/   Window chrome, list, rows, and shadcn-style primitives
   hooks/        Storage sync, window geometry, dock layout, search, cache
                 updates, current page
   lib/          GitHub GraphQL client, message protocol, storage schema,
-                change detection, list filtering
+                change detection, list filtering, the extension API and what
+                each browser can be asked to do
   options/      Settings page
-scripts/        Dev watch server
+scripts/        Dev watch server, per-browser build, manifest generation
 ```
 
 A few decisions worth knowing:
@@ -249,11 +290,11 @@ reader is most likely to know by sight.
 ## Open state is per tab
 
 Whether the panel is showing belongs to the tab, not the user, so it is the one
-piece of state that is not in `chrome.storage.local`. Sharing it would mean
+piece of state that is not in `storage.local`. Sharing it would mean
 opening the panel once opened it in every tab from then on, which is the
 opposite of a new tab starting out of the way.
 
-Instead the service worker keeps a flag in `chrome.storage.session` against the
+Instead the service worker keeps a flag in `storage.session` against the
 tab's id. That gives each tab its own answer, survives reloads and navigation
 within a tab, is cleared when the browser closes, and — unlike `sessionStorage`
 — writes nothing to github.com's own storage. Tab ids get reused, so the flag is
@@ -440,7 +481,7 @@ row retires a reminder that has come round, because it has done its job; one
 still waiting stays, because this is not the time that was asked for.
 
 A timed reminder comes round with no request behind it, so the worker keeps a
-single `chrome.alarms` alarm set for the soonest one, and the panel keeps one
+single `alarms` alarm set for the soonest one, and the panel keeps one
 timer for the same moment — otherwise a panel that only redraws when GitHub
 answers would go on saying "waiting" until the next poll. Change reminders need
 neither: they can only come due when new results arrive, which redraws the
@@ -516,8 +557,8 @@ carelessly leads to a title reading `acme/app #34` — the one thing the reader
 already knows, since they are the one tracking it. So the item's own title
 leads, what happened comes next, and where it lives goes in the dim line
 underneath: **Cache the search results** / *Checks failed · 3 new comments* /
-`acme/app #34 · by octocat`. The author's face is the icon where Chrome will
-fetch it, because a notification is recognised before it is read.
+`acme/app #34 · by octocat`. The author's face is the icon where the browser
+will fetch it, because a notification is recognised before it is read.
 
 Each one carries the answer the reader would otherwise give by hand: **Mark as
 seen** for a change, **Remind me in an hour** for a reminder. Both write to the
@@ -525,11 +566,19 @@ same record the panel reads, so the row and the count agree with the button
 without anything being adjusted twice. Clicking the notification itself opens
 the row.
 
+Firefox shows only a title, a body, and an icon that ships with the extension.
+There the third line is folded into the body rather than dropped — a
+notification naming a row without saying which repository it is in has to be
+clicked to be understood — and there are no buttons, so clicking the body to
+open the row is the whole of it. Safari has no notifications at all; see
+[Browser support](#browser-support).
+
 A reminder was asked for by name, so it may interrupt: full priority, a sound,
 and it stays until it is dealt with. A change was not, so it is quieter and
 ordinary. More than two at once stop being news and become a flood, so they
 arrive as one list — five rows named, the rest counted, clicking through to the
-search that produced them.
+search that produced them. Where there is no list type the same rows are written
+into the body, which says the same thing with less ceremony.
 
 A change is announced once. The row's signature is remembered per notification,
 along with why it was announced, so a row that changes again is announced
@@ -538,9 +587,9 @@ a change is announced in its own right — while a row that is merely still
 waiting stays quiet — otherwise every poll would repeat itself until the
 reader happened to read it.
 
-Notifications need Chrome's `notifications` permission, which the extension is
-not installed with. The switch on the settings page asks for it from the click
-that turned it on, and hands it back when the switch goes off.
+Notifications need the browser's `notifications` permission, which the extension
+is not installed with. The switch on the settings page asks for it from the
+click that turned it on, and hands it back when the switch goes off.
 
 Everything about being interrupted sits in one section of the settings page, in
 the order it is decided: whether to speak at all, what to speak about, and what
@@ -556,24 +605,37 @@ it is the speaking that was declined, not the knowing.
 
 There is no separate switch for sound, because "no sound" is one of the sounds:
 choosing **Silent** for a kind is how it is silenced, and choosing it for both
-is how Chrome is left to make whatever noise the operating system allows it.
-One volume serves both, and is shown only while something would use it.
+is how the browser is left to make whatever noise the operating system allows
+it. One volume serves both, and is shown only while something would use it.
 
 ### Making a noise
 
-Chrome's `silent: false` is a request, not an instruction. Whether a
+A browser's `silent: false` is a request, not an instruction. Whether a
 notification makes a sound is a matter for the operating system — on macOS it
-is a per-application setting under **System Settings → Notifications → Google
-Chrome**, off for many people and unreachable from an extension.
+is a per-application setting under **System Settings → Notifications**, off for
+many people and unreachable from an extension.
 
-So the sound is the panel's own, played in an offscreen document because a
-service worker cannot play audio at all. There are five of them — chime, ping,
-bell, knock, marimba — plus silence, chosen under the kind of notification they
-belong to: the default pair is a two-note chime for what was asked for and a
-softer single note for what merely happened. Volume is the reader's, and
-every control on the settings page plays what it is about the moment it is
-touched, because a list of names for noises is not a choice anyone can make by
-reading it.
+So the sound is the panel's own, made by whichever route the browser leaves
+open. Chrome's background is a service worker, which cannot play audio at all,
+so the sound is played in an offscreen document borrowed for the purpose.
+Firefox's background is an event page with a DOM of its own, so it plays the
+sound directly. Safari has neither, and no notification to play a sound
+alongside.
+
+Neither asks its audio context whether it may start before scheduling the
+notes. A context the browser will not let start does not refuse — it holds the
+question open until a click that a background page will never see — so waiting
+for an answer would wait for ever and take the notification down with it. The
+notes are scheduled either way: where audio is allowed they play, and where the
+reader has told the browser to block it they do not, which is what they asked
+for. The notification arrives regardless.
+
+There are five of them — chime, ping, bell, knock, marimba — plus silence,
+chosen under the kind of notification they belong to: the default pair is a
+two-note chime for what was asked for and a softer single note for what merely
+happened. Volume is the reader's, and every control on the settings page plays
+what it is about the moment it is touched, because a list of names for noises is
+not a choice anyone can make by reading it.
 
 Each sound is a handful of numbers — frequency, start, length — turned into
 sine or triangle notes with a short fade at both ends, since a square-edged
@@ -583,9 +645,9 @@ nothing and can be read in a diff, which an audio file cannot. The same
 definitions are used by the settings page and by the notification, so what is
 heard while choosing is what will arrive.
 
-When the panel is making the sound it asks Chrome to keep quiet, so there is
-exactly one either way; switching the sound off hands the question back to
-Chrome and the system.
+When the panel is making the sound it asks the browser to keep quiet, so there
+is exactly one either way; switching the sound off hands the question back to
+the browser and the system.
 
 ## Developer mode
 
@@ -598,12 +660,13 @@ instead of a place on the clock, and the menu says so: **In an hour · 30s**. Th
 choice that waits on the row is left alone, having no clock to override.
 
 It also sends a test notification, which answers the question that brings most
-people here — whether nothing appeared because nothing fired, or because Chrome
-was never given permission to show it.
+people here — whether nothing appeared because nothing fired, or because the
+browser was never given permission to show it. On Safari there is nothing to
+test, so the button is not shown.
 
-Chrome will not wake an extension more often than every 30 seconds, so a
+A browser will not wake an extension more often than every 30 seconds, so a
 reminder set for less than that is marked due in the panel straight away while
-the toolbar count and any notification arrive on Chrome's own schedule.
+the toolbar count and any notification arrive on the browser's own schedule.
 
 ## Stacked pull requests
 
@@ -732,36 +795,56 @@ request away from coming back.
 ## Development
 
 ```bash
-npm run dev        # watch + auto-reload (see below)
+npm run dev              # watch + auto-reload for Chrome (see below)
+npm run dev firefox      # or safari
 node scripts/make-icons.ts  # redraw public/icon-*.png
-npm run build      # production build
+npm run build            # production build, all three browsers
+npm run build:chrome     # or build:firefox / build:safari
 npm run typecheck
 npm run lint
-npm test           # unit tests + headless browser tests
-npm run test:unit  # unit tests only (no browser needed)
+npm test                 # unit tests + headless browser tests
+npm run test:unit        # unit tests only (no browser needed)
 ```
+
+Each browser is built separately into `dist/<browser>/`. The manifest is
+generated per browser by `scripts/manifest.ts` rather than committed, since the
+three do not accept the same one — most of all the `background` key, where
+Chrome and Safari run a service worker and Firefox runs an event page. Both Vite
+configs are given a `__BROWSER__` constant, so the branches meant for the other
+two browsers are dropped from the bundle rather than shipped and never taken.
+
+`src/lib/browser.ts` is the single door onto the extension API. It takes
+`browser` where the browser provides it and `chrome` where it does not, so every
+call can be awaited without a polyfill, and it states plainly in one table what
+each browser can be asked to do. Nothing else in `src/` touches a global
+namespace.
 
 ### Watch mode
 
 ```bash
-npm run dev
+npm run dev              # chrome
+npm run dev firefox
+npm run dev safari
 ```
 
-Then load `dist/` unpacked once (it is named **GitHub Sidecar (dev)** so you can
-tell it apart from an installed copy). From then on, saving a file rebuilds,
-reloads the extension, and refreshes your open github.com tabs automatically.
+One browser at a time, because watching all three would triple the rebuild for
+two copies nobody has loaded. Load `dist/<browser>` once — it is named **GitHub
+Sidecar (dev)** so you can tell it apart from an installed copy — and from then
+on, saving a file rebuilds, reloads the extension, and refreshes your open
+github.com tabs automatically. Safari is the exception: it will not let an
+extension reload itself, so each change still needs a rebuild in Xcode.
 
-This is live reload, not hot module replacement. Two things rule HMR out:
-Chrome will not pick up content script edits without reloading the whole
-extension, and github.com's CSP governs content script fetches, so the socket an
-HMR client needs would be blocked. In practice the difference is small — window
-position, saved queries, and settings all live in `chrome.storage`, so they
-survive the reload.
+This is live reload, not hot module replacement. Two things rule HMR out: no
+browser picks up content script edits without reloading the whole extension, and
+github.com's CSP governs content script fetches, so the socket an HMR client
+needs would be blocked. In practice the difference is small — window position,
+saved queries, and settings all live in extension storage, so they survive the
+reload.
 
 How it works: `scripts/dev.ts` runs both Vite builds in watch mode and serves a
-long-poll endpoint on `127.0.0.1:5599`. The service worker (which is *not*
+long-poll endpoint on `127.0.0.1:5599`. The background worker (which is *not*
 subject to page CSP) holds a request open against it; when a rebuild lands the
-request resolves and the worker calls `chrome.runtime.reload()`, then refreshes
+request resolves and the worker calls `runtime.reload()`, then refreshes
 github.com tabs once it restarts. Because the pages and content bundles come
 from two independent watchers, the worker also records which build it reloaded
 for and reloads again if the other bundle landed late.
@@ -772,15 +855,22 @@ Set `DEV_RELOAD_PORT` to use a different port.
 
 ### Tests
 
-The browser tests load the real `dist/content.js` into a headless Chrome with a
-stubbed `chrome` API, and cover mounting, styling, virtualisation, dragging,
-locking, and collapsing. Docked mode is exercised against a stand-in for a
-github.com page — full-width chrome above a centred column — at a viewport wide
-enough for the gutter to hold the panel and at one that is not. The options page is tested against a served copy of
-`dist/`, and the IndexedDB store is exercised against real IndexedDB. Cache
-policy (freshness, coalescing, active-tab gating) is unit tested against an
-in-memory store. Browser suites skip automatically when no Chrome binary is
-found. Run `npm run build` before `npm test`.
+The browser tests load the real `dist/chrome/content.js` into a headless Chrome
+with a stubbed extension API, and cover mounting, styling, virtualisation,
+dragging, locking, and collapsing. Docked mode is exercised against a stand-in
+for a github.com page — full-width chrome above a centred column — at a viewport
+wide enough for the gutter to hold the panel and at one that is not. The options
+page is tested against a served copy of `dist/chrome/`, and the IndexedDB store
+is exercised against real IndexedDB. Cache policy (freshness, coalescing,
+active-tab gating) is unit tested against an in-memory store. How a notification
+degrades where the browser shows less than Chrome does is unit tested directly.
+Browser suites skip automatically when no Chrome binary is found. Run
+`npm run build:chrome` before `npm test`.
+
+Firefox and Safari are not driven by the test suite. Puppeteer can drive Firefox
+but cannot install an extension into it without a prepared profile, and Safari
+has no headless mode that can load one at all — so both are checked by hand
+against the guides in `docs/`.
 
 ### A note on `.npmrc`
 
