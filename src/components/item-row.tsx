@@ -184,7 +184,16 @@ function ItemRowImpl({
   const mergeState = showMergeState ? (item.mergeState ?? null) : null
   const hasChanges = changes.length > 0 && seen !== undefined
 
+  /**
+   * The costly half of a row arrives a moment after the row does, and four of
+   * the marks on this line come with it. Keeping the line while they are out
+   * means the list is laid out once, when it appears, rather than reflowing
+   * under the reader's cursor a second later.
+   */
+  const awaitingMarks = item.enrichment === 'pending'
+
   const hasMarks =
+    awaitingMarks ||
     Boolean(stack) ||
     hasChanges ||
     reminder !== 'none' ||
@@ -290,7 +299,15 @@ function ItemRowImpl({
              * title. `MARKS_INDENT` is that icon plus the row's own padding.
              */}
             {hasMarks && (
-              <div className={cn('flex flex-wrap items-center gap-1.5 pb-2.5 pr-3', MARKS_INDENT)}>
+              <div
+                className={cn(
+                  'flex flex-wrap items-center gap-1.5 pb-2.5 pr-3',
+                  MARKS_INDENT,
+                  // Holds the line open at the height of the marks it is
+                  // waiting for, which are all drawn at 14px.
+                  awaitingMarks && 'min-h-[14px]',
+                )}
+              >
                 {/*
                  * What changed leads the line: it is the only mark here that
                  * is about the reader rather than about the item.

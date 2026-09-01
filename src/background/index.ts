@@ -1,4 +1,11 @@
-import { GitHubApiError, fetchItem, fetchViewer, searchIssues } from '@/lib/github/api'
+import {
+  GitHubApiError,
+  enrichItems,
+  fetchItem,
+  fetchViewer,
+  observeApiCalls,
+  searchIssues,
+} from '@/lib/github/api'
 import type { BroadcastMessage, RequestMessage, ResponseMessage } from '@/lib/messages'
 import {
   badgeText,
@@ -17,7 +24,9 @@ import {
   type Notification,
   type NotificationTarget,
 } from '@/lib/notify'
+import { carryEnrichment, mergeEnrichments } from '@/lib/github/enrichment'
 import { readStorage, writeStorage, type SoundSettings } from '@/lib/storage'
+import { clearApiLog, readApiLog, recordApiCall } from './api-log'
 import { indexedDbStore } from './cache'
 import { createSearchService, freshnessWindow, MAX_CACHE_AGE_MS } from './search-service'
 import { startDevReload } from './dev-reload'
@@ -399,9 +408,20 @@ function scheduleAttention(): void {
     })
 }
 
+/**
+ * Every request the panel makes is kept, whether or not developer mode is on:
+ * the log is worth having for the refresh that already failed, and switching
+ * the setting on afterwards cannot go back and record it.
+ */
+observeApiCalls((call) => void recordApiCall(call))
+
 const searchService = createSearchService({
   store: indexedDbStore,
   fetchPage: async (params) => searchIssues(await requireToken(), params),
+  enrichPage: async (ids) => enrichItems(await requireToken(), ids),
+  // Merging lives outside the search service, which is run directly by the
+  // test runner and so can import nothing that runs.
+  merge: { apply: mergeEnrichments, carry: carryEnrichment },
   isTabActive,
   broadcast: (update) => {
     void broadcastToGitHubTabs(update)
@@ -510,8 +530,24 @@ async function handle(
       return undefined
     }
     case 'open-options': {
-      // Content scripts cannot call openOptionsPage themselves.
+      // Content scripts cannot call openOptionsPage themselves, and that call
+      // takes no fragment, so a request for one part of the page opens it by
+      // URL instead.
+      if (message.section) {
+        await chrome.tabs.create({
+          url: chrome.runtime.getURL(`options.html#${message.section}`),
+          active: true,
+        })
+        return undefined
+      }
       await chrome.runtime.openOptionsPage()
+      return undefined
+    }
+    case 'api-log': {
+      return readApiLog()
+    }
+    case 'clear-api-log': {
+      await clearApiLog()
       return undefined
     }
   }

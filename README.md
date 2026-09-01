@@ -154,11 +154,15 @@ A few decisions worth knowing:
   Content-Security-Policy applies to `fetch` from a content script, so calls
   made there would be blocked. The worker also keeps the token out of page
   context.
-- **One GraphQL search per refresh.** The REST search API returns no CI or
-  review data, which would mean an extra request per row. A single
-  `search(type: ISSUE_ADVANCED)` GraphQL query returns state,
-  `statusCheckRollup`, and `reviewDecision` for every result, so polling costs
-  one request.
+- **Two GraphQL requests per refresh, not one.** The REST search API returns no
+  CI or review data, so the list is built from GraphQL. Asking for all of it at
+  once does not work: GitHub allows a GraphQL request ten seconds, and
+  `mergeStateStatus`, `statusCheckRollup`, `reviewDecision` and the stack
+  fields together take a thirty-row page well past that on any query spanning a
+  large organisation. The proxy in front of GraphQL answers a request that
+  overruns with a 502, so the whole list fails rather than the fields that were
+  too expensive. The search therefore asks only for what a page can afford, and
+  a second request reads the rest — see [Filling in a row](#filling-in-a-row).
 - **`ISSUE_ADVANCED`, not `ISSUE`.** `ISSUE` is still the legacy query parser,
   which does not understand advanced syntax and does not complain about it — it
   matches nothing instead, so `(label:a OR label:b)` comes back empty rather
@@ -315,6 +319,51 @@ question.
 Only conflicts and a stale branch are drawn. GitHub's other answers — blocked,
 unstable — are its words for a missing review or a red check, and both of those
 already have a mark of their own on the same line.
+
+## Filling in a row
+
+A row arrives in two halves.
+
+The search lists the rows and everything cheap about them: title, repository,
+author, assignees, labels, comments, the diff size, and whether the branch
+conflicts. That request is what has to be quick, and it is.
+
+The rest — the review decision, the CI rollup and its failing checks, the full
+merge state, and the stack — is read afterwards, five rows at a time, and
+merged field by field into the rows already on screen. Field by field because
+the row may have been refreshed in the seconds it took to answer, and swapping
+the whole row would put the older title back.
+
+Measured against an `org:`-wide search, those four fields cost several times
+what everything else on a row costs put together, and `mergeStateStatus` on its
+own is enough to put a page over GitHub's limit.
+
+The batches are asked for one after another rather than all at once, because
+GitHub queues a single token's GraphQL requests behind one another regardless:
+six at once and six in turn both take about twenty-six seconds for a thirty-row
+page, but in turn the first five rows get their marks after five seconds
+instead of every row waiting for the last batch.
+
+Three things follow from the split, and all three are deliberate:
+
+- **Nothing on screen blinks.** A row waiting on its first answer holds the
+  line open at the height of the marks it expects, so the list is laid out once
+  rather than reflowing under the reader a moment later. On every refresh after
+  that the row keeps the marks it already has while the new answer is fetched,
+  so a poll never blanks the list and fills it in again.
+- **A failure here is not a failure of the list.** A batch that GitHub refuses
+  or runs out of time on affects its own five rows and nothing else. They keep
+  the last answer anyone got for them — that is still the best there is — and a
+  small notice above the list says how many could not be re-read, which is the
+  only way a repository the token has quietly lost access to ever becomes
+  visible. The next refresh tries again, and the notice goes when it works.
+- **No row waits for ever.** That is the one failure a reader cannot see, so a
+  row always ends up either answered or marked unreadable, and a page left half
+  finished — by a refresh landing on top of another, or by the worker being
+  shut down part way through — is swept up rather than left.
+
+Refreshing a single row is unaffected: one row is cheap however costly its
+fields are, so that request still reads all of it at once.
 
 ## Refreshing a single row
 
@@ -601,6 +650,16 @@ It also sends a test notification, which answers the question that brings most
 people here — whether nothing appeared because nothing fired, or because Chrome
 was never given permission to show it.
 
+Switched on, it adds a control to the sidebar's header that opens this section,
+and the section carries a log of every request the worker has made this browser
+session: what was asked, the status, how long it took, GitHub's own request id,
+and the error where there was one. That log is the only place the difference is
+visible between a row with no red marks and a row whose checks were never read
+— on screen they look exactly alike. Requests are recorded whether or not
+developer mode is on, since the refresh worth looking at is usually the one that
+already happened. They are kept in session storage, so they go when the browser
+does.
+
 Chrome will not wake an extension more often than every 30 seconds, so a
 reminder set for less than that is marked due in the panel straight away while
 the toolbar count and any notification arrive on Chrome's own schedule.
@@ -722,6 +781,12 @@ The pieces that make that work:
 - **The refresh button always wins.** It drops the cached pages for that query
   first, so it is a true forced refresh. Entries older than a day are pruned on
   startup.
+- **A half-filled page is finished off.** The second half of each row is written
+  to the cache as it lands, so a tab that opens later gets whole rows without
+  asking again. The worker is shut down between messages and can be stopped part
+  way through, so serving a cached page that still holds rows waiting on their
+  second half starts that work again — and a row is only ever asked about once,
+  however many queries and pages are holding it.
 
 The cache holds a *shape* as well as a value. A row written before a field
 existed is not a hit for a panel that expects it — it is a row that will crash

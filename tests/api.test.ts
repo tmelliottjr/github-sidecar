@@ -2,12 +2,15 @@ import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 
 import {
+  ENRICH_QUERY,
   GitHubApiError,
   SEARCH_QUERY,
+  enrichItems,
   fetchItem,
   resetPreviewSupport,
   searchIssues,
 } from '../src/lib/github/api.ts'
+import { applyEnrichment } from '../src/lib/github/enrichment.ts'
 
 const originalFetch = globalThis.fetch
 
@@ -17,6 +20,11 @@ function stubFetch(body: unknown, init: { status?: number; headers?: HeadersInit
       status: init.status ?? 200,
       headers: { 'Content-Type': 'application/json', ...init.headers },
     })) as typeof fetch
+}
+
+/** What `nodes(ids:)` answers with, which is what enrichment reads. */
+function nodesPayload(nodes: unknown[]) {
+  return { data: { nodes } }
 }
 
 function searchPayload(nodes: unknown[]) {
@@ -430,16 +438,19 @@ describe('stacked pull requests', () => {
     resetPreviewSupport()
   })
 
-  it('asks GitHub for stack membership', () => {
-    assert.match(SEARCH_QUERY, /stackEntry\s*\{\s*position/)
-    assert.match(SEARCH_QUERY, /stack\s*\{[\s\S]*baseRefName/)
+  it('asks GitHub for stack membership, in the second request', () => {
+    assert.match(ENRICH_QUERY, /stackEntry\s*\{\s*position/)
+    assert.match(ENRICH_QUERY, /stack\s*\{[\s\S]*baseRefName/)
+    // The search is what has to stay under GitHub's time limit, and a stack
+    // is one of the fields that put it over.
+    assert.ok(!SEARCH_QUERY.includes('stackEntry'))
   })
 
   it('reports where a row sits in its stack', async () => {
-    stubFetch(searchPayload([stackedPullRequestNode]))
+    stubFetch(nodesPayload([stackedPullRequestNode]))
 
-    const page = await searchIssues('token', { q: 'is:pr', first: 30 })
-    const { stack } = page.items[0]
+    const { enrichments } = await enrichItems('token', ['PR_2'])
+    const { stack } = enrichments[0]
 
     assert.ok(stack)
     assert.equal(stack.number, 7)
@@ -449,10 +460,10 @@ describe('stacked pull requests', () => {
   })
 
   it('lists the stack from the base branch up, skipping layers it cannot read', async () => {
-    stubFetch(searchPayload([stackedPullRequestNode]))
+    stubFetch(nodesPayload([stackedPullRequestNode]))
 
-    const page = await searchIssues('token', { q: 'is:pr', first: 30 })
-    const entries = page.items[0].stack!.entries
+    const { enrichments } = await enrichItems('token', ['PR_2'])
+    const entries = enrichments[0].stack!.entries
 
     assert.deepEqual(
       entries.map((entry) => entry.number),
@@ -487,21 +498,22 @@ describe('stacked pull requests', () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
       }
-      return new Response(JSON.stringify(searchPayload([pullRequestNode])), {
+      return new Response(JSON.stringify(nodesPayload([pullRequestNode])), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
     }) as unknown as typeof fetch
 
-    const page = await searchIssues('token', { q: 'is:pr', first: 30 })
+    const first = await enrichItems('token', ['PR_1'])
 
-    assert.equal(page.items.length, 1)
-    assert.equal(page.items[0].stack, null)
+    assert.equal(first.enrichments.length, 1)
+    assert.equal(first.enrichments[0].stack, null)
+    assert.equal(first.failedIds.length, 0)
     assert.equal(sent.length, 2)
     assert.ok(!sent[1].includes('stackEntry'))
 
     // Having been told once, it does not ask for them again.
-    await searchIssues('token', { q: 'is:pr', first: 30 })
+    await enrichItems('token', ['PR_1'])
     assert.equal(sent.length, 3)
     assert.ok(!sent[2].includes('stackEntry'))
   })
@@ -513,6 +525,107 @@ describe('stacked pull requests', () => {
       () => searchIssues('token', { q: 'is:pr', first: 30 }),
       /Something else went wrong/,
     )
+  })
+})
+
+describe('the split into two requests', () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    resetPreviewSupport()
+  })
+
+  it('keeps the costly fields out of the search', () => {
+    for (const field of ['reviewDecision', 'mergeStateStatus', 'statusCheckRollup']) {
+      assert.ok(!SEARCH_QUERY.includes(field), `${field} is still in the search`)
+    }
+    // The cheap half of the merge answer stays: it is the one that knows about
+    // conflicts, so the mark that matters most arrives with the first request.
+    assert.match(SEARCH_QUERY, /\bmergeable\b/)
+  })
+
+  it('marks searched pull requests as waiting for the second request', async () => {
+    stubFetch(searchPayload([pullRequestNode, issueNode]))
+
+    const page = await searchIssues('token', { q: 'is:open', first: 30 })
+
+    assert.equal(page.items[0].enrichment, 'pending')
+    // Nothing costly applies to an issue, so nothing is coming for it.
+    assert.equal(page.items[1].enrichment, 'ready')
+  })
+
+  it('reads a single row whole, so a refresh needs no second request', async () => {
+    stubFetch({ data: { repository: { issueOrPullRequest: pullRequestNode } } })
+
+    const item = await fetchItem('token', { repository: 'acme/app', number: 34 })
+
+    assert.equal(item.enrichment, 'ready')
+    assert.equal(item.reviewDecision, 'CHANGES_REQUESTED')
+    assert.equal(item.checkState, 'FAILURE')
+  })
+
+  it('asks for exactly the rows it was given, in one request', async () => {
+    const asked: string[][] = []
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { variables: { ids: string[] } }
+      asked.push(body.variables.ids)
+      return new Response(JSON.stringify(nodesPayload([])), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+
+    await enrichItems('token', ['PR_1', 'PR_2', 'PR_3'])
+
+    // Batching is the search service's job: it is what knows how many rows are
+    // still waiting and can publish each batch as it lands.
+    assert.deepEqual(asked, [['PR_1', 'PR_2', 'PR_3']])
+  })
+
+  it('merges the costly half into the row without disturbing the rest', async () => {
+    stubFetch(searchPayload([pullRequestNode]))
+    const page = await searchIssues('token', { q: 'is:pr', first: 30 })
+
+    stubFetch(nodesPayload([pullRequestNode]))
+    const { enrichments } = await enrichItems('token', ['PR_1'])
+    const merged = applyEnrichment(page.items[0], enrichments[0])
+
+    assert.equal(merged.enrichment, 'ready')
+    assert.equal(merged.reviewDecision, 'CHANGES_REQUESTED')
+    assert.equal(merged.checkState, 'FAILURE')
+    assert.equal(merged.mergeState, 'behind')
+    // Everything the search already knew survives the merge untouched.
+    assert.equal(merged.title, 'Fix the thing')
+    assert.equal(merged.additions, 10)
+    assert.equal(merged.commentCount, 0)
+  })
+
+  it('says plainly when GitHub ran out of time on a batch', async () => {
+    stubFetch('<html>502 Bad Gateway</html>' as unknown as object, { status: 502 })
+
+    await assert.rejects(() => enrichItems('token', ['PR_1']), /took too long/)
+  })
+
+  it('counts a row the second request could not read as failed', async () => {
+    // `nodes(ids:)` answers with null for anything the token cannot reach.
+    stubFetch(nodesPayload([null, pullRequestNode]))
+
+    const result = await enrichItems('token', ['PR_missing', 'PR_1'])
+
+    assert.deepEqual(result.enrichments.map((entry) => entry.id), ['PR_1'])
+    assert.deepEqual(result.failedIds, ['PR_missing'])
+  })
+
+  it('asks nothing at all when there is nothing to enrich', async () => {
+    let called = false
+    globalThis.fetch = (async () => {
+      called = true
+      return new Response('{}', { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await enrichItems('token', [])
+
+    assert.equal(called, false)
+    assert.deepEqual(result, { enrichments: [], failedIds: [], error: null })
   })
 })
 
