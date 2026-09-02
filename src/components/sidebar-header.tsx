@@ -1,4 +1,5 @@
 import {
+  BeakerIcon,
   CheckIcon,
   ChevronDownIcon,
   FilterIcon,
@@ -47,6 +48,8 @@ interface Props {
   canFilter: boolean
   isFiltering: boolean
   canMarkAllSeen: boolean
+  /** Developer mode only: opens the part of settings that holds the log. */
+  canInspect: boolean
   onSelectQuery: (id: string) => void
   onManageQueries: () => void
   onToggleFilter: () => void
@@ -68,6 +71,7 @@ export function SidebarHeader({
   canFilter,
   isFiltering,
   canMarkAllSeen,
+  canInspect,
   onSelectQuery,
   onManageQueries,
   onToggleFilter,
@@ -147,6 +151,26 @@ export function SidebarHeader({
       />
 
       <div className="flex shrink-0 items-center gap-0.5" onPointerDown={stopDrag}>
+        {/*
+         * Leads the controls rather than sitting among them: it is not one of
+         * the things a reader does with the list, and it is only here at all
+         * while developer mode is on.
+         */}
+        {canInspect && (
+          <Hint label="What the panel has asked GitHub">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() =>
+                void sendMessage({ type: 'open-options', section: 'developer' })
+              }
+              aria-label="Open developer tools"
+            >
+              <BeakerIcon />
+            </Button>
+          </Hint>
+        )}
+
         {canFilter && (
           <Hint label="Filter these rows">
             <Button

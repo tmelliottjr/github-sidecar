@@ -42,6 +42,7 @@ function item(overrides: Partial<SearchItem> = {}): SearchItem {
     checkCount: 3,
     checksRead: 3,
     stack: null,
+    enrichment: 'ready',
     ...overrides,
   }
 }
@@ -65,6 +66,54 @@ describe('changesSince', () => {
     assert.deepEqual(changesSince(seen, item({ checkState: 'FAILURE' })), ['checks'])
     assert.deepEqual(changesSince(seen, item({ commentCount: 5 })), ['comments'])
     assert.deepEqual(changesSince(seen, item({ headRefOid: 'def' })), ['commits'])
+  })
+
+  it('says nothing about a row whose second half has not arrived', () => {
+    // The search reads neither the review decision nor the check rollup, so a
+    // row still waiting on the second request has both as null. Read as a
+    // change, that would report every pull request as freshly un-reviewed once
+    // per refresh — through the badge and the notifications as well as the row.
+    const waiting = item({
+      enrichment: 'pending',
+      reviewDecision: null,
+      checkState: null,
+    })
+    assert.deepEqual(changesSince(seen, waiting), [])
+
+    // Nor when the second request was refused: unknown is not none.
+    assert.deepEqual(changesSince(seen, { ...waiting, enrichment: 'failed' }), [])
+
+    // A change it can actually see is still held back, since half the fields
+    // it compares are missing; the next refresh that completes reports it.
+    assert.deepEqual(changesSince(seen, { ...waiting, state: 'merged' }), [])
+  })
+
+  it('does not report the second half arriving as a change', () => {
+    // The reader can mark a row seen, or set a reminder on it, before its
+    // review and check state have arrived. That baseline records that it knew
+    // neither, so their turning up moments later is not news.
+    const waiting = item({ enrichment: 'pending', reviewDecision: null, checkState: null })
+    const baseline = signatureOf(waiting)
+    assert.equal(baseline.partial, true)
+
+    const arrived = item({ reviewDecision: 'APPROVED', checkState: 'FAILURE' })
+    assert.deepEqual(changesSince(baseline, arrived), [])
+
+    // What it could see at the time is still compared.
+    assert.deepEqual(changesSince(baseline, item({ state: 'merged' })), ['state'])
+    assert.deepEqual(changesSince(baseline, item({ commentCount: 9 })), ['comments'])
+  })
+
+  it('marks the baseline of a whole row as complete', () => {
+    assert.equal(signatureOf(item()).partial, undefined)
+  })
+
+  it('reads a row from before the request was split as whole', () => {
+    // That build read everything at once, so its rows do know their review and
+    // check state — the field saying so is simply not on them.
+    const older = item({ state: 'merged' }) as Partial<SearchItem>
+    delete older.enrichment
+    assert.deepEqual(changesSince(seen, older as SearchItem), ['state'])
   })
 
   it('ignores an edit that moved nothing worth a second look', () => {

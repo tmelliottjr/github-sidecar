@@ -75,6 +75,36 @@ export interface StackInfo {
   entries: StackEntry[]
 }
 
+/**
+ * How far a row has got in the second of the two requests that build it.
+ *
+ * The costly half of a row — review decision, CI rollup, merge state, stack —
+ * is asked for separately, so a row exists on screen before those are known.
+ * `failed` is kept apart from `ready` because a row that has no red mark and a
+ * row whose checks could not be read look identical otherwise, and only one of
+ * them is worth telling the reader about.
+ */
+export type EnrichmentState = 'pending' | 'ready' | 'failed'
+
+/**
+ * The half of a row that the search query cannot afford to ask for.
+ *
+ * Sent on its own, keyed by node id, rather than as a whole row: the row it
+ * belongs to may have been refreshed by something else in the meantime, and
+ * merging by field is the only version of this that cannot put a stale title
+ * back on screen.
+ */
+export interface ItemEnrichment {
+  id: string
+  reviewDecision: ReviewDecision | null
+  checkState: CheckState | null
+  failingChecks: FailingCheck[]
+  checkCount: number | null
+  checksRead: number
+  mergeState: MergeState | null
+  stack: StackInfo | null
+}
+
 export interface SearchItem {
   id: string
   kind: ItemKind
@@ -113,6 +143,11 @@ export interface SearchItem {
   checksRead: number
   /** Null for issues, and for pull requests that are not part of a stack. */
   stack: StackInfo | null
+  /**
+   * Whether the fields above it that come from the second request have
+   * arrived. Issues are `ready` on sight: none of those fields apply to them.
+   */
+  enrichment: EnrichmentState
 }
 
 export interface SearchPage {

@@ -42,6 +42,7 @@ function item(overrides: Partial<SearchItem> = {}): SearchItem {
     checkCount: 3,
     checksRead: 3,
     stack: null,
+    enrichment: 'ready',
     ...overrides,
   }
 }

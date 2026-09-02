@@ -1,4 +1,12 @@
+import type { ApiCall } from './github/api'
+import type { ArrivedEnrichment } from './github/enrichment'
 import type { ApiErrorKind, SearchItem, SearchPage } from './github/types'
+
+/** One request the worker made, and when. Developer mode reads these. */
+export interface ApiLogEntry extends ApiCall {
+  /** Unix milliseconds, so the list can be read in order. */
+  at: number
+}
 
 /** A search page plus where it came from, so the UI can show data age. */
 export interface CachedSearchPage extends SearchPage {
@@ -23,9 +31,13 @@ export type RequestMessage =
   | { type: 'set-tab-open'; open: boolean }
   | { type: 'validate-token'; token: string }
   | { type: 'open-item'; url: string; target: 'window' | 'tab' }
-  | { type: 'open-options' }
+  /** `section` scrolls the settings page to one part of itself. */
+  | { type: 'open-options'; section?: string }
   /** Developer mode: proves the notification path end to end. */
   | { type: 'test-notification' }
+  /** Developer mode: what the worker has asked GitHub, most recent first. */
+  | { type: 'api-log' }
+  | { type: 'clear-api-log' }
 
 export type ResponseMessage<T> =
   | { ok: true; data: T }
@@ -57,7 +69,22 @@ export interface ItemUpdate {
   item: SearchItem
 }
 
-export type BroadcastMessage = ToggleMessage | SearchUpdate | ItemUpdate
+/**
+ * Broadcast when the costly half of some rows lands, or when it could not be
+ * read. Carries the fields themselves rather than whole rows: the row it
+ * belongs to may have been refreshed in the seconds it took to answer, and
+ * merging by field is the only version of this that cannot put a stale title
+ * back on screen.
+ */
+export interface EnrichmentUpdate extends ArrivedEnrichment {
+  type: 'items-enriched'
+}
+
+export type BroadcastMessage =
+  | ToggleMessage
+  | SearchUpdate
+  | ItemUpdate
+  | EnrichmentUpdate
 
 export type ResultFor<M extends RequestMessage> = M extends { type: 'search' }
   ? CachedSearchPage
@@ -69,7 +96,9 @@ export type ResultFor<M extends RequestMessage> = M extends { type: 'search' }
         ? SearchItem[]
         : M extends { type: 'tab-open' }
           ? boolean
-          : void
+          : M extends { type: 'api-log' }
+            ? ApiLogEntry[]
+            : void
 
 /**
  * A failure that crossed the worker boundary. `chrome.runtime.sendMessage`

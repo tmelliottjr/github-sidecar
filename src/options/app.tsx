@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   BellIcon,
   CheckCircleFillIcon,
@@ -6,6 +6,7 @@ import {
   EyeIcon,
   LinkExternalIcon,
   SyncIcon,
+  TrashIcon,
   XCircleFillIcon,
 } from '@primer/octicons-react'
 
@@ -15,7 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { ManagementPanel } from '@/options/management-panel'
 import { useStorageValue } from '@/hooks/use-storage-value'
-import { sendMessage } from '@/lib/messages'
+import { sendMessage, type ApiLogEntry } from '@/lib/messages'
 import { REMINDER_LABELS, type ReminderOverrides } from '@/lib/attention'
 import { playSound, SOUNDS, SOUND_NAMES, type SoundName } from '@/lib/sound'
 import type { FeatureFlags, Settings, SoundSettings } from '@/lib/storage'
@@ -502,6 +503,17 @@ function DeveloperSection({
 }) {
   const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null)
   const { developer } = settings
+  const section = useRef<HTMLElement>(null)
+
+  /*
+   * The sidebar links straight here, and does it by opening the page at
+   * `#developer`. The browser cannot act on that fragment itself: this page is
+   * a React tree, so nothing with that id exists when the URL is read.
+   */
+  useEffect(() => {
+    if (window.location.hash !== '#developer') return
+    section.current?.scrollIntoView({ block: 'start' })
+  }, [])
 
   const setSeconds = (key: keyof ReminderOverrides, value: number) =>
     onPatch({
@@ -524,7 +536,11 @@ function DeveloperSection({
   }
 
   return (
-    <section className="flex flex-col gap-3 rounded-xl border border-dashed border-border bg-muted/30 p-5">
+    <section
+      id="developer"
+      ref={section}
+      className="flex flex-col gap-3 rounded-xl border border-dashed border-border bg-muted/30 p-5"
+    >
       <label className="flex cursor-pointer items-start justify-between gap-4">
         <span className="space-y-0.5">
           <span className="block text-[14px] font-bold tracking-tight">Developer mode</span>
@@ -585,9 +601,134 @@ function DeveloperSection({
               </span>
             )}
           </div>
+
+          <ApiLog />
         </div>
       )}
     </section>
+  )
+}
+
+/** Turns a duration into something readable at a glance in a list. */
+function duration(ms: number): string {
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+}
+
+function timeOfDay(at: number): string {
+  return new Date(at).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+const OPERATION_LABELS: Record<ApiLogEntry['operation'], string> = {
+  search: 'Search',
+  enrich: 'Row detail',
+  item: 'Single row',
+}
+
+/**
+ * Every request the worker has made this session, most recent first.
+ *
+ * This is the only place the panel can answer "why is that row missing its
+ * marks?". The list itself cannot: a row whose checks were never read and a
+ * row with nothing to report look exactly alike on screen.
+ */
+function ApiLog() {
+  const [entries, setEntries] = useState<ApiLogEntry[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      // Read defensively: an older worker, or one that has just been reloaded
+      // and does not know this message, answers with nothing at all, and this
+      // panel must not take the settings page down with it.
+      const answer = await sendMessage({ type: 'api-log' })
+      setEntries(Array.isArray(answer) ? answer : [])
+      setError(null)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Could not read the log.')
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const clear = async () => {
+    await sendMessage({ type: 'clear-api-log' })
+    await load()
+  }
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-border pt-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-0.5">
+          <h3 className="text-[13px] font-semibold">What the panel has asked GitHub</h3>
+          <p className="text-[12px] leading-relaxed text-muted-foreground">
+            Kept for this browser session only. A search lists the rows; a row detail
+            request reads the review, checks, merge state and stack for a handful of them
+            at a time, and is the one that fails on a query GitHub finds too broad.
+          </p>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <Button variant="outline" size="sm" onClick={() => void load()}>
+            <SyncIcon />
+            Refresh
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void clear()}>
+            <TrashIcon />
+            Clear
+          </Button>
+        </div>
+      </div>
+
+      {error && <p className="text-[12px] text-closed">{error}</p>}
+
+      {entries !== null && entries.length === 0 && (
+        <p className="text-[12px] text-muted-foreground">
+          Nothing yet. Open the sidebar on github.com and the requests will appear here.
+        </p>
+      )}
+
+      {entries !== null && entries.length > 0 && (
+        <ul className="max-h-80 divide-y divide-border overflow-y-auto rounded-lg border border-border bg-background">
+          {entries.map((entry) => (
+            <li
+              key={`${entry.at}-${entry.requestId ?? entry.detail}`}
+              className="flex flex-col gap-0.5 px-3 py-2"
+            >
+              <div className="flex items-center gap-2 text-[12px]">
+                {entry.ok ? (
+                  <CheckCircleFillIcon className="size-3 shrink-0 text-open" />
+                ) : (
+                  <XCircleFillIcon className="size-3 shrink-0 text-closed" />
+                )}
+                <span className="font-semibold">{OPERATION_LABELS[entry.operation]}</span>
+                <span className="tabular-nums text-muted-foreground">
+                  {entry.status ?? 'no response'} · {duration(entry.durationMs)}
+                </span>
+                <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
+                  {timeOfDay(entry.at)}
+                </span>
+              </div>
+              <p className="truncate font-mono text-[11px] text-muted-foreground">
+                {entry.detail}
+              </p>
+              {entry.error && (
+                <p className="text-[11px] leading-snug text-closed">{entry.error}</p>
+              )}
+              {entry.requestId && (
+                <p className="font-mono text-[10px] text-muted-foreground">
+                  {entry.requestId}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 

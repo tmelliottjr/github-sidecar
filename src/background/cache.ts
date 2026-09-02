@@ -17,7 +17,7 @@ const DB_NAME = 'github-sidecar'
  * crash the list. Dropping the store on upgrade costs one refetch and is the
  * only version of this that cannot be got wrong.
  */
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORE = 'search-pages'
 const QUERY_INDEX = 'query'
 const UPDATED_INDEX = 'updatedAt'
@@ -39,6 +39,14 @@ export interface CacheStore {
   prune(maxAgeMs: number): Promise<void>
   /** Replaces one row wherever it is cached. Returns how many pages changed. */
   updateItem(item: SearchItem): Promise<number>
+  /**
+   * Rewrites every cached page through `revise`, keeping the ones it changed.
+   * `revise` returning null means the page was not one of them.
+   *
+   * Generic because what a revision *is* lives outside this module: the pages
+   * are the cache's business, the rows in them are not.
+   */
+  revisePages(revise: (page: SearchPage) => SearchPage | null): Promise<number>
   /** Looks rows up by node id, wherever they happen to be cached. */
   findItems(ids: readonly string[]): Promise<SearchItem[]>
 }
@@ -154,6 +162,27 @@ export const indexedDbStore: CacheStore = {
       // rest of the page any newer than it was.
       const writes = entries
         .map((entry) => ({ entry, page: replaceItem(entry.page, item) }))
+        .filter((candidate) => candidate.page !== null)
+        .map(({ entry, page }) => promisify(store.put({ ...entry, page })))
+
+      await Promise.all(writes)
+      return writes.length
+    })
+  },
+
+  /**
+   * The second half of a page landing, or anything else that rewrites rows in
+   * place. Written to the cache before it is broadcast, for the same reason a
+   * single refreshed row is: a tab that reacts by asking for its page must not
+   * be handed the copy this just replaced.
+   */
+  async revisePages(revise) {
+    return withStore('readwrite', async (store) => {
+      const entries = await promisify<CacheEntry[]>(store.getAll())
+      // The entry's own age is left alone: this is the rest of the answer it
+      // already holds, not a newer one.
+      const writes = entries
+        .map((entry) => ({ entry, page: revise(entry.page) }))
         .filter((candidate) => candidate.page !== null)
         .map(({ entry, page }) => promisify(store.put({ ...entry, page })))
 
