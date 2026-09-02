@@ -1,6 +1,6 @@
 import * as React from 'react'
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
-import { CheckIcon } from 'lucide-react'
+import { CheckIcon } from '@primer/octicons-react'
 
 import { cn } from '@/lib/utils'
 import { usePortalContainer } from './portal-container'

@@ -1,6 +1,16 @@
 export type ItemKind = 'issue' | 'pull-request'
 
 /**
+ * What the reader can do about a failure, rather than what went wrong.
+ *
+ * Deliberately says nothing about *why* a token was refused: single sign-on,
+ * an IP allow list and a missing scope all land on `auth` because the next
+ * step is the same one — go and fix the token. Naming any single identity
+ * provider here would tie the panel to one deployment's setup.
+ */
+export type ApiErrorKind = 'auth' | 'rate-limit' | 'not-found' | 'server' | 'unknown'
+
+/**
  * Normalised lifecycle state, flattened across issues and pull requests.
  * `queued` is a pull request sitting in a merge queue: still open, but no
  * longer waiting on anything the reader has to do.
@@ -11,9 +21,29 @@ export type ReviewDecision = 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED
 
 export type CheckState = 'EXPECTED' | 'ERROR' | 'FAILURE' | 'PENDING' | 'SUCCESS'
 
+/**
+ * How a pull request stands against its base branch, flattened from GitHub's
+ * `mergeable` and `mergeStateStatus`. Only the two the row cannot otherwise
+ * say are drawn — a conflict and a stale branch — but the rest are kept so the
+ * distinction is not lost on the way in.
+ */
+export type MergeState = 'clean' | 'conflicting' | 'behind' | 'blocked' | 'unstable'
+
+/** A check that is red, and where to go and look at it. */
+export interface FailingCheck {
+  name: string
+  url: string | null
+}
+
 export interface Label {
   name: string
   color: string
+}
+
+/** Someone the issue or pull request is assigned to. */
+export interface Assignee {
+  login: string
+  avatarUrl: string | null
 }
 
 /** One layer of a stack, as much of it as a row needs to list its neighbours. */
@@ -45,6 +75,36 @@ export interface StackInfo {
   entries: StackEntry[]
 }
 
+/**
+ * How far a row has got in the second of the two requests that build it.
+ *
+ * The costly half of a row — review decision, CI rollup, merge state, stack —
+ * is asked for separately, so a row exists on screen before those are known.
+ * `failed` is kept apart from `ready` because a row that has no red mark and a
+ * row whose checks could not be read look identical otherwise, and only one of
+ * them is worth telling the reader about.
+ */
+export type EnrichmentState = 'pending' | 'ready' | 'failed'
+
+/**
+ * The half of a row that the search query cannot afford to ask for.
+ *
+ * Sent on its own, keyed by node id, rather than as a whole row: the row it
+ * belongs to may have been refreshed by something else in the meantime, and
+ * merging by field is the only version of this that cannot put a stale title
+ * back on screen.
+ */
+export interface ItemEnrichment {
+  id: string
+  reviewDecision: ReviewDecision | null
+  checkState: CheckState | null
+  failingChecks: FailingCheck[]
+  checkCount: number | null
+  checksRead: number
+  mergeState: MergeState | null
+  stack: StackInfo | null
+}
+
 export interface SearchItem {
   id: string
   kind: ItemKind
@@ -54,6 +114,8 @@ export interface SearchItem {
   repository: string
   authorLogin: string | null
   authorAvatarUrl: string | null
+  /** Everyone the row is assigned to, in GitHub's own order. Empty when none. */
+  assignees: Assignee[]
   createdAt: string
   updatedAt: string
   state: ItemState
@@ -67,8 +129,25 @@ export interface SearchItem {
   checkState: CheckState | null
   additions: number | null
   deletions: number | null
+  /** The pull request's own branch. Null for issues. */
+  headRefName: string | null
+  /** The head commit, which is how a new push is told from an edit. */
+  headRefOid: string | null
+  /** Null for issues, and where GitHub has not worked it out yet. */
+  mergeState: MergeState | null
+  /** The red checks, named. Empty where nothing is failing. */
+  failingChecks: FailingCheck[]
+  /** How many checks the rollup had, read or not, so a partial list says so. */
+  checkCount: number | null
+  /** How many of them this query actually read; the rest are unknown. */
+  checksRead: number
   /** Null for issues, and for pull requests that are not part of a stack. */
   stack: StackInfo | null
+  /**
+   * Whether the fields above it that come from the second request have
+   * arrived. Issues are `ready` on sight: none of those fields apply to them.
+   */
+  enrichment: EnrichmentState
 }
 
 export interface SearchPage {
@@ -78,4 +157,11 @@ export interface SearchPage {
   hasNextPage: boolean
   /** When the page was produced, used to show data freshness. */
   fetchedAt: number
+  /**
+   * Set when GitHub answered with results *and* errors — typically a token
+   * that cannot reach some of the organisations the query covers. The list is
+   * usable but incomplete, so this is shown alongside it rather than instead
+   * of it.
+   */
+  warning: string | null
 }

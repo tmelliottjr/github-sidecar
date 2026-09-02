@@ -8,8 +8,16 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
+  /*
+   * github.com's own stack, as shipped in Primer's `--fontStack-sansSerif`.
+   * No font is bundled: on github.com the content script overrides this with
+   * the stack it reads off the page, so the sidebar tracks whatever the site
+   * is using. This value is the default for everywhere else — chiefly the
+   * options page, which has no GitHub page to read from.
+   */
   --font-sans:
-    'Open Sans Variable', 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    'Mona Sans VF', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans',
+    Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
 
   --color-background: oklch(1 0 0);
   --color-foreground: oklch(0.21 0.006 285.9);
@@ -45,6 +53,18 @@
    */
   --animate-progress-sweep: progress-sweep 1.6s ease-in-out infinite;
   --animate-progress-pulse: progress-pulse 1.6s ease-in-out infinite;
+
+  /*
+   * Entrances, not attention-seekers. A view arriving settles down onto the
+   * panel; a row that has just joined an existing list drops in from above,
+   * where the rows it displaced came from. Both ease out sharply so the list
+   * is readable well before the motion has finished.
+   */
+  --animate-view-in: view-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-row-in: row-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Shared by the stack's slide so opening and closing feel like one gesture. */
+  --ease-stack: cubic-bezier(0.16, 1, 0.3, 1);
 
   --shadow-window:
     0 0 0 1px oklch(0 0 0 / 0.06), 0 12px 32px -8px oklch(0 0 0 / 0.18),
@@ -123,6 +143,24 @@
 }
 
 /*
+ * A pane that moves as it arrives also moves everything the reader was about
+ * to click, so the swap is carried by opacity alone. The rows inside it are
+ * free to travel, because a row that has just arrived is not yet a target.
+ */
+@keyframes view-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+/*
  * An animation that loops until some network call comes back is precisely what
  * this preference is asking us not to run. Unlayered, so it outranks the
  * utilities it overrides. A still bar still says "busy" by being there.
@@ -134,6 +172,15 @@
   }
   .animate-progress-sweep {
     display: none;
+  }
+
+  /*
+   * Entrances are decoration on content that is already correct, so they are
+   * dropped outright rather than shortened.
+   */
+  .animate-view-in,
+  .animate-row-in {
+    animation: none;
   }
 }
 

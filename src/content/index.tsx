@@ -6,7 +6,8 @@ import { Sidebar } from '@/components/sidebar'
 import { PortalContainerProvider } from '@/components/ui/portal-container'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { watchColorScheme } from '@/content/color-scheme'
-import { injectFonts } from '@/content/fonts'
+import { resolveFontStack } from '@/content/fonts'
+import { isolateKeyboard } from '@/content/keyboard'
 import { HOST_ID } from '@/content/page-layout'
 import { withShadowRootProperties } from '@/content/stylesheet'
 import styles from '@/styles/app.css?inline'
@@ -43,8 +44,6 @@ function Root({ container }: { container: HTMLElement }) {
 function mount(): void {
   if (document.getElementById(HOST_ID)) return
 
-  injectFonts()
-
   const host = document.createElement('div')
   host.id = HOST_ID
   // The host is a zero-size anchor; the window itself is position: fixed.
@@ -52,6 +51,7 @@ function mount(): void {
   document.documentElement.appendChild(host)
 
   const shadow = host.attachShadow({ mode: 'open' })
+  isolateKeyboard(shadow)
 
   const sheet = new CSSStyleSheet()
   sheet.replaceSync(withShadowRootProperties(styles))
@@ -60,6 +60,9 @@ function mount(): void {
   const container = document.createElement('div')
   container.id = 'github-sidecar-container'
   container.className = 'gh-sidebar-root'
+  // Overrides the stylesheet's own default with the page's stack, so the panel
+  // reads as part of github.com rather than as something pasted onto it.
+  container.style.setProperty('--font-sans', resolveFontStack())
   shadow.appendChild(container)
 
   createRoot(container).render(

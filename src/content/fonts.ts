@@ -1,39 +1,33 @@
-const FONT_STYLE_ID = 'github-sidecar-fonts'
+/**
+ * The panel borrows github.com's font rather than shipping one of its own.
+ *
+ * Primer publishes the page's stack as a custom property on <html>, so it is
+ * read from there instead of copied into our CSS: when GitHub changes the
+ * stack — as it did when Mona Sans went to the front of it — the sidebar
+ * follows on the next page load rather than on our next release.
+ *
+ * Borrowing the list is enough on its own because @font-face rules are scoped
+ * to the document, not to a tree: whatever the page loads for its own text is
+ * already available inside our shadow root, under the same family names. That
+ * includes faces we could never ship ourselves, such as GitHub's patched
+ * "Noto Sans Backtick Fix".
+ */
+const STACK_TOKEN = '--fontStack-sansSerif'
 
 /**
- * @font-face rules must resolve chrome-extension:// URLs at runtime, so they are
- * generated here instead of shipped in CSS. They are injected into the page
- * document because font loading is document-scoped.
+ * Used where the token is missing: the options page, which is not github.com,
+ * and any GitHub page old enough to predate the token. This is the stack as
+ * github.com ships it today, minus the patched subset that only exists there.
  */
-export function injectFonts(): void {
-  if (document.getElementById(FONT_STYLE_ID)) return
+const FALLBACK_FONT_STACK =
+  '"Mona Sans VF", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", ' +
+  'Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"'
 
-  const latin = chrome.runtime.getURL('fonts/open-sans-latin-wght-normal.woff2')
-  const latinExt = chrome.runtime.getURL('fonts/open-sans-latin-ext-wght-normal.woff2')
+/** The font stack the surrounding page is using, if it publishes one. */
+export function resolveFontStack(): string {
+  const stack = getComputedStyle(document.documentElement)
+    .getPropertyValue(STACK_TOKEN)
+    .trim()
 
-  const style = document.createElement('style')
-  style.id = FONT_STYLE_ID
-  style.textContent = `
-    @font-face {
-      font-family: 'Open Sans Variable';
-      font-style: normal;
-      font-display: swap;
-      font-weight: 300 800;
-      src: url('${latinExt}') format('woff2-variations');
-      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
-        U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
-        U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-    }
-    @font-face {
-      font-family: 'Open Sans Variable';
-      font-style: normal;
-      font-display: swap;
-      font-weight: 300 800;
-      src: url('${latin}') format('woff2-variations');
-      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
-        U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
-        U+2212, U+2215, U+FEFF, U+FFFD;
-    }
-  `
-  document.head.appendChild(style)
+  return stack || FALLBACK_FONT_STACK
 }

@@ -4,31 +4,51 @@
   "version": "0.1.0",
   "description": "GitHub Sidecar — an omni-present, draggable sidebar for tracking the GitHub issues and pull requests you care about.",
   "minimum_chrome_version": "114",
-  "permissions": ["storage"],
-  "host_permissions": ["https://api.github.com/*", "https://github.com/*"],
+  "permissions": [
+    "storage",
+    "alarms",
+    "offscreen"
+  ],
+  "optional_permissions": [
+    "notifications"
+  ],
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  },
+  "host_permissions": [
+    "https://api.github.com/*",
+    "https://github.com/*"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["https://github.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://github.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }
   ],
   "action": {
-    "default_title": "Toggle GitHub Sidecar"
+    "default_title": "Toggle GitHub Sidecar",
+    "default_icon": {
+      "16": "icon-16.png",
+      "32": "icon-32.png",
+      "48": "icon-48.png",
+      "128": "icon-128.png"
+    }
   },
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true
-  },
-  "web_accessible_resources": [
-    {
-      "resources": ["fonts/*.woff2"],
-      "matches": ["https://github.com/*"]
-    }
-  ]
+  }
 }

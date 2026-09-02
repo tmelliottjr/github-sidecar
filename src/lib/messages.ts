@@ -1,4 +1,12 @@
-import type { SearchItem, SearchPage } from './github/types'
+import type { ApiCall } from './github/api'
+import type { ArrivedEnrichment } from './github/enrichment'
+import type { ApiErrorKind, SearchItem, SearchPage } from './github/types'
+
+/** One request the worker made, and when. Developer mode reads these. */
+export interface ApiLogEntry extends ApiCall {
+  /** Unix milliseconds, so the list can be read in order. */
+  at: number
+}
 
 /** A search page plus where it came from, so the UI can show data age. */
 export interface CachedSearchPage extends SearchPage {
@@ -11,13 +19,29 @@ export type RequestMessage =
   | { type: 'search'; q: string; first: number; after?: string | null }
   | { type: 'invalidate'; q: string }
   | { type: 'refresh-item'; repository: string; number: number }
+  /**
+   * Resolves node ids to the rows behind them, from the worker's shared cache.
+   * The management panel keeps only ids — a hidden row, a reminder, a pin are
+   * each just a node id — so the title, repository and link it shows have to be
+   * looked up from wherever the panel last saw the row. Ids the cache has since
+   * dropped simply do not come back.
+   */
+  | { type: 'lookup-items'; ids: string[] }
   | { type: 'tab-open' }
   | { type: 'set-tab-open'; open: boolean }
   | { type: 'validate-token'; token: string }
   | { type: 'open-item'; url: string; target: 'window' | 'tab' }
-  | { type: 'open-options' }
+  /** `section` scrolls the settings page to one part of itself. */
+  | { type: 'open-options'; section?: string }
+  /** Developer mode: proves the notification path end to end. */
+  | { type: 'test-notification' }
+  /** Developer mode: what the worker has asked GitHub, most recent first. */
+  | { type: 'api-log' }
+  | { type: 'clear-api-log' }
 
-export type ResponseMessage<T> = { ok: true; data: T } | { ok: false; error: string }
+export type ResponseMessage<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; kind?: ApiErrorKind; retryable?: boolean }
 
 /** Broadcast from the toolbar action to every github.com tab. */
 export interface ToggleMessage {
@@ -45,7 +69,22 @@ export interface ItemUpdate {
   item: SearchItem
 }
 
-export type BroadcastMessage = ToggleMessage | SearchUpdate | ItemUpdate
+/**
+ * Broadcast when the costly half of some rows lands, or when it could not be
+ * read. Carries the fields themselves rather than whole rows: the row it
+ * belongs to may have been refreshed in the seconds it took to answer, and
+ * merging by field is the only version of this that cannot put a stale title
+ * back on screen.
+ */
+export interface EnrichmentUpdate extends ArrivedEnrichment {
+  type: 'items-enriched'
+}
+
+export type BroadcastMessage =
+  | ToggleMessage
+  | SearchUpdate
+  | ItemUpdate
+  | EnrichmentUpdate
 
 export type ResultFor<M extends RequestMessage> = M extends { type: 'search' }
   ? CachedSearchPage
@@ -53,9 +92,31 @@ export type ResultFor<M extends RequestMessage> = M extends { type: 'search' }
     ? { login: string }
     : M extends { type: 'refresh-item' }
       ? SearchItem
-      : M extends { type: 'tab-open' }
-        ? boolean
-        : void
+      : M extends { type: 'lookup-items' }
+        ? SearchItem[]
+        : M extends { type: 'tab-open' }
+          ? boolean
+          : M extends { type: 'api-log' }
+            ? ApiLogEntry[]
+            : void
+
+/**
+ * A failure that crossed the worker boundary. `chrome.runtime.sendMessage`
+ * flattens an Error to its message, so anything the panel needs in order to
+ * react — whether retrying could help, whether to offer the settings page —
+ * has to travel as its own field and be rebuilt here.
+ */
+export class RequestError extends Error {
+  readonly kind: ApiErrorKind
+  readonly retryable: boolean
+
+  constructor(message: string, kind: ApiErrorKind = 'unknown', retryable = true) {
+    super(message)
+    this.name = 'RequestError'
+    this.kind = kind
+    this.retryable = retryable
+  }
+}
 
 /**
  * Content scripts cannot call api.github.com directly because github.com's
@@ -70,10 +131,10 @@ export async function sendMessage<M extends RequestMessage>(
     | undefined
 
   if (!response) {
-    throw new Error('The extension background worker did not respond.')
+    throw new RequestError('The extension background worker did not respond.')
   }
   if (!response.ok) {
-    throw new Error(response.error)
+    throw new RequestError(response.error, response.kind, response.retryable ?? true)
   }
   return response.data
 }

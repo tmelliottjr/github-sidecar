@@ -1,18 +1,20 @@
 import {
-  ChevronDown,
-  ChevronsDownUp,
-  ChevronsUpDown,
-  Github,
-  Lock,
-  PanelLeft,
-  PanelLeftClose,
-  PictureInPicture2,
-  RotateCw,
-  Settings2,
-  SlidersHorizontal,
-  Unlock,
-  X,
-} from 'lucide-react'
+  BeakerIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  FilterIcon,
+  FoldDownIcon,
+  FoldUpIcon,
+  GearIcon,
+  LockIcon,
+  MarkGithubIcon,
+  ScreenNormalIcon,
+  SidebarExpandIcon,
+  SlidersIcon,
+  SyncIcon,
+  UnlockIcon,
+  XIcon,
+} from '@primer/octicons-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -42,8 +44,16 @@ interface Props {
    */
   isRefreshing: boolean
   canRefresh: boolean
+  /** Whether the filter is offered at all, and whether it is currently open. */
+  canFilter: boolean
+  isFiltering: boolean
+  canMarkAllSeen: boolean
+  /** Developer mode only: opens the part of settings that holds the log. */
+  canInspect: boolean
   onSelectQuery: (id: string) => void
   onManageQueries: () => void
+  onToggleFilter: () => void
+  onMarkAllSeen: () => void
   onRefresh: () => void
   onPatchWindow: (patch: Partial<WindowState>) => void
   onToggleDock: () => void
@@ -58,8 +68,14 @@ export function SidebarHeader({
   isFetching,
   isRefreshing,
   canRefresh,
+  canFilter,
+  isFiltering,
+  canMarkAllSeen,
+  canInspect,
   onSelectQuery,
   onManageQueries,
+  onToggleFilter,
+  onMarkAllSeen,
   onRefresh,
   onPatchWindow,
   onToggleDock,
@@ -90,11 +106,11 @@ export function SidebarHeader({
             className="min-w-0 max-w-[55%] shrink justify-start gap-1 px-1.5"
             onPointerDown={stopDrag}
           >
-            <Github className="size-3.5 shrink-0 text-muted-foreground" />
+            <MarkGithubIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="truncate text-[13px] font-bold tracking-tight">
               {activeQuery?.name ?? 'No query'}
             </span>
-            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+            <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
           </Button>
         </DropdownMenuTrigger>
 
@@ -104,25 +120,25 @@ export function SidebarHeader({
             <DropdownMenuItem
               key={query.id}
               onSelect={() => onSelectQuery(query.id)}
-              className={cn(
-                'flex-col items-start gap-0.5',
-                query.id === activeQuery?.id && 'bg-accent',
-              )}
+              className={cn(query.id === activeQuery?.id && 'bg-accent')}
             >
-              <span className="font-semibold">{query.name}</span>
-              <span className="w-full truncate font-mono text-[10px] text-muted-foreground">
-                {query.query}
-              </span>
+              <span className="truncate font-semibold">{query.name}</span>
             </DropdownMenuItem>
           ))}
 
           <DropdownMenuSeparator />
+          {canMarkAllSeen && (
+            <DropdownMenuItem onSelect={onMarkAllSeen}>
+              <CheckIcon />
+              Mark all as seen
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem onSelect={onManageQueries}>
-            <SlidersHorizontal />
+            <SlidersIcon />
             Manage queries
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void sendMessage({ type: 'open-options' })}>
-            <Settings2 />
+            <GearIcon />
             Settings
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -135,6 +151,40 @@ export function SidebarHeader({
       />
 
       <div className="flex shrink-0 items-center gap-0.5" onPointerDown={stopDrag}>
+        {/*
+         * Leads the controls rather than sitting among them: it is not one of
+         * the things a reader does with the list, and it is only here at all
+         * while developer mode is on.
+         */}
+        {canInspect && (
+          <Hint label="What the panel has asked GitHub">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() =>
+                void sendMessage({ type: 'open-options', section: 'developer' })
+              }
+              aria-label="Open developer tools"
+            >
+              <BeakerIcon />
+            </Button>
+          </Hint>
+        )}
+
+        {canFilter && (
+          <Hint label="Filter these rows">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onToggleFilter}
+              aria-pressed={isFiltering}
+              aria-label="Filter these rows"
+            >
+              <FilterIcon className={cn(isFiltering && 'text-foreground')} />
+            </Button>
+          </Hint>
+        )}
+
         <Hint label="Refresh">
           <Button
             variant="ghost"
@@ -143,7 +193,7 @@ export function SidebarHeader({
             disabled={!canRefresh}
             aria-label="Refresh results"
           >
-            <RotateCw className={cn(isFetching && 'animate-spin')} />
+            <SyncIcon className={cn(isFetching && 'animate-spin')} />
           </Button>
         </Hint>
 
@@ -155,7 +205,7 @@ export function SidebarHeader({
             aria-pressed={docked}
             aria-label={docked ? 'Float the window' : 'Dock to the page'}
           >
-            {docked ? <PictureInPicture2 /> : <PanelLeft />}
+            {docked ? <ScreenNormalIcon /> : <SidebarExpandIcon />}
           </Button>
         </Hint>
 
@@ -169,7 +219,7 @@ export function SidebarHeader({
               aria-pressed={windowState.locked}
               aria-label={windowState.locked ? 'Unlock position' : 'Lock position'}
             >
-              {windowState.locked ? <Lock className="text-attention" /> : <Unlock />}
+              {windowState.locked ? <LockIcon className="text-attention" /> : <UnlockIcon />}
             </Button>
           </Hint>
         )}
@@ -177,6 +227,8 @@ export function SidebarHeader({
         {/*
          * Collapsing folds a floating window up into its header and a docked
          * one sideways into a rail, so the mark points the way it will go.
+         * Octicon's sidebar marks are named for a sidebar on the right, so the
+         * leftward arrow this needs is the one called `sidebar-expand`.
          */}
         <Hint label={windowState.collapsed ? 'Expand' : 'Collapse'}>
           <Button
@@ -186,11 +238,11 @@ export function SidebarHeader({
             aria-label={windowState.collapsed ? 'Expand' : 'Collapse'}
           >
             {docked ? (
-              <PanelLeftClose />
+              <SidebarExpandIcon />
             ) : windowState.collapsed ? (
-              <ChevronsUpDown />
+              <FoldDownIcon />
             ) : (
-              <ChevronsDownUp />
+              <FoldUpIcon />
             )}
           </Button>
         </Hint>
@@ -202,7 +254,7 @@ export function SidebarHeader({
             onClick={onHide}
             aria-label="Hide sidebar"
           >
-            <X />
+            <XIcon />
           </Button>
         </Hint>
       </div>

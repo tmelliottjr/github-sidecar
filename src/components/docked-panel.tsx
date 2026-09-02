@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, type ReactNode } from 'react'
-import { Github, PanelLeftOpen } from 'lucide-react'
+import { MarkGithubIcon, SidebarCollapseIcon } from '@primer/octicons-react'
 
 import { Hint } from '@/components/ui/tooltip'
 import { cn, clamp } from '@/lib/utils'
@@ -137,7 +137,7 @@ export function DockRail({ top, label, count, onExpand }: RailProps) {
         )}
         style={{ top, width: DOCK_RAIL_WIDTH }}
       >
-        <Github className="size-4 shrink-0 text-muted-foreground" />
+        <MarkGithubIcon className="size-4 shrink-0 text-muted-foreground" />
 
         {count !== null && count > 0 && (
           <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-bold tabular-nums text-muted-foreground">
@@ -149,8 +149,14 @@ export function DockRail({ top, label, count, onExpand }: RailProps) {
          * Kept with the other marks at the top, where the panel's header was
          * and so where anyone looking for it will look, rather than stranded
          * at the far end of a rail the height of the viewport.
+         *
+         * Octicon's sidebar marks are drawn for a sidebar on the right, so
+         * their names run opposite to this dock, which sits on the left: it is
+         * `sidebar-collapse` that carries the rightward arrow. The pair is
+         * chosen by which way the arrow points, not by what it is called, so
+         * the mark always points the way the panel is about to move.
          */}
-        <PanelLeftOpen className="size-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+        <SidebarCollapseIcon className="size-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
       </button>
     </Hint>
   )
