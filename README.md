@@ -6,54 +6,646 @@ about.
 
 ## Features
 
-- **There when you want it.** A new tab starts closed behind a launcher button
-  and costs nothing until you open it. Once open it is a floating window that
-  can be dragged, resized from any edge or corner, locked in place, or collapsed
-  to its header.
-- **Or docked into the page.** One click drops the window into the empty gutter
-  github.com leaves to the left of its content, hanging below the site header
-  so it reads as part of the page rather than on top of it. On a viewport with
-  no gutter to spare, the page body is moved across to make room instead of
-  being covered, while the header goes on spanning the window. Collapse it to a
-  rail down the edge when you want the room back — it keeps counting.
-- **Saved queries.** Any number of named GitHub search queries, switchable from
-  the header menu, in the same advanced syntax github.com's own search uses —
-  `AND`, `OR`, and parentheses included.
-- **Live status.** Open/closed/merged/draft state, queued-to-merge, CI check
-  rollup, and review decision for every row, refreshed on a configurable
-  interval. Right-click any row to refresh just that one on demand.
-- **Knows where you are.** Open a tracked issue or pull request on github.com
-  and its row marks itself, so the list says whether what you are reading is
-  one of the things you are following.
-- **Says what changed.** Rows report what has moved since you last looked at
-  them — a review, a red check, new comments, a push, a merge — and clear
-  themselves once you have read them. The toolbar icon counts them, and can
-  raise a notification when one moves.
-- **Says why it cannot merge.** Conflicts and branches that have fallen behind
-  their base are marked on the row, and the checks mark counts what is red and
-  opens the list of failing checks under the row, each one a link to the run.
-- **Remind me about this.** Ask for a row again in an hour, this evening,
-  tomorrow, next week, or whenever it next changes. The row stays exactly where
-  it is; the reminder is what speaks up.
-- **Hide what you do not want to see.** Hidden rows leave the list without
-  leaving your records: the footer counts them and brings them back.
-- **Manage what you put aside.** The settings page gathers everything you have
-  set apart — the rows you hid, the reminders you set, the rows you pinned — so
-  you can bring a hidden row back, move a reminder to a different time or drop
-  it, and reorder or lift a pin, all from one place.
-- **Filter, reorder, and drive it from the keyboard.** Narrow the rows already
-  loaded without asking GitHub for anything, order them by what has waited
-  longest, and move through the list with `j`/`k`.
-- **All of it optional.** Every feature above has a switch on the settings
-  page, and the list reads the same with all of them off. Notifications have a
-  section of their own: what may interrupt you, for reminders or changes
-  separately, and what it sounds like.
-- **Cached across tabs.** Results are stored in IndexedDB in the service worker
-  and shared by every github.com tab, so opening tabs costs no API calls.
-- **Fast lists.** Cursor-paginated infinite scroll with windowed virtualisation,
-  so only the visible rows are ever in the DOM.
-- **Opens in a new tab.** Clicking a row opens the item in a tab; switch to a
-  popped-out window in settings, and ⌘/Ctrl-click always opens a tab.
+<details>
+<summary><strong>There when you want it</strong> — a new tab starts closed and costs nothing until you open it.</summary>
+
+#### Open state is per tab
+
+Whether the panel is showing belongs to the tab, not the user, so it is the one
+piece of state that is not in `chrome.storage.local`. Sharing it would mean
+opening the panel once opened it in every tab from then on, which is the
+opposite of a new tab starting out of the way.
+
+Instead the service worker keeps a flag in `chrome.storage.session` against the
+tab's id. That gives each tab its own answer, survives reloads and navigation
+within a tab, is cleared when the browser closes, and — unlike `sessionStorage`
+— writes nothing to github.com's own storage. Tab ids get reused, so the flag is
+dropped on `tabs.onRemoved`; otherwise the next tab to take that id would
+inherit a panel nobody opened.
+
+Out of the way is not the same as gone, though, so a tab that has not been
+asked still leaves something to ask with: floating, a launcher in the corner;
+docked, the rail, exactly where the panel would have been. Neither costs a
+request — a rail is not an open panel — but neither sends anyone to the
+browser's extensions menu to find a panel that is meant to be part of the page.
+
+Opening a panel for the first time does not mean going to the network. The
+request goes to the worker like any other, which answers from its shared
+IndexedDB cache and only refreshes if what it has has aged out.
+
+Everything else about the window — size, position, docked, collapsed, locked —
+stays shared, because those are preferences rather than per-tab facts.
+
+</details>
+
+<details>
+<summary><strong>Or docked into the page</strong> — one click drops it into the gutter github.com leaves empty, so nothing is covered.</summary>
+
+#### Docked mode
+
+github.com centres its pages in a max-width column, which on a wide display
+leaves a wide empty gutter down the left. Docked mode puts the panel there, so
+nothing is covered and the page needs no cooperation from us.
+
+Finding that gutter means measuring a page we do not control. Reading it off a
+selector would break the first time github.com reorganised its markup, so
+`src/content/page-layout.ts` hit-tests the rendered result instead:
+
+- **Where content starts.** Probing a few rows down the middle of the viewport
+  and walking each hit stack outwards finds the widest box that is inset from
+  where the page lays out. That is the centred column, and its inset is the
+  gutter. Insets are measured from body's content box rather than the viewport
+  edge, so a page we have already moved is not mistaken for one that was
+  centred that way to begin with.
+- **Where the page begins vertically.** The panel starts below github.com's
+  header, always — beside it is where an overlay would sit, and the point is to
+  read as part of the page. That is the lower of the bars currently pinned to
+  the top of the viewport, found by hit-testing for sticky and fixed boxes, and
+  the header and nav rows in normal flow, which are not pinned yet at the top
+  of a page. Remeasured on scroll, so the panel follows the header as it pins
+  and unpins. Pinned bars stack — a pull request pins a mini header beneath the
+  global one — so they are found by walking down from the top of the viewport
+  for as long as each step is still covered, rather than by looking for one bar
+  flush at the top. A bar also only has to be as wide as the page column, since
+  the mini header is not full-bleed.
+
+When the gutter is too narrow, the page is moved across by padding `<body>` —
+the one element Turbo navigation never replaces, so the reservation survives
+navigation without being reapplied. The full width is reserved rather than just
+the shortfall: padding moves every box by exactly that much, so anything less
+would leave the centred column's own inset absorbing part of it and the page
+still starting underneath us.
+
+The chrome at the top is then handed that space straight back. The header and
+the nav rows are tagged with an attribute while the page is measured bare — the
+outermost box of each nested stack, and nothing taken out of flow, so nothing
+moves twice or is moved that body's padding never touched — and a single rule
+pulls them back out with a negative margin and an `auto` width. They go on
+spanning the window as github.com drew them, and only the page body beneath is
+inset. A header stopping short of the window is the one thing that would give
+away that the page has been moved at all, and it is the part of github.com a
+reader is most likely to know by sight.
+
+##### Collapsing a dock
+
+A floating window collapses up into its own header. A docked one has nowhere to
+fold, so it collapses sideways into a rail down the edge of the gutter instead.
+
+The rail is deliberately not a hidden edge: something has to stay on screen or
+there is nothing left to click to bring the panel back. At 44px it fits in the
+gutter of any page, so collapsing hands back whatever room had been taken from
+the layout, and the whole height of it is one button. It keeps showing the
+result count, which is the reason to leave it on screen rather than hide it.
+
+The same rail stands in for a docked panel that is hidden in this tab, or that
+has never been opened in it. Two states, one mark, and a click clears both at
+once — expanding out of a rail always ends with the panel, never with the rail
+redrawn because the other flag was still set.
+
+Results therefore go on loading while a dock is collapsed — a count that stops
+updating is decoration, not status. That is the one place the two collapsed
+states differ: a collapsed floating window shows nothing, so it stops asking.
+A rail standing in for a hidden panel stops asking too; it is showing that the
+panel is there, not what is in it.
+
+</details>
+
+<details>
+<summary><strong>Saved queries</strong> — any number of named GitHub searches, switchable from the header menu.</summary>
+
+</details>
+
+<details>
+<summary><strong>Live status</strong> — state, merge queue, CI rollup, and review decision on every row.</summary>
+
+#### Row states
+
+The leading mark carries both what a row is and where it stands:
+
+| Mark                  | Meaning                                          |
+| --------------------- | ------------------------------------------------ |
+| Green circle / check  | Issue, open / closed                             |
+| Grey slashed circle   | Issue closed as not planned                      |
+| Green pull request    | Pull request, open                               |
+| **Amber pull request**| **Queued to merge** (`isInMergeQueue`)           |
+| Grey pull request     | Draft                                            |
+| Purple merge          | Merged                                           |
+| Red pull request      | Closed                                           |
+
+A queued pull request is still open, so GitHub reports it as `OPEN` with
+`isInMergeQueue` set. It gets its own state because nothing is being asked of
+the reader any more — it is on its way in — which is worth telling apart at a
+glance from an open pull request that is still waiting on someone.
+
+The marks under the title say what is being asked of whom: the check rollup,
+the review decision, comments, labels, and — for a pull request that cannot go
+in — why not.
+
+| Mark                    | Meaning                                        |
+| ----------------------- | ---------------------------------------------- |
+| Red triangle            | Conflicts with the base branch                 |
+| Amber sync              | Behind the base branch                         |
+| Red cross, then a count | How many checks are red; click it to list them |
+| Bell                    | A reminder waiting on this row                 |
+| Filled amber bell       | A reminder that has come round                 |
+
+Merge state is flattened from two GitHub fields. `mergeable` is the older one
+and only knows about conflicts; `mergeStateStatus` knows why a mergeable branch
+still cannot go in, and is a schema preview, so the request opts into it with
+`Accept: application/vnd.github.merge-info-preview+json`. A host that refuses
+the preview fields costs the panel its merge marks and stack badges, not its
+list — the first refusal drops them and everything after asks the smaller
+question.
+
+Only conflicts and a stale branch are drawn. GitHub's other answers — blocked,
+unstable — are its words for a missing review or a red check, and both of those
+already have a mark of their own on the same line.
+
+#### Filling in a row
+
+A row arrives in two halves.
+
+The search lists the rows and everything cheap about them: title, repository,
+author, assignees, labels, comments, the diff size, and whether the branch
+conflicts. That request is what has to be quick, and it is.
+
+The rest — the review decision, the CI rollup and its failing checks, the full
+merge state, and the stack — is read afterwards, five rows at a time, and
+merged field by field into the rows already on screen. Field by field because
+the row may have been refreshed in the seconds it took to answer, and swapping
+the whole row would put the older title back.
+
+Measured against an `org:`-wide search, those four fields cost several times
+what everything else on a row costs put together, and `mergeStateStatus` on its
+own is enough to put a page over GitHub's limit.
+
+The batches are asked for one after another rather than all at once, because
+GitHub queues a single token's GraphQL requests behind one another regardless:
+six at once and six in turn both take about twenty-six seconds for a thirty-row
+page, but in turn the first five rows get their marks after five seconds
+instead of every row waiting for the last batch.
+
+Three things follow from the split, and all three are deliberate:
+
+- **Nothing on screen blinks.** A row waiting on its first answer holds the
+  line open at the height of the marks it expects, so the list is laid out once
+  rather than reflowing under the reader a moment later. On every refresh after
+  that the row keeps the marks it already has while the new answer is fetched,
+  so a poll never blanks the list and fills it in again.
+- **A failure here is not a failure of the list.** A batch that GitHub refuses
+  or runs out of time on affects its own five rows and nothing else. They keep
+  the last answer anyone got for them — that is still the best there is — and a
+  small notice above the list says how many could not be re-read, which is the
+  only way a repository the token has quietly lost access to ever becomes
+  visible. The next refresh tries again, and the notice goes when it works.
+- **No row waits for ever.** That is the one failure a reader cannot see, so a
+  row always ends up either answered or marked unreadable, and a page left half
+  finished — by a refresh landing on top of another, or by the worker being
+  shut down part way through — is swept up rather than left.
+
+Refreshing a single row is unaffected: one row is cheap however costly its
+fields are, so that request still reads all of it at once.
+
+#### Refreshing a single row
+
+Polling refreshes a whole query on an interval. That is the wrong tool for
+watching one pull request's checks go green, so a row's context menu re-reads
+just that row through `repository.issueOrPullRequest`, which resolves either an
+issue or a pull request from its number.
+
+The refreshed row is written back to the worker's IndexedDB cache before it is
+broadcast. Without that, the next poll would serve the stale cached page
+straight back over the top and the refresh would appear to undo itself moments
+later. The broadcast then reaches every github.com tab, so a row refreshed in
+one updates in all of them.
+
+Both the search and the single-row query select fields through the same GraphQL
+fragments. A row that arrives on its own has to be indistinguishable from the
+same row arriving through a search, or refreshing one would quietly drop a
+badge.
+
+#### Copying a row
+
+A row's context menu gathers every way of copying it under one entry, because
+they are the same verb on the same row: its link, that link as Markdown, its
+title, a pull request's branch, and — where the row belongs to a stack — every
+link in the stack, plainly or as Markdown.
+
+A link goes on the clipboard twice: as rich text, so it pastes as the item's
+title wherever that is understood, and as the bare URL underneath, so it pastes
+as something navigable in an editor or a terminal. Pasting a title into a text
+file would lose the only part that can be followed back.
+
+Markdown is offered beside it rather than derived from it. It is what a pull
+request description, an issue comment and half the world's notes are written
+in, and no amount of rich text pastes as its source. A stacked row carries its
+layer in the link text — `[Rework the cache <2/3>](…)` — which is the
+difference between "the fix" and "the second part of the fix"; the whole stack
+copies base-first, in the order anyone reading it would want to review it. Link
+text is escaped, so a title with brackets in it cannot end the link early.
+
+The panel is a guest on github.com's page, so the async clipboard API can be
+refused there — an unfocused document, or a host that withholds the permission.
+A `copy` command over a throwaway field is the fallback, and it is the only
+other route that still carries both flavours at once.
+
+</details>
+
+<details>
+<summary><strong>Knows where you are</strong> — the row for the issue or pull request you are reading marks itself.</summary>
+
+#### The row you are on
+
+The panel is on every page of github.com, so the item being read is usually
+somewhere in the list already. Its row says so: a faint wash, a rule level with
+the row on the panel's outer edge that comes to a point just past it, out over
+github.com itself, and `aria-current="page"` for anything reading rather than
+looking. It answers a question the list otherwise leaves open — is this
+one of the things I am tracking? — and it is a property of the tab, so two tabs
+on two pull requests each mark their own row.
+
+Rows are matched on repository and number rather than on the URL. Every tab of
+a pull request is still that pull request, and GitHub redirects `/issues/34` to
+`/pull/34` freely, since the two share one sequence of numbers per repository.
+
+The point is cut over about twenty pixels rather than the row's whole height:
+a taper of a couple of degrees is a shape anti-aliasing rounds off into a blob,
+and an arrow that does not come to a point is not an arrow.
+
+That rule cannot be part of the row. The panel clips its children to its own
+rounded corners, and the scrolling list can show nothing horizontally beyond
+its box, so anything crossing the edge is cut off there. It is drawn out in the
+shadow root instead and placed against the row's measured rectangle — clipped
+to the band the row and the list have in common, so a row scrolling out of the
+list takes its marker with it rather than leaving one pointing at whatever
+arrived next.
+
+Nothing it depends on moves under React's eye: the list scrolls, the page
+scrolls beneath a docked panel, and dragging the window writes a transform
+straight to the DOM. Each of those schedules the same measure-and-place on the
+next frame, so one mechanism covers movement the panel never renders for.
+
+Knowing when the page changed is the harder half. github.com navigates without
+reloading, and the panel runs in an isolated world where patching `pushState`
+would only see its own calls. Four routes are watched at once — the Navigation
+API where it is exposed, Turbo and pjax's own events, `popstate` for the back
+button, and the document title being swapped as a last net — and each of them
+does nothing more than compare `location.href` with the last one seen, so
+hearing about the same navigation four times costs one comparison.
+
+</details>
+
+<details>
+<summary><strong>Says what changed</strong> — rows call out reviews, checks, comments, pushes, and merges since you last looked.</summary>
+
+#### What changed since you looked
+
+A list that only reports state answers "what is true". The reader has to
+remember what was true last time to know whether anything needs them, which is
+the part a panel can do for them.
+
+Every row carries a signature: its state, review decision, check rollup,
+comment count and head commit. What the reader has seen is stored per row and
+shared across their tabs, and the difference between the two is what the row
+reports — "3 new comments", "Checks failed", "Merged" — loudest change first.
+
+`updatedAt` is deliberately not part of it. GitHub bumps that timestamp when a
+label moves or a description is edited, and a list that lit up for those would
+soon be ignored. A deleted comment is not news either, so the comment count is
+only read upwards.
+
+Rows are seeded as seen the first time they are laid eyes on, so a fresh
+install does not mark everything at once. The seeding is what the toolbar count
+and the notifications are measured against too, so it goes on happening while
+either of those is switched on, whether or not the marks themselves are. A mark clears when the row is opened,
+when the tab is on that row's page, or on demand from the row's own menu; the
+query menu clears the lot.
+
+</details>
+
+<details>
+<summary><strong>Says why it cannot merge</strong> — conflicts, stale branches, and failing checks are marked on the row.</summary>
+
+#### Failing checks
+
+The checks mark counts what is red, and opens the failing checks under the row
+in the same kind of drawer a stack uses — because a row has one line for its
+marks, and a list of check names is not one line. Each entry links to the run
+that failed, which is the trip the reader would otherwise make through the pull
+request and its Checks tab. The list scrolls rather than growing, and only the
+first fifty checks of a rollup are read, so a repository with more than that is
+told the truth: "and 10 more checks not read" — counted against how many checks
+were read, not against how many of them were red.
+
+A red rollup can still have nothing to name: GitHub reports the rollup as
+failing for a check the query never read, or for one it does not class as red
+at all. Rather than draw the same mark twice and behave differently, the count
+and the drawer appear only when there is something to list, and the mark itself
+says which case it is. Cancelled and stale checks are counted as failing, since
+GitHub's own rollup fails for them and they were the common reason a red row
+could not name a single red check; neutral and skipped are not, because the
+rollup does not fail for those and naming them would be inventing a problem.
+
+</details>
+
+<details>
+<summary><strong>Remind me about this</strong> — set a time or wait for the next change.</summary>
+
+#### Asking for a row again
+
+A row that has been dealt with but cannot be closed — waiting on someone else,
+or on a check — needs picking up again later. "Later" has two honest meanings,
+so a reminder has two kinds: a time (in an hour, this evening, tomorrow, next
+week) and the row itself, which is what "later" means whenever it really means
+"once something happens". A change reminder is judged by exactly the same
+signature as everything else here, so it cannot miss the very thing it was set
+for.
+
+The row does not move and does not hide. It carries a bell while the reminder
+waits, and an amber one once it has come round — at which point it also counts
+on the toolbar and, where **desktop notifications** are switched on, says so out
+loud. That switch is off by default and needs Chrome's permission, so a
+reminder is a mark and a count until it is granted, not a popup. Reading the
+row retires a reminder that has come round, because it has done its job; one
+still waiting stays, because this is not the time that was asked for.
+
+A timed reminder comes round with no request behind it, so the worker keeps a
+single `chrome.alarms` alarm set for the soonest one, and the panel keeps one
+timer for the same moment — otherwise a panel that only redraws when GitHub
+answers would go on saying "waiting" until the next poll. Change reminders need
+neither: they can only come due when new results arrive, which redraws the
+panel and wakes the worker anyway.
+
+</details>
+
+<details>
+<summary><strong>Hide what you do not want to see</strong> — hidden rows leave the list without leaving your records.</summary>
+
+#### Hiding a row
+
+Hiding is the other half of the same problem, and deliberately not the same
+thing: a hidden row is one the reader does not want to see, rather than one
+they want back later. It leaves the list and stops counting, but not the
+records — the footer says how many are hidden and shows them on request, marked
+and dimmed, one menu entry away from coming back.
+
+That count is of hidden rows *this view holds*, worked out after the filter
+rather than before it: an offer to reveal rows the current view would not show
+either way is an offer of nothing. Revealing them is a look rather than a
+setting, so it switches itself off once the last hidden row has come back —
+otherwise the next row the reader hid would stay on screen, and a Hide that
+does not hide is worse than no Hide at all. A row hidden months ago comes
+back as a fresh look rather than covered in marks for everything that happened
+meanwhile.
+
+</details>
+
+<details>
+<summary><strong>Manage what you put aside</strong> — review hidden rows, reminders, and pins together in settings.</summary>
+
+#### Managing what is set aside
+
+Hiding a row, setting a reminder and pinning a row all leave the same kind of
+trace: a node id in `itemMemory` or `pinnedIds`, apart from the row it stands
+for. The settings page gathers those three back into one panel — hidden rows,
+reminders, pinned rows — so what was set apart one row at a time can be
+reviewed and undone in one place.
+
+The panel holds only ids, so it asks the worker to resolve them against the
+shared cache and shows each row's title, repository and link from whatever the
+cache still holds. A row the cache has since dropped is listed by its id
+instead and stays fully actionable: bringing it back, moving or dropping its
+reminder, and lifting its pin each need only the id. Every action writes to the
+same `itemMemory` or `pinnedIds` the sidebar and worker already watch, so the
+count on the toolbar, the alarm for the next timed reminder and every open tab
+follow along without the panel telling any of them directly.
+
+</details>
+
+<details>
+<summary><strong>Filter, reorder, and drive it from the keyboard</strong> — narrow loaded rows, order them, and move with <code>j</code>/<code>k</code>.</summary>
+
+#### Filtering, reordering, and the keyboard
+
+The filter narrows the rows already loaded across everything they show — title,
+repository, author, number, labels — with each word narrowing further. It is
+not a GitHub `sort:` or search qualifier: nothing is sent, so it answers as
+fast as it can be typed, it cannot lose the reader's place, and it costs no
+rate limit. It also stops the list pulling in further pages while it is on,
+because a filter matching little enough would otherwise page through the whole
+result set looking for matches nobody asked it to fetch. The order can be changed to what has waited longest, which is what
+a review queue loses first, or grouped by repository. A grouping is remembered
+with the query it was chosen on, so each saved query keeps its own way of being
+read while sharing the one filter box.
+
+`j` and `k` move through the list by moving the browser's own focus onto a
+row's button, so Enter opens it without a handler of the panel's own and a
+screen reader is told where it landed. `o` opens, `p` pins, `h` hides, `r` asks
+to be reminded when the row changes, `/` opens the filter, and Escape gives the
+focus back. The other reminder times are a choice, and a choice belongs in the
+menu that lists them.
+
+</details>
+
+<details>
+<summary><strong>All of it optional</strong> — feature and notification settings let the list read the way you want.</summary>
+
+#### What is waiting
+
+The count on the toolbar icon and the notification that something moved — or
+that a reminder has come round — are both worked out in the service worker, because both have to be right in a
+browser with no github.com tab open at all — which is exactly when the panel is
+not running. The worker reads the same cached pages the panel does and the same
+record of what the reader has seen.
+
+A notification has three pieces of text of decreasing weight, and using them
+carelessly leads to a title reading `acme/app #34` — the one thing the reader
+already knows, since they are the one tracking it. So the item's own title
+leads, what happened comes next, and where it lives goes in the dim line
+underneath: **Cache the search results** / *Checks failed · 3 new comments* /
+`acme/app #34 · by octocat`. The author's face is the icon where Chrome will
+fetch it, because a notification is recognised before it is read.
+
+Each one carries the answer the reader would otherwise give by hand: **Mark as
+seen** for a change, **Remind me in an hour** for a reminder. Both write to the
+same record the panel reads, so the row and the count agree with the button
+without anything being adjusted twice. Clicking the notification itself opens
+the row.
+
+A reminder was asked for by name, so it may interrupt: full priority, a sound,
+and it stays until it is dealt with. A change was not, so it is quieter and
+ordinary. More than two at once stop being news and become a flood, so they
+arrive as one list — five rows named, the rest counted, clicking through to the
+search that produced them.
+
+A change is announced once. The row's signature is remembered per notification,
+along with why it was announced, so a row that changes again is announced
+again, and a reminder coming round on a row that had already been announced for
+a change is announced in its own right — while a row that is merely still
+waiting stays quiet — otherwise every poll would repeat itself until the
+reader happened to read it.
+
+Notifications need Chrome's `notifications` permission, which the extension is
+not installed with. The switch on the settings page asks for it from the click
+that turned it on, and hands it back when the switch goes off.
+
+Everything about being interrupted sits in one section of the settings page, in
+the order it is decided: whether to speak at all, what to speak about, and what
+each of those sounds like. Each answer is nested inside the one it depends on,
+drawn with a rule rather than hidden, so a reader can see what saying yes would
+get them and stop reading the moment they have said no.
+
+Reminders and changes are switched separately, and each carries its own sound —
+the sound belongs to the kind, not to notifications as a whole, because a chime
+for the reminders you set and nothing at all for everything else is a perfectly
+ordinary thing to want. A row left out this way is still counted on the toolbar:
+it is the speaking that was declined, not the knowing.
+
+There is no separate switch for sound, because "no sound" is one of the sounds:
+choosing **Silent** for a kind is how it is silenced, and choosing it for both
+is how Chrome is left to make whatever noise the operating system allows it.
+One volume serves both, and is shown only while something would use it.
+
+##### Making a noise
+
+Chrome's `silent: false` is a request, not an instruction. Whether a
+notification makes a sound is a matter for the operating system — on macOS it
+is a per-application setting under **System Settings → Notifications → Google
+Chrome**, off for many people and unreachable from an extension.
+
+So the sound is the panel's own, played in an offscreen document because a
+service worker cannot play audio at all. There are five of them — chime, ping,
+bell, knock, marimba — plus silence, chosen under the kind of notification they
+belong to: the default pair is a two-note chime for what was asked for and a
+softer single note for what merely happened. Volume is the reader's, and
+every control on the settings page plays what it is about the moment it is
+touched, because a list of names for noises is not a choice anyone can make by
+reading it.
+
+Each sound is a handful of numbers — frequency, start, length — turned into
+sine or triangle notes with a short fade at both ends, since a square-edged
+note clicks and the click is the difference between a chime and a fault.
+Synthesised rather than shipped, because a few lines of Web Audio weigh
+nothing and can be read in a diff, which an audio file cannot. The same
+definitions are used by the settings page and by the notification, so what is
+heard while choosing is what will arrive.
+
+When the panel is making the sound it asks Chrome to keep quiet, so there is
+exactly one either way; switching the sound off hands the question back to
+Chrome and the system.
+
+</details>
+
+<details>
+<summary><strong>Stacked pull requests</strong> — a <code>layer/size</code> badge and the whole chain from its own chevron.</summary>
+
+#### Stacked pull requests
+
+A stack is a chain of pull requests where each one targets the branch of the
+one below it. GitHub exposes membership directly: `PullRequest.stackEntry`
+gives this pull request's position, and `PullRequest.stack` gives the stack's
+number, size, base branch, and entries. Nothing is inferred from branch names.
+
+A stacked row carries a `layer/size` badge, and that badge is the control: it
+slides open a list of the whole stack, read from the base branch up. The row it
+was expanded from stays in that list and is marked with a chevron instead of
+being filtered out, because a stack is only legible as a whole. A chevron along
+the top edge of the slide-out shuts it again, since by then the badge that
+opened it may be several layers up the panel. Expansion is
+deliberately not on the row itself: clicking a row still means "open this pull
+request".
+
+`stack` and `stackEntry` are a public preview. A host that has not been given
+the fields rejects the whole query rather than returning null, which would take
+the list down with it, so the first such failure drops the stack fields and
+every request after it asks the smaller question. Losing the badges is an
+acceptable outcome; losing the list is not.
+
+Only the first 20 layers of a stack are read per row, but `size` comes from
+GitHub, so a deeper stack still reports its real size and says how many layers
+it is not showing.
+
+##### Pinned rows
+
+Pins are stored as node ids under `pinnedIds`, apart from the queries that
+surface them, so a pinned row keeps its place whichever query it turns up in.
+Only rows already loaded can be lifted, so a pin on an item further down a
+result set surfaces once its page arrives.
+
+</details>
+
+<details>
+<summary><strong>Cached across tabs</strong> — one shared IndexedDB cache in the service worker, so opening tabs costs no API calls.</summary>
+
+#### Caching
+
+Every github.com tab runs its own copy of the UI, so a naive setup would make
+one API call per tab. Instead the service worker owns a single IndexedDB cache
+that all tabs read through.
+
+IndexedDB has to live in the worker: a content script's `indexedDB` belongs to
+github.com's origin, so a cache written there would pollute the host page's
+storage and would not be shared between tabs anyway.
+
+What a tab asking for results actually gets:
+
+| Situation                              | Result                                    |
+| -------------------------------------- | ----------------------------------------- |
+| Cached copy within the refresh window   | Served from IndexedDB, no network          |
+| Cached but stale, **active** tab        | Cached copy now, refresh in the background |
+| Cached but stale, background tab        | Cached copy, no network                    |
+| Nothing cached                          | One fetch, shared by all waiting tabs      |
+
+The pieces that make that work:
+
+- **Closed and hidden tabs ask for nothing.** The query is disabled unless the
+  panel is open and the document is visible, so a tab you never open never
+  costs a request. Opening one hydrates it from IndexedDB, which is instant.
+- **Only the active tab refreshes.** The worker checks that the requesting tab
+  is active and its window focused before going to the network. A background tab
+  is never a reason to spend a request.
+- **Concurrent requests are coalesced.** Ten tabs opening at once produce one
+  API call, not ten.
+- **Refreshes are pushed, not pulled.** When the active tab triggers a refresh,
+  the worker broadcasts the result to every open tab, which update their caches
+  without making their own request.
+- **A background refresh says so.** Serving the cached copy resolves the tab's
+  own request immediately, so the network call that follows it happens with
+  nothing in flight locally to report. The page carries a `revalidating` flag
+  instead, and a green hairline along the header's bottom border pulses — with
+  a lighter crest running left to right across it — until the broadcast lands.
+  It is held briefly so a fast refresh does not flicker, and capped so a
+  refresh that failed cannot leave the panel looking busy forever.
+- **The refresh window follows your setting.** The refresh interval you choose is
+  exactly how long a cached page is served for, with a 15s floor so a short
+  interval cannot flood the API. With polling off, cached pages last 5 minutes.
+- **The refresh button always wins.** It drops the cached pages for that query
+  first, so it is a true forced refresh. Entries older than a day are pruned on
+  startup.
+- **A half-filled page is finished off.** The second half of each row is written
+  to the cache as it lands, so a tab that opens later gets whole rows without
+  asking again. The worker is shut down between messages and can be stopped part
+  way through, so serving a cached page that still holds rows waiting on their
+  second half starts that work again — and a row is only ever asked about once,
+  however many queries and pages are holding it.
+
+The cache holds a *shape* as well as a value. A row written before a field
+existed is not a hit for a panel that expects it — it is a row that will crash
+the list — so the database version is bumped whenever a cached row gains a
+field, and the store is rebuilt rather than migrated. Every entry in it is one
+request away from coming back.
+
+</details>
+
+<details>
+<summary><strong>Fast lists</strong> — cursor-paginated infinite scroll with windowed virtualisation.</summary>
+
+</details>
+
+<details>
+<summary><strong>Opens in a new tab</strong> — clicking a row opens the item in a tab; ⌘/Ctrl-click always does.</summary>
+
+</details>
 
 ## Install
 
@@ -205,437 +797,6 @@ A few decisions worth knowing:
   without `@property` at all, which Chrome fails, so the stylesheet is rewritten
   at mount to drop that guard. Without it the panel has no border and no shadow.
 
-## Docked mode
-
-github.com centres its pages in a max-width column, which on a wide display
-leaves a wide empty gutter down the left. Docked mode puts the panel there, so
-nothing is covered and the page needs no cooperation from us.
-
-Finding that gutter means measuring a page we do not control. Reading it off a
-selector would break the first time github.com reorganised its markup, so
-`src/content/page-layout.ts` hit-tests the rendered result instead:
-
-- **Where content starts.** Probing a few rows down the middle of the viewport
-  and walking each hit stack outwards finds the widest box that is inset from
-  where the page lays out. That is the centred column, and its inset is the
-  gutter. Insets are measured from body's content box rather than the viewport
-  edge, so a page we have already moved is not mistaken for one that was
-  centred that way to begin with.
-- **Where the page begins vertically.** The panel starts below github.com's
-  header, always — beside it is where an overlay would sit, and the point is to
-  read as part of the page. That is the lower of the bars currently pinned to
-  the top of the viewport, found by hit-testing for sticky and fixed boxes, and
-  the header and nav rows in normal flow, which are not pinned yet at the top
-  of a page. Remeasured on scroll, so the panel follows the header as it pins
-  and unpins. Pinned bars stack — a pull request pins a mini header beneath the
-  global one — so they are found by walking down from the top of the viewport
-  for as long as each step is still covered, rather than by looking for one bar
-  flush at the top. A bar also only has to be as wide as the page column, since
-  the mini header is not full-bleed.
-
-When the gutter is too narrow, the page is moved across by padding `<body>` —
-the one element Turbo navigation never replaces, so the reservation survives
-navigation without being reapplied. The full width is reserved rather than just
-the shortfall: padding moves every box by exactly that much, so anything less
-would leave the centred column's own inset absorbing part of it and the page
-still starting underneath us.
-
-The chrome at the top is then handed that space straight back. The header and
-the nav rows are tagged with an attribute while the page is measured bare — the
-outermost box of each nested stack, and nothing taken out of flow, so nothing
-moves twice or is moved that body's padding never touched — and a single rule
-pulls them back out with a negative margin and an `auto` width. They go on
-spanning the window as github.com drew them, and only the page body beneath is
-inset. A header stopping short of the window is the one thing that would give
-away that the page has been moved at all, and it is the part of github.com a
-reader is most likely to know by sight.
-
-## Open state is per tab
-
-Whether the panel is showing belongs to the tab, not the user, so it is the one
-piece of state that is not in `chrome.storage.local`. Sharing it would mean
-opening the panel once opened it in every tab from then on, which is the
-opposite of a new tab starting out of the way.
-
-Instead the service worker keeps a flag in `chrome.storage.session` against the
-tab's id. That gives each tab its own answer, survives reloads and navigation
-within a tab, is cleared when the browser closes, and — unlike `sessionStorage`
-— writes nothing to github.com's own storage. Tab ids get reused, so the flag is
-dropped on `tabs.onRemoved`; otherwise the next tab to take that id would
-inherit a panel nobody opened.
-
-Out of the way is not the same as gone, though, so a tab that has not been
-asked still leaves something to ask with: floating, a launcher in the corner;
-docked, the rail, exactly where the panel would have been. Neither costs a
-request — a rail is not an open panel — but neither sends anyone to the
-browser's extensions menu to find a panel that is meant to be part of the page.
-
-Opening a panel for the first time does not mean going to the network. The
-request goes to the worker like any other, which answers from its shared
-IndexedDB cache and only refreshes if what it has has aged out.
-
-Everything else about the window — size, position, docked, collapsed, locked —
-stays shared, because those are preferences rather than per-tab facts.
-
-## Row states
-
-The leading mark carries both what a row is and where it stands:
-
-| Mark                  | Meaning                                          |
-| --------------------- | ------------------------------------------------ |
-| Green circle / check  | Issue, open / closed                             |
-| Grey slashed circle   | Issue closed as not planned                      |
-| Green pull request    | Pull request, open                               |
-| **Amber pull request**| **Queued to merge** (`isInMergeQueue`)           |
-| Grey pull request     | Draft                                            |
-| Purple merge          | Merged                                           |
-| Red pull request      | Closed                                           |
-
-A queued pull request is still open, so GitHub reports it as `OPEN` with
-`isInMergeQueue` set. It gets its own state because nothing is being asked of
-the reader any more — it is on its way in — which is worth telling apart at a
-glance from an open pull request that is still waiting on someone.
-
-The marks under the title say what is being asked of whom: the check rollup,
-the review decision, comments, labels, and — for a pull request that cannot go
-in — why not.
-
-| Mark                    | Meaning                                        |
-| ----------------------- | ---------------------------------------------- |
-| Red triangle            | Conflicts with the base branch                 |
-| Amber sync              | Behind the base branch                         |
-| Red cross, then a count | How many checks are red; click it to list them |
-| Bell                    | A reminder waiting on this row                 |
-| Filled amber bell       | A reminder that has come round                 |
-
-Merge state is flattened from two GitHub fields. `mergeable` is the older one
-and only knows about conflicts; `mergeStateStatus` knows why a mergeable branch
-still cannot go in, and is a schema preview, so the request opts into it with
-`Accept: application/vnd.github.merge-info-preview+json`. A host that refuses
-the preview fields costs the panel its merge marks and stack badges, not its
-list — the first refusal drops them and everything after asks the smaller
-question.
-
-Only conflicts and a stale branch are drawn. GitHub's other answers — blocked,
-unstable — are its words for a missing review or a red check, and both of those
-already have a mark of their own on the same line.
-
-## Filling in a row
-
-A row arrives in two halves.
-
-The search lists the rows and everything cheap about them: title, repository,
-author, assignees, labels, comments, the diff size, and whether the branch
-conflicts. That request is what has to be quick, and it is.
-
-The rest — the review decision, the CI rollup and its failing checks, the full
-merge state, and the stack — is read afterwards, five rows at a time, and
-merged field by field into the rows already on screen. Field by field because
-the row may have been refreshed in the seconds it took to answer, and swapping
-the whole row would put the older title back.
-
-Measured against an `org:`-wide search, those four fields cost several times
-what everything else on a row costs put together, and `mergeStateStatus` on its
-own is enough to put a page over GitHub's limit.
-
-The batches are asked for one after another rather than all at once, because
-GitHub queues a single token's GraphQL requests behind one another regardless:
-six at once and six in turn both take about twenty-six seconds for a thirty-row
-page, but in turn the first five rows get their marks after five seconds
-instead of every row waiting for the last batch.
-
-Three things follow from the split, and all three are deliberate:
-
-- **Nothing on screen blinks.** A row waiting on its first answer holds the
-  line open at the height of the marks it expects, so the list is laid out once
-  rather than reflowing under the reader a moment later. On every refresh after
-  that the row keeps the marks it already has while the new answer is fetched,
-  so a poll never blanks the list and fills it in again.
-- **A failure here is not a failure of the list.** A batch that GitHub refuses
-  or runs out of time on affects its own five rows and nothing else. They keep
-  the last answer anyone got for them — that is still the best there is — and a
-  small notice above the list says how many could not be re-read, which is the
-  only way a repository the token has quietly lost access to ever becomes
-  visible. The next refresh tries again, and the notice goes when it works.
-- **No row waits for ever.** That is the one failure a reader cannot see, so a
-  row always ends up either answered or marked unreadable, and a page left half
-  finished — by a refresh landing on top of another, or by the worker being
-  shut down part way through — is swept up rather than left.
-
-Refreshing a single row is unaffected: one row is cheap however costly its
-fields are, so that request still reads all of it at once.
-
-## Refreshing a single row
-
-Polling refreshes a whole query on an interval. That is the wrong tool for
-watching one pull request's checks go green, so a row's context menu re-reads
-just that row through `repository.issueOrPullRequest`, which resolves either an
-issue or a pull request from its number.
-
-The refreshed row is written back to the worker's IndexedDB cache before it is
-broadcast. Without that, the next poll would serve the stale cached page
-straight back over the top and the refresh would appear to undo itself moments
-later. The broadcast then reaches every github.com tab, so a row refreshed in
-one updates in all of them.
-
-Both the search and the single-row query select fields through the same GraphQL
-fragments. A row that arrives on its own has to be indistinguishable from the
-same row arriving through a search, or refreshing one would quietly drop a
-badge.
-
-## Copying a row
-
-A row's context menu gathers every way of copying it under one entry, because
-they are the same verb on the same row: its link, that link as Markdown, its
-title, a pull request's branch, and — where the row belongs to a stack — every
-link in the stack, plainly or as Markdown.
-
-A link goes on the clipboard twice: as rich text, so it pastes as the item's
-title wherever that is understood, and as the bare URL underneath, so it pastes
-as something navigable in an editor or a terminal. Pasting a title into a text
-file would lose the only part that can be followed back.
-
-Markdown is offered beside it rather than derived from it. It is what a pull
-request description, an issue comment and half the world's notes are written
-in, and no amount of rich text pastes as its source. A stacked row carries its
-layer in the link text — `[Rework the cache <2/3>](…)` — which is the
-difference between "the fix" and "the second part of the fix"; the whole stack
-copies base-first, in the order anyone reading it would want to review it. Link
-text is escaped, so a title with brackets in it cannot end the link early.
-
-The panel is a guest on github.com's page, so the async clipboard API can be
-refused there — an unfocused document, or a host that withholds the permission.
-A `copy` command over a throwaway field is the fallback, and it is the only
-other route that still carries both flavours at once.
-
-## The row you are on
-
-The panel is on every page of github.com, so the item being read is usually
-somewhere in the list already. Its row says so: a faint wash, a rule level with
-the row on the panel's outer edge that comes to a point just past it, out over
-github.com itself, and `aria-current="page"` for anything reading rather than
-looking. It answers a question the list otherwise leaves open — is this
-one of the things I am tracking? — and it is a property of the tab, so two tabs
-on two pull requests each mark their own row.
-
-Rows are matched on repository and number rather than on the URL. Every tab of
-a pull request is still that pull request, and GitHub redirects `/issues/34` to
-`/pull/34` freely, since the two share one sequence of numbers per repository.
-
-The point is cut over about twenty pixels rather than the row's whole height:
-a taper of a couple of degrees is a shape anti-aliasing rounds off into a blob,
-and an arrow that does not come to a point is not an arrow.
-
-That rule cannot be part of the row. The panel clips its children to its own
-rounded corners, and the scrolling list can show nothing horizontally beyond
-its box, so anything crossing the edge is cut off there. It is drawn out in the
-shadow root instead and placed against the row's measured rectangle — clipped
-to the band the row and the list have in common, so a row scrolling out of the
-list takes its marker with it rather than leaving one pointing at whatever
-arrived next.
-
-Nothing it depends on moves under React's eye: the list scrolls, the page
-scrolls beneath a docked panel, and dragging the window writes a transform
-straight to the DOM. Each of those schedules the same measure-and-place on the
-next frame, so one mechanism covers movement the panel never renders for.
-
-Knowing when the page changed is the harder half. github.com navigates without
-reloading, and the panel runs in an isolated world where patching `pushState`
-would only see its own calls. Four routes are watched at once — the Navigation
-API where it is exposed, Turbo and pjax's own events, `popstate` for the back
-button, and the document title being swapped as a last net — and each of them
-does nothing more than compare `location.href` with the last one seen, so
-hearing about the same navigation four times costs one comparison.
-
-## What changed since you looked
-
-A list that only reports state answers "what is true". The reader has to
-remember what was true last time to know whether anything needs them, which is
-the part a panel can do for them.
-
-Every row carries a signature: its state, review decision, check rollup,
-comment count and head commit. What the reader has seen is stored per row and
-shared across their tabs, and the difference between the two is what the row
-reports — "3 new comments", "Checks failed", "Merged" — loudest change first.
-
-`updatedAt` is deliberately not part of it. GitHub bumps that timestamp when a
-label moves or a description is edited, and a list that lit up for those would
-soon be ignored. A deleted comment is not news either, so the comment count is
-only read upwards.
-
-Rows are seeded as seen the first time they are laid eyes on, so a fresh
-install does not mark everything at once. The seeding is what the toolbar count
-and the notifications are measured against too, so it goes on happening while
-either of those is switched on, whether or not the marks themselves are. A mark clears when the row is opened,
-when the tab is on that row's page, or on demand from the row's own menu; the
-query menu clears the lot.
-
-## Asking for a row again
-
-A row that has been dealt with but cannot be closed — waiting on someone else,
-or on a check — needs picking up again later. "Later" has two honest meanings,
-so a reminder has two kinds: a time (in an hour, this evening, tomorrow, next
-week) and the row itself, which is what "later" means whenever it really means
-"once something happens". A change reminder is judged by exactly the same
-signature as everything else here, so it cannot miss the very thing it was set
-for.
-
-The row does not move and does not hide. It carries a bell while the reminder
-waits, and an amber one once it has come round — at which point it also counts
-on the toolbar and, where **desktop notifications** are switched on, says so out
-loud. That switch is off by default and needs Chrome's permission, so a
-reminder is a mark and a count until it is granted, not a popup. Reading the
-row retires a reminder that has come round, because it has done its job; one
-still waiting stays, because this is not the time that was asked for.
-
-A timed reminder comes round with no request behind it, so the worker keeps a
-single `chrome.alarms` alarm set for the soonest one, and the panel keeps one
-timer for the same moment — otherwise a panel that only redraws when GitHub
-answers would go on saying "waiting" until the next poll. Change reminders need
-neither: they can only come due when new results arrive, which redraws the
-panel and wakes the worker anyway.
-
-## Hiding a row
-
-Hiding is the other half of the same problem, and deliberately not the same
-thing: a hidden row is one the reader does not want to see, rather than one
-they want back later. It leaves the list and stops counting, but not the
-records — the footer says how many are hidden and shows them on request, marked
-and dimmed, one menu entry away from coming back.
-
-That count is of hidden rows *this view holds*, worked out after the filter
-rather than before it: an offer to reveal rows the current view would not show
-either way is an offer of nothing. Revealing them is a look rather than a
-setting, so it switches itself off once the last hidden row has come back —
-otherwise the next row the reader hid would stay on screen, and a Hide that
-does not hide is worse than no Hide at all. A row hidden months ago comes
-back as a fresh look rather than covered in marks for everything that happened
-meanwhile.
-
-## Failing checks
-
-The checks mark counts what is red, and opens the failing checks under the row
-in the same kind of drawer a stack uses — because a row has one line for its
-marks, and a list of check names is not one line. Each entry links to the run
-that failed, which is the trip the reader would otherwise make through the pull
-request and its Checks tab. The list scrolls rather than growing, and only the
-first fifty checks of a rollup are read, so a repository with more than that is
-told the truth: "and 10 more checks not read" — counted against how many checks
-were read, not against how many of them were red.
-
-A red rollup can still have nothing to name: GitHub reports the rollup as
-failing for a check the query never read, or for one it does not class as red
-at all. Rather than draw the same mark twice and behave differently, the count
-and the drawer appear only when there is something to list, and the mark itself
-says which case it is. Cancelled and stale checks are counted as failing, since
-GitHub's own rollup fails for them and they were the common reason a red row
-could not name a single red check; neutral and skipped are not, because the
-rollup does not fail for those and naming them would be inventing a problem.
-
-## Filtering, reordering, and the keyboard
-
-The filter narrows the rows already loaded across everything they show — title,
-repository, author, number, labels — with each word narrowing further. It is
-not a GitHub `sort:` or search qualifier: nothing is sent, so it answers as
-fast as it can be typed, it cannot lose the reader's place, and it costs no
-rate limit. It also stops the list pulling in further pages while it is on,
-because a filter matching little enough would otherwise page through the whole
-result set looking for matches nobody asked it to fetch. The order can be changed to what has waited longest, which is what
-a review queue loses first, or grouped by repository. A grouping is remembered
-with the query it was chosen on, so each saved query keeps its own way of being
-read while sharing the one filter box.
-
-`j` and `k` move through the list by moving the browser's own focus onto a
-row's button, so Enter opens it without a handler of the panel's own and a
-screen reader is told where it landed. `o` opens, `p` pins, `h` hides, `r` asks
-to be reminded when the row changes, `/` opens the filter, and Escape gives the
-focus back. The other reminder times are a choice, and a choice belongs in the
-menu that lists them.
-
-## What is waiting
-
-The count on the toolbar icon and the notification that something moved — or
-that a reminder has come round — are both worked out in the service worker, because both have to be right in a
-browser with no github.com tab open at all — which is exactly when the panel is
-not running. The worker reads the same cached pages the panel does and the same
-record of what the reader has seen.
-
-A notification has three pieces of text of decreasing weight, and using them
-carelessly leads to a title reading `acme/app #34` — the one thing the reader
-already knows, since they are the one tracking it. So the item's own title
-leads, what happened comes next, and where it lives goes in the dim line
-underneath: **Cache the search results** / *Checks failed · 3 new comments* /
-`acme/app #34 · by octocat`. The author's face is the icon where Chrome will
-fetch it, because a notification is recognised before it is read.
-
-Each one carries the answer the reader would otherwise give by hand: **Mark as
-seen** for a change, **Remind me in an hour** for a reminder. Both write to the
-same record the panel reads, so the row and the count agree with the button
-without anything being adjusted twice. Clicking the notification itself opens
-the row.
-
-A reminder was asked for by name, so it may interrupt: full priority, a sound,
-and it stays until it is dealt with. A change was not, so it is quieter and
-ordinary. More than two at once stop being news and become a flood, so they
-arrive as one list — five rows named, the rest counted, clicking through to the
-search that produced them.
-
-A change is announced once. The row's signature is remembered per notification,
-along with why it was announced, so a row that changes again is announced
-again, and a reminder coming round on a row that had already been announced for
-a change is announced in its own right — while a row that is merely still
-waiting stays quiet — otherwise every poll would repeat itself until the
-reader happened to read it.
-
-Notifications need Chrome's `notifications` permission, which the extension is
-not installed with. The switch on the settings page asks for it from the click
-that turned it on, and hands it back when the switch goes off.
-
-Everything about being interrupted sits in one section of the settings page, in
-the order it is decided: whether to speak at all, what to speak about, and what
-each of those sounds like. Each answer is nested inside the one it depends on,
-drawn with a rule rather than hidden, so a reader can see what saying yes would
-get them and stop reading the moment they have said no.
-
-Reminders and changes are switched separately, and each carries its own sound —
-the sound belongs to the kind, not to notifications as a whole, because a chime
-for the reminders you set and nothing at all for everything else is a perfectly
-ordinary thing to want. A row left out this way is still counted on the toolbar:
-it is the speaking that was declined, not the knowing.
-
-There is no separate switch for sound, because "no sound" is one of the sounds:
-choosing **Silent** for a kind is how it is silenced, and choosing it for both
-is how Chrome is left to make whatever noise the operating system allows it.
-One volume serves both, and is shown only while something would use it.
-
-### Making a noise
-
-Chrome's `silent: false` is a request, not an instruction. Whether a
-notification makes a sound is a matter for the operating system — on macOS it
-is a per-application setting under **System Settings → Notifications → Google
-Chrome**, off for many people and unreachable from an extension.
-
-So the sound is the panel's own, played in an offscreen document because a
-service worker cannot play audio at all. There are five of them — chime, ping,
-bell, knock, marimba — plus silence, chosen under the kind of notification they
-belong to: the default pair is a two-note chime for what was asked for and a
-softer single note for what merely happened. Volume is the reader's, and
-every control on the settings page plays what it is about the moment it is
-touched, because a list of names for noises is not a choice anyone can make by
-reading it.
-
-Each sound is a handful of numbers — frequency, start, length — turned into
-sine or triangle notes with a short fade at both ends, since a square-edged
-note clicks and the click is the difference between a chime and a fault.
-Synthesised rather than shipped, because a few lines of Web Audio weigh
-nothing and can be read in a diff, which an audio file cannot. The same
-definitions are used by the settings page and by the notification, so what is
-heard while choosing is what will arrive.
-
-When the panel is making the sound it asks Chrome to keep quiet, so there is
-exactly one either way; switching the sound off hands the question back to
-Chrome and the system.
-
 ## Developer mode
 
 Reminders are the hardest part of this to work on, because the good ones take
@@ -663,136 +824,6 @@ does.
 Chrome will not wake an extension more often than every 30 seconds, so a
 reminder set for less than that is marked due in the panel straight away while
 the toolbar count and any notification arrive on Chrome's own schedule.
-
-## Stacked pull requests
-
-A stack is a chain of pull requests where each one targets the branch of the
-one below it. GitHub exposes membership directly: `PullRequest.stackEntry`
-gives this pull request's position, and `PullRequest.stack` gives the stack's
-number, size, base branch, and entries. Nothing is inferred from branch names.
-
-A stacked row carries a `layer/size` badge, and that badge is the control: it
-slides open a list of the whole stack, read from the base branch up. The row it
-was expanded from stays in that list and is marked with a chevron instead of
-being filtered out, because a stack is only legible as a whole. A chevron along
-the top edge of the slide-out shuts it again, since by then the badge that
-opened it may be several layers up the panel. Expansion is
-deliberately not on the row itself: clicking a row still means "open this pull
-request".
-
-`stack` and `stackEntry` are a public preview. A host that has not been given
-the fields rejects the whole query rather than returning null, which would take
-the list down with it, so the first such failure drops the stack fields and
-every request after it asks the smaller question. Losing the badges is an
-acceptable outcome; losing the list is not.
-
-Only the first 20 layers of a stack are read per row, but `size` comes from
-GitHub, so a deeper stack still reports its real size and says how many layers
-it is not showing.
-
-### Pinned rows
-
-Pins are stored as node ids under `pinnedIds`, apart from the queries that
-surface them, so a pinned row keeps its place whichever query it turns up in.
-Only rows already loaded can be lifted, so a pin on an item further down a
-result set surfaces once its page arrives.
-
-### Managing what is set aside
-
-Hiding a row, setting a reminder and pinning a row all leave the same kind of
-trace: a node id in `itemMemory` or `pinnedIds`, apart from the row it stands
-for. The settings page gathers those three back into one panel — hidden rows,
-reminders, pinned rows — so what was set apart one row at a time can be
-reviewed and undone in one place.
-
-The panel holds only ids, so it asks the worker to resolve them against the
-shared cache and shows each row's title, repository and link from whatever the
-cache still holds. A row the cache has since dropped is listed by its id
-instead and stays fully actionable: bringing it back, moving or dropping its
-reminder, and lifting its pin each need only the id. Every action writes to the
-same `itemMemory` or `pinnedIds` the sidebar and worker already watch, so the
-count on the toolbar, the alarm for the next timed reminder and every open tab
-follow along without the panel telling any of them directly.
-
-### Collapsing a dock
-
-A floating window collapses up into its own header. A docked one has nowhere to
-fold, so it collapses sideways into a rail down the edge of the gutter instead.
-
-The rail is deliberately not a hidden edge: something has to stay on screen or
-there is nothing left to click to bring the panel back. At 44px it fits in the
-gutter of any page, so collapsing hands back whatever room had been taken from
-the layout, and the whole height of it is one button. It keeps showing the
-result count, which is the reason to leave it on screen rather than hide it.
-
-The same rail stands in for a docked panel that is hidden in this tab, or that
-has never been opened in it. Two states, one mark, and a click clears both at
-once — expanding out of a rail always ends with the panel, never with the rail
-redrawn because the other flag was still set.
-
-Results therefore go on loading while a dock is collapsed — a count that stops
-updating is decoration, not status. That is the one place the two collapsed
-states differ: a collapsed floating window shows nothing, so it stops asking.
-A rail standing in for a hidden panel stops asking too; it is showing that the
-panel is there, not what is in it.
-
-## Caching
-
-Every github.com tab runs its own copy of the UI, so a naive setup would make
-one API call per tab. Instead the service worker owns a single IndexedDB cache
-that all tabs read through.
-
-IndexedDB has to live in the worker: a content script's `indexedDB` belongs to
-github.com's origin, so a cache written there would pollute the host page's
-storage and would not be shared between tabs anyway.
-
-What a tab asking for results actually gets:
-
-| Situation                              | Result                                    |
-| -------------------------------------- | ----------------------------------------- |
-| Cached copy within the refresh window   | Served from IndexedDB, no network          |
-| Cached but stale, **active** tab        | Cached copy now, refresh in the background |
-| Cached but stale, background tab        | Cached copy, no network                    |
-| Nothing cached                          | One fetch, shared by all waiting tabs      |
-
-The pieces that make that work:
-
-- **Closed and hidden tabs ask for nothing.** The query is disabled unless the
-  panel is open and the document is visible, so a tab you never open never
-  costs a request. Opening one hydrates it from IndexedDB, which is instant.
-- **Only the active tab refreshes.** The worker checks that the requesting tab
-  is active and its window focused before going to the network. A background tab
-  is never a reason to spend a request.
-- **Concurrent requests are coalesced.** Ten tabs opening at once produce one
-  API call, not ten.
-- **Refreshes are pushed, not pulled.** When the active tab triggers a refresh,
-  the worker broadcasts the result to every open tab, which update their caches
-  without making their own request.
-- **A background refresh says so.** Serving the cached copy resolves the tab's
-  own request immediately, so the network call that follows it happens with
-  nothing in flight locally to report. The page carries a `revalidating` flag
-  instead, and a green hairline along the header's bottom border pulses — with
-  a lighter crest running left to right across it — until the broadcast lands.
-  It is held briefly so a fast refresh does not flicker, and capped so a
-  refresh that failed cannot leave the panel looking busy forever.
-- **The refresh window follows your setting.** The refresh interval you choose is
-  exactly how long a cached page is served for, with a 15s floor so a short
-  interval cannot flood the API. With polling off, cached pages last 5 minutes.
-- **The refresh button always wins.** It drops the cached pages for that query
-  first, so it is a true forced refresh. Entries older than a day are pruned on
-  startup.
-- **A half-filled page is finished off.** The second half of each row is written
-  to the cache as it lands, so a tab that opens later gets whole rows without
-  asking again. The worker is shut down between messages and can be stopped part
-  way through, so serving a cached page that still holds rows waiting on their
-  second half starts that work again — and a row is only ever asked about once,
-  however many queries and pages are holding it.
-
-The cache holds a *shape* as well as a value. A row written before a field
-existed is not a hit for a panel that expects it — it is a row that will crash
-the list — so the database version is bumped whenever a cached row gains a
-field, and the store is rebuilt rather than migrated. Every entry in it is one
-request away from coming back.
 
 ## Development
 
