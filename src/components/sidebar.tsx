@@ -33,7 +33,7 @@ import { useRefreshActivity } from '@/hooks/use-refresh-activity'
 import { useSearchUpdates } from '@/hooks/use-search-updates'
 import { useStorageValue } from '@/hooks/use-storage-value'
 import { useTabOpen } from '@/hooks/use-tab-open'
-import { changesSince, isHidden, nextReminderAt } from '@/lib/attention'
+import { changesSince, isHidden, isWhole, nextReminderAt } from '@/lib/attention'
 import { browser } from '@/lib/browser'
 import type { SearchItem } from '@/lib/github/types'
 import { filterItems, sortItems, buildRows, groupKeysOf } from '@/lib/list-view'
@@ -170,6 +170,21 @@ export function Sidebar() {
   // report one speaks for all of them.
   const warning = search.data?.pages.find((page) => page.warning)?.warning ?? null
 
+  /**
+   * Rows whose second request never answered. Counted rather than named: the
+   * reader cannot act on which rows they are, only on the fact that some marks
+   * on screen are missing rather than absent.
+   */
+  const unreadable = useMemo(
+    () =>
+      (search.data?.pages ?? []).reduce(
+        (total, page) =>
+          total + page.items.filter((item) => item.enrichment === 'failed').length,
+        0,
+      ),
+    [search.data],
+  )
+
   // Pinned rows are lifted to the top in the order they were pinned. Only the
   // pages already loaded can be reordered, so a pin on a row that has not been
   // fetched yet surfaces once its page arrives. The two groups are kept apart
@@ -297,7 +312,9 @@ export function Sidebar() {
    */
   useEffect(() => {
     if (!tracksChanges || items.length === 0) return
-    const unseen = items.filter((item) => !memory[item.id])
+    // Only rows that are whole. Half a row seeded now is a row that reports
+    // its own review and checks as news the moment they arrive, seconds later.
+    const unseen = items.filter((item) => !memory[item.id] && isWhole(item))
     if (unseen.length > 0) markSeen(unseen)
   }, [items, markSeen, memory, tracksChanges])
 
@@ -480,6 +497,7 @@ export function Sidebar() {
       isFiltering={filtering}
       onToggleFilter={() => setFiltering((current) => !current)}
       canMarkAllSeen={tracksChanges && items.length > 0}
+      canInspect={developer?.enabled ?? false}
       onMarkAllSeen={markAllSeen}
       onRefresh={refetch}
       onPatchWindow={patchWindow}
@@ -516,6 +534,27 @@ export function Sidebar() {
        */}
       {!editing && hasToken && !search.isError && warning && (
         <WarningBanner message={warning} />
+      )}
+      {/*
+       * The second request failing is a different thing from the search
+       * failing, and says so: the rows are right, some of their marks are
+       * simply not known. It clears itself on the next refresh that works.
+       */}
+      {!editing && hasToken && !search.isError && unreadable > 0 && (
+        <WarningBanner
+          message={`Review, checks and merge state could not be read for ${unreadable} ${
+            unreadable === 1 ? 'row' : 'rows'
+          }.`}
+          action={
+            developer?.enabled
+              ? {
+                  label: 'View log',
+                  onClick: () =>
+                    void sendMessage({ type: 'open-options', section: 'developer' }),
+                }
+              : undefined
+          }
+        />
       )}
       {/*
        * Also outside the keyed pane: what the reader has narrowed the list to
@@ -728,7 +767,14 @@ function ErrorState({
  * because a permanently unreachable organisation should not permanently cost
  * the reader a strip of the panel.
  */
-function WarningBanner({ message }: { message: string }) {
+function WarningBanner({
+  message,
+  action,
+}: {
+  message: string
+  /** Offered where there is somewhere useful to go and look. */
+  action?: { label: string; onClick: () => void }
+}) {
   const [dismissed, setDismissed] = useState(false)
   // A different cause is worth showing again even after the last was dismissed.
   useEffect(() => setDismissed(false), [message])
@@ -737,7 +783,18 @@ function WarningBanner({ message }: { message: string }) {
   return (
     <div className="flex items-start gap-2 border-b border-attention/30 bg-attention/10 px-2.5 py-1.5">
       <AlertIcon className="mt-px size-3.5 shrink-0 text-attention" />
-      <p className="flex-1 text-[11px] leading-snug text-foreground">{message}</p>
+      <p className="flex-1 text-[11px] leading-snug text-foreground">
+        {message}
+        {action && (
+          <button
+            type="button"
+            onClick={action.onClick}
+            className="ml-1 underline underline-offset-2 hover:text-attention"
+          >
+            {action.label}
+          </button>
+        )}
+      </p>
       <button
         type="button"
         onClick={() => setDismissed(true)}

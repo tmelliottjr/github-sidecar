@@ -18,6 +18,13 @@ export interface ItemSignature {
   commentCount: number
   /** The head commit, which is what tells new pushes from everything else. */
   headRefOid: string | null
+  /**
+   * Set where the row's review decision and check state were not yet known
+   * when this was taken. Those two are then not compared against it, since
+   * "not known" would otherwise read as "gone". Absent on every signature
+   * written before the request was split, which is correct: those rows knew.
+   */
+  partial?: true
 }
 
 /**
@@ -59,7 +66,27 @@ export function signatureOf(item: SearchItem): ItemSignature {
     // has no head commit at all, and an absent one must compare equal to
     // itself rather than read as a push that never happened.
     headRefOid: item.headRefOid ?? null,
+    // Recorded, not refused: the reader can mark a row seen or set a reminder
+    // on it before its second half has arrived, and that has to be honoured.
+    // What it cannot do is make the arrival itself look like a change.
+    ...(isWhole(item) ? {} : { partial: true as const }),
   }
+}
+
+/**
+ * Whether a row knows its own review decision and check state.
+ *
+ * Both arrive in a second request, so a row still waiting on it — or one whose
+ * second request was refused — knows neither, and null means unknown rather
+ * than none. Compared as though it meant none, every pull request would report
+ * itself as freshly un-reviewed once per refresh, through the badge and the
+ * notifications as well as the row.
+ *
+ * Read as whole where the field is missing altogether: that is a row fetched
+ * by a build from before the request was split, which read everything at once.
+ */
+export function isWhole(item: SearchItem): boolean {
+  return item.enrichment !== 'pending' && item.enrichment !== 'failed'
 }
 
 /**
@@ -75,12 +102,18 @@ export function changesSince(
 ): ChangeKind[] {
   if (!seen) return []
 
+  if (!isWhole(item)) return []
+
   const now = signatureOf(item)
   const changed = new Set<ChangeKind>()
 
   if (now.state !== seen.state) changed.add('state')
-  if (now.reviewDecision !== seen.reviewDecision) changed.add('review')
-  if (now.checkState !== seen.checkState) changed.add('checks')
+  // Where the baseline was taken before the row's second half had arrived, it
+  // never knew these two. Their arrival is not something that changed.
+  if (!seen.partial) {
+    if (now.reviewDecision !== seen.reviewDecision) changed.add('review')
+    if (now.checkState !== seen.checkState) changed.add('checks')
+  }
   // Only upwards: a deleted comment is not news, and would otherwise leave the
   // row permanently marked.
   if (now.commentCount > seen.commentCount) changed.add('comments')

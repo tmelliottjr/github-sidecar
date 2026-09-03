@@ -666,6 +666,65 @@ describe('developer mode', { concurrency: false, skip }, () => {
     assert.deepEqual(stored.reminderSeconds, { hour: 5, evening: 60, tomorrow: 120, week: 300 })
   })
 
+  it('lists what the panel has asked GitHub, and says which failed', async () => {
+    await devPage.evaluate(() => {
+      const scope = window as unknown as { chrome: typeof chrome }
+      const original = scope.chrome.runtime.sendMessage
+      scope.chrome.runtime.sendMessage = (async (message: { type: string }) => {
+        if (message.type !== 'api-log') return original(message)
+        return {
+          ok: true,
+          data: [
+            {
+              at: Date.now(),
+              operation: 'enrich',
+              detail: '5 rows',
+              status: 502,
+              durationMs: 10_600,
+              requestId: 'ABCD:1234',
+              ok: false,
+              error: 'GitHub took too long to answer this query.',
+            },
+            {
+              at: Date.now() - 1000,
+              operation: 'search',
+              detail: 'is:open is:pr',
+              status: 200,
+              durationMs: 4200,
+              requestId: null,
+              ok: true,
+              error: null,
+            },
+          ],
+        }
+      }) as typeof chrome.runtime.sendMessage
+    })
+
+    await devPage.evaluate(() => {
+      const node = [...document.querySelectorAll('button')].find((button) =>
+        button.textContent?.includes('Refresh'),
+      )
+      ;(node as HTMLElement).click()
+    })
+
+    await devPage.waitForFunction(() => document.body.textContent?.includes('Row detail'))
+
+    const rows = await devPage.$$eval('li', (nodes) =>
+      nodes
+        .filter((node) => node.textContent?.includes('ms') || node.textContent?.includes('s'))
+        .map((node) => node.textContent),
+    )
+    const detail = rows.find((row) => row?.includes('Row detail'))
+
+    // The failing request names itself, its cost, and the id GitHub knows it
+    // by, which is the whole reason for keeping the log.
+    assert.match(detail ?? '', /502/)
+    assert.match(detail ?? '', /10\.6s/)
+    assert.match(detail ?? '', /took too long/)
+    assert.match(detail ?? '', /ABCD:1234/)
+    assert.ok(rows.some((row) => row?.includes('Search')))
+  })
+
   it('says what went wrong when a test notification cannot be sent', async () => {
     await devPage.evaluate(() => {
       const scope = window as unknown as { chrome: typeof chrome }
