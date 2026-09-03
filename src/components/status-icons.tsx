@@ -1,10 +1,10 @@
 import type { Icon } from '@primer/octicons-react'
 import {
-  AlertIcon,
   BellFillIcon,
   BellIcon,
   CheckCircleFillIcon,
   CheckIcon,
+  DiffIgnoredIcon,
   DotFillIcon,
   EyeClosedIcon,
   EyeIcon,
@@ -182,8 +182,8 @@ const MERGE_META: Partial<
 > = {
   conflicting: {
     label: 'Conflicts with the base branch',
-    className: 'text-closed',
-    Icon: AlertIcon,
+    className: 'text-conflict',
+    Icon: DiffIgnoredIcon,
   },
   behind: {
     label: 'Behind the base branch',
