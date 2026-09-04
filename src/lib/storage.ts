@@ -1,4 +1,5 @@
 import type { ItemMemory } from './attention'
+import { browser } from './browser.ts'
 import type { GroupBy } from './list-view'
 import type { SoundName } from './sound'
 
@@ -292,7 +293,7 @@ export function migrateSettings(stored: Record<string, unknown>): Record<string,
 export async function readStorage<K extends keyof StorageShape>(
   key: K,
 ): Promise<StorageShape[K]> {
-  const result = await chrome.storage.local.get(key)
+  const result = await browser.storage.local.get(key)
   const value = result[key] as StorageShape[K] | undefined
   if (value === undefined) return DEFAULTS[key]
   if (Array.isArray(value) || typeof value !== 'object') return value
@@ -305,7 +306,7 @@ export async function writeStorage<K extends keyof StorageShape>(
   key: K,
   value: StorageShape[K],
 ): Promise<void> {
-  await chrome.storage.local.set({ [key]: value })
+  await browser.storage.local.set({ [key]: value })
 }
 
 export function createQueryId(): string {

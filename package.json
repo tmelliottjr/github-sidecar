@@ -9,9 +9,10 @@
   },
   "scripts": {
     "dev": "node scripts/dev.ts",
-    "build": "npm run clean && npm run build:pages && npm run build:content",
-    "build:pages": "vite build",
-    "build:content": "vite build --config vite.content.config.ts",
+    "build": "node scripts/build.ts",
+    "build:chrome": "node scripts/build.ts chrome",
+    "build:firefox": "node scripts/build.ts firefox",
+    "build:safari": "node scripts/build.ts safari",
     "clean": "rimraf dist",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src tests scripts",

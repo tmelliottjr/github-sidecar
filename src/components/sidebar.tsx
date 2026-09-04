@@ -34,6 +34,7 @@ import { useSearchUpdates } from '@/hooks/use-search-updates'
 import { useStorageValue } from '@/hooks/use-storage-value'
 import { useTabOpen } from '@/hooks/use-tab-open'
 import { changesSince, isHidden, isWhole, nextReminderAt } from '@/lib/attention'
+import { browser } from '@/lib/browser'
 import type { SearchItem } from '@/lib/github/types'
 import { filterItems, sortItems, buildRows, groupKeysOf } from '@/lib/list-view'
 import { sendMessage, RequestError } from '@/lib/messages'
@@ -92,8 +93,8 @@ export function Sidebar() {
     const listener = (message: { type?: string }) => {
       if (message?.type === 'toggle-sidebar') setOpen(!(isOpen ?? false))
     }
-    chrome.runtime.onMessage.addListener(listener)
-    return () => chrome.runtime.onMessage.removeListener(listener)
+    browser.runtime.onMessage.addListener(listener)
+    return () => browser.runtime.onMessage.removeListener(listener)
   }, [isOpen, setOpen])
 
   const activeQuery = useMemo<SavedQuery | null>(() => {

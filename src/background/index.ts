@@ -26,7 +26,9 @@ import {
 } from '@/lib/notify'
 import { carryEnrichment, mergeEnrichments } from '@/lib/github/enrichment'
 import { readStorage, writeStorage, type SoundSettings } from '@/lib/storage'
+import { browser, can, browserName } from '@/lib/browser'
 import { clearApiLog, readApiLog, recordApiCall } from './api-log'
+import { playNotificationSound } from './audio'
 import { indexedDbStore } from './cache'
 import { createSearchService, freshnessWindow, MAX_CACHE_AGE_MS } from './search-service'
 import { startDevReload } from './dev-reload'
@@ -38,7 +40,7 @@ const POPUP_HEIGHT = 900
  * Whether the panel is showing is per tab, not per user.
  *
  * A new tab should start out of the way and cost nothing until it is asked
- * for, which rules out `chrome.storage.local`: that is shared, so opening the
+ * for, which rules out `browser.storage.local`: that is shared, so opening the
  * panel once would open it in every tab thereafter. Session storage keyed by
  * tab id gives each tab its own answer, survives reloads and navigation within
  * that tab, and is gone when the browser is. It lives in the worker rather
@@ -53,13 +55,13 @@ function openKey(tabId: number): string {
 async function readTabOpen(tabId: number | undefined): Promise<boolean> {
   if (tabId == null) return false
   const key = openKey(tabId)
-  const stored = await chrome.storage.session.get(key)
+  const stored = await browser.storage.session.get(key)
   return stored[key] === true
 }
 
 async function writeTabOpen(tabId: number | undefined, open: boolean): Promise<void> {
   if (tabId == null) return
-  await chrome.storage.session.set({ [openKey(tabId)]: open })
+  await browser.storage.session.set({ [openKey(tabId)]: open })
 }
 
 async function requireToken(): Promise<string> {
@@ -79,9 +81,9 @@ async function requireToken(): Promise<string> {
 async function isTabActive(tabId: number | undefined): Promise<boolean> {
   if (tabId == null) return true
   try {
-    const tab = await chrome.tabs.get(tabId)
+    const tab = await browser.tabs.get(tabId)
     if (!tab.active) return false
-    const window = await chrome.windows.get(tab.windowId)
+    const window = await browser.windows.get(tab.windowId)
     return window.focused !== false
   } catch {
     return false
@@ -89,12 +91,12 @@ async function isTabActive(tabId: number | undefined): Promise<boolean> {
 }
 
 async function broadcastToGitHubTabs(message: BroadcastMessage): Promise<void> {
-  const tabs = await chrome.tabs.query({ url: 'https://github.com/*' })
+  const tabs = await browser.tabs.query({ url: 'https://github.com/*' })
   await Promise.all(
     tabs.map(async (tab) => {
       if (tab.id == null) return
       // Fails harmlessly for tabs where the content script has not loaded.
-      await chrome.tabs.sendMessage(tab.id, message).catch(() => undefined)
+      await browser.tabs.sendMessage(tab.id, message).catch(() => undefined)
     }),
   )
 }
@@ -117,41 +119,20 @@ const TARGET_PREFIX = 'notification:'
 /** How long a "remind me in an hour" from a notification button waits. */
 const LATER_MS = 60 * 60_000
 
-const OFFSCREEN_PAGE = 'offscreen.html'
-
 /**
  * Plays the panel's own notification sound.
  *
- * Chrome's `silent: false` is a request, not an instruction: on macOS whether
- * a notification makes a noise is a system setting for Chrome as a whole, and
- * an extension cannot reach it. A sound the reader asked this panel for is
- * therefore made by the panel — in an offscreen document, since a service
- * worker cannot play audio at all.
+ * A browser's `silent: false` is a request, not an instruction: on macOS
+ * whether a notification makes a noise is a system setting for the browser as
+ * a whole, and an extension cannot reach it. A sound the reader asked this
+ * panel for is therefore made by the panel, by whichever route the browser
+ * leaves open — see `./audio`.
  */
 async function playSound(kind: 'reminder' | 'change'): Promise<void> {
   const { notifications } = await readStorage('settings')
   const { sounds } = notifications
   if (!willPlay(sounds, kind)) return
-  const name = sounds[kind]
-
-  // `hasDocument` arrived after the API itself, so it is asked for rather than
-  // relied on; creating a second document simply fails, which is the same
-  // answer by another route. Two notifications at once race here, and the
-  // loser's failure means the winner already did the work.
-  const exists = chrome.offscreen.hasDocument ? await chrome.offscreen.hasDocument() : false
-  if (!exists) {
-    await chrome.offscreen
-      .createDocument({
-        url: OFFSCREEN_PAGE,
-        reasons: [chrome.offscreen.Reason.AUDIO_PLAYBACK],
-        justification: 'Plays a short sound with the notifications the reader asked for.',
-      })
-      .catch(() => undefined)
-  }
-
-  await chrome.runtime
-    .sendMessage({ type: 'play-sound', name, volume: sounds.volume })
-    .catch(() => undefined)
+  await playNotificationSound(sounds[kind], sounds.volume)
 }
 
 const BADGE_BACKGROUND = '#2f81f7'
@@ -175,13 +156,13 @@ async function activeQueryText(): Promise<string | null> {
 }
 
 async function announce(waiting: readonly WaitingItem[]): Promise<void> {
-  const stored = await chrome.storage.session.get(ANNOUNCED_KEY)
+  const stored = await browser.storage.session.get(ANNOUNCED_KEY)
   const previous = (stored[ANNOUNCED_KEY] ?? {}) as Record<string, string>
   const { send, announced } = pendingNotifications(waiting, previous)
-  await chrome.storage.session.set({ [ANNOUNCED_KEY]: announced })
+  await browser.storage.session.set({ [ANNOUNCED_KEY]: announced })
   if (send.length === 0) return
 
-  const icon = chrome.runtime.getURL('icon-128.png')
+  const icon = browser.runtime.getURL('icon-128.png')
   const { notifications } = await readStorage('settings')
   // Whoever makes the sound, only one of them does: Chrome's own is asked for
   // only where the panel is not making its own. Each kind answers for itself,
@@ -254,23 +235,23 @@ function hush(notification: Notification, ourSound: boolean): Notification {
  * lost.
  */
 async function show(id: string, notification: Notification, icon: string): Promise<void> {
-  await chrome.storage.session.set({ [`${TARGET_PREFIX}${id}`]: notification.target })
+  await browser.storage.session.set({ [`${TARGET_PREFIX}${id}`]: notification.target })
 
   const options = avatarsLoad ? notification.options : { ...notification.options, iconUrl: icon }
 
   try {
-    await chrome.notifications.create(id, options)
+    await browser.notifications.create(id, options)
   } catch {
     if (options.iconUrl === icon) return
     avatarsLoad = false
-    await chrome.notifications
+    await browser.notifications
       .create(id, { ...notification.options, iconUrl: icon })
       .catch(() => undefined)
   }
 }
 
 async function readTarget(id: string): Promise<NotificationTarget | null> {
-  const stored = await chrome.storage.session.get(`${TARGET_PREFIX}${id}`)
+  const stored = await browser.storage.session.get(`${TARGET_PREFIX}${id}`)
   return (stored[`${TARGET_PREFIX}${id}`] as NotificationTarget | undefined) ?? null
 }
 
@@ -322,7 +303,7 @@ async function refreshAttention(): Promise<void> {
   const settings = await readStorage('settings')
   const { features } = settings
   if (!features.badge && !settings.notifications.enabled) {
-    await chrome.action.setBadgeText({ text: '' })
+    await browser.action.setBadgeText({ text: '' })
     return
   }
 
@@ -341,18 +322,18 @@ async function refreshAttention(): Promise<void> {
 
   await armReminderAlarm(features.reminders ? memory : {})
 
-  await chrome.action.setBadgeText({
+  await browser.action.setBadgeText({
     text: features.badge ? badgeText(waiting.length) : '',
   })
   if (features.badge) {
-    await chrome.action.setBadgeBackgroundColor({ color: BADGE_BACKGROUND })
+    await browser.action.setBadgeBackgroundColor({ color: BADGE_BACKGROUND })
   }
 
   const { notifications } = settings
-  if (!notifications.enabled) return
-  // The permission is optional and can be taken away from Chrome's own
+  if (!can.notifications || !notifications.enabled) return
+  // The permission is optional and can be taken away from the browser's own
   // settings, which the switch in ours never hears about.
-  const allowed = await chrome.permissions.contains({ permissions: ['notifications'] })
+  const allowed = await browser.permissions.contains({ permissions: ['notifications'] })
   if (!allowed) return
 
   // Each kind can be switched off on its own. A row left out here is still
@@ -381,13 +362,13 @@ let recount = false
 async function armReminderAlarm(memory: Awaited<ReturnType<typeof readStorage<'itemMemory'>>>): Promise<void> {
   const due = nextReminderAt(memory)
   if (due === null) {
-    await chrome.alarms.clear(REMINDER_ALARM)
+    await browser.alarms.clear(REMINDER_ALARM)
     return
   }
 
-  const existing = await chrome.alarms.get(REMINDER_ALARM)
+  const existing = await browser.alarms.get(REMINDER_ALARM)
   if (existing && Math.abs(existing.scheduledTime - due) < 1000) return
-  chrome.alarms.create(REMINDER_ALARM, { when: due })
+  browser.alarms.create(REMINDER_ALARM, { when: due })
 }
 
 function scheduleAttention(): void {
@@ -432,16 +413,16 @@ const searchService = createSearchService({
 
 async function openItem(url: string, target: 'window' | 'tab'): Promise<void> {
   if (target === 'tab') {
-    await chrome.tabs.create({ url, active: true })
+    await browser.tabs.create({ url, active: true })
     return
   }
 
   // Offset from the current window so the popup does not land exactly on top.
-  const current = await chrome.windows.getCurrent().catch(() => null)
+  const current = await browser.windows.getCurrent().catch(() => null)
   const left = current?.left != null ? current.left + 60 : undefined
   const top = current?.top != null ? current.top + 60 : undefined
 
-  await chrome.windows.create({
+  await browser.windows.create({
     url,
     type: 'popup',
     width: POPUP_WIDTH,
@@ -507,25 +488,37 @@ async function handle(
       return undefined
     }
     case 'test-notification': {
-      const allowed = await chrome.permissions.contains({ permissions: ['notifications'] })
+      if (!can.notifications) {
+        throw new Error(
+          `${browserName} has no notifications API for extensions, so there is nothing to test.`,
+        )
+      }
+      const allowed = await browser.permissions.contains({ permissions: ['notifications'] })
       if (!allowed) {
         throw new Error(
-          'Chrome has not been given permission to post notifications. Switch desktop notifications on first.',
+          `${browserName} has not been given permission to post notifications. Switch desktop notifications on first.`,
         )
       }
       const { notifications: testNotifications } = await readStorage('settings')
       const testSound = willPlay(testNotifications.sounds, 'reminder')
       if (testSound) await playSound('reminder')
-      chrome.notifications.create('sidecar-test', {
+      const testIcon = browser.runtime.getURL('icon-128.png')
+      await browser.notifications.create('sidecar-test', {
         type: 'basic',
-        iconUrl: chrome.runtime.getURL('icon-128.png'),
+        iconUrl: testIcon,
         title: 'Make the sidebar say what changed',
-        message: 'Reminder · 3 new comments',
-        contextMessage: 'acme/app #34 · by octocat',
-        eventTime: Date.now(),
-        priority: 2,
-        silent: testSound,
-        buttons: [{ title: 'Remind me in an hour' }],
+        // What the reader sees here is what they would see for a real row, so
+        // on a browser that shows only a title and a body, so does this.
+        ...(can.richNotifications
+          ? {
+              message: 'Reminder · 3 new comments',
+              contextMessage: 'acme/app #34 · by octocat',
+              eventTime: Date.now(),
+              priority: 2,
+              silent: testSound,
+              buttons: [{ title: 'Remind me in an hour' }],
+            }
+          : { message: 'Reminder · 3 new comments\nacme/app #34 · by octocat' }),
       })
       return undefined
     }
@@ -534,13 +527,13 @@ async function handle(
       // takes no fragment, so a request for one part of the page opens it by
       // URL instead.
       if (message.section) {
-        await chrome.tabs.create({
-          url: chrome.runtime.getURL(`options.html#${message.section}`),
+        await browser.tabs.create({
+          url: browser.runtime.getURL(`options.html#${message.section}`),
           active: true,
         })
         return undefined
       }
-      await chrome.runtime.openOptionsPage()
+      await browser.runtime.openOptionsPage()
       return undefined
     }
     case 'api-log': {
@@ -553,7 +546,7 @@ async function handle(
   }
 }
 
-chrome.runtime.onMessage.addListener((message: RequestMessage, sender, sendResponse) => {
+browser.runtime.onMessage.addListener((message: RequestMessage, sender, sendResponse) => {
   handle(message, sender)
     .then((data) => sendResponse({ ok: true, data } satisfies ResponseMessage<unknown>))
     .catch((error: unknown) =>
@@ -572,41 +565,41 @@ chrome.runtime.onMessage.addListener((message: RequestMessage, sender, sendRespo
   return true
 })
 
-chrome.action.onClicked.addListener((tab) => {
+browser.action.onClicked.addListener((tab) => {
   if (tab.id == null) return
-  chrome.tabs.sendMessage(tab.id, { type: 'toggle-sidebar' }).catch(() => {
+  browser.tabs.sendMessage(tab.id, { type: 'toggle-sidebar' }).catch(() => {
     // The content script is not injected on non-github.com tabs.
   })
 })
 
 // Tab ids are reused, so a closed tab's flag has to go with it or the next
 // tab to take that id would inherit a panel it never opened.
-chrome.tabs.onRemoved.addListener((tabId) => {
-  void chrome.storage.session.remove(openKey(tabId)).catch(() => undefined)
+browser.tabs.onRemoved.addListener((tabId) => {
+  void browser.storage.session.remove(openKey(tabId)).catch(() => undefined)
 })
 
-chrome.runtime.onInstalled.addListener(async ({ reason }) => {
+browser.runtime.onInstalled.addListener(async ({ reason }) => {
   void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
   if (reason !== 'install') return
   const { token } = await readStorage('settings')
-  if (!token) await chrome.runtime.openOptionsPage()
+  if (!token) await browser.runtime.openOptionsPage()
 })
 
-chrome.runtime.onStartup.addListener(() => {
+browser.runtime.onStartup.addListener(() => {
   void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
   scheduleAttention()
 })
 
 // Marking rows as seen, switching query, or turning either feature off all
 // change what is waiting without any request being made.
-chrome.storage.onChanged.addListener((changes, area) => {
+browser.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return
   if ('itemMemory' in changes || 'settings' in changes) scheduleAttention()
 })
 
 // A reminder set for a time comes round with no request behind it, so the
 // alarm is the only thing that can notice.
-chrome.alarms.onAlarm.addListener((alarm) => {
+browser.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === REMINDER_ALARM) scheduleAttention()
 })
 
@@ -614,7 +607,7 @@ function onNotificationClicked(id: string): void {
   if (!id.startsWith(NOTIFICATION_PREFIX)) return
   void (async () => {
     const target = await readTarget(id)
-    await chrome.notifications.clear(id)
+    await browser.notifications.clear(id)
     if (target?.url) await openItem(target.url, 'tab')
   })()
 }
@@ -623,7 +616,7 @@ function onNotificationButton(id: string, button: number): void {
   if (!id.startsWith(NOTIFICATION_PREFIX) || button !== 0) return
   void (async () => {
     const target = await readTarget(id)
-    await chrome.notifications.clear(id)
+    await browser.notifications.clear(id)
     if (target) await actOn(target)
   })().catch((error: unknown) => {
     console.warn('[github-sidecar] could not act on a notification', error)
@@ -631,24 +624,29 @@ function onNotificationButton(id: string, button: number): void {
 }
 
 /**
- * The whole `chrome.notifications` namespace is absent until the optional
- * permission is granted, so this cannot simply be wired up at startup — and it
- * has to be wired up the moment the permission arrives, without waiting for
- * the worker to be restarted.
+ * The whole `notifications` namespace is absent until the optional permission
+ * is granted, so this cannot simply be wired up at startup — and it has to be
+ * wired up the moment the permission arrives, without waiting for the worker
+ * to be restarted. On a browser with no notifications at all there is nothing
+ * here to wire.
  */
 function watchNotificationClicks(): void {
-  const clicked = chrome.notifications?.onClicked
+  if (!can.notifications) return
+  const clicked = browser.notifications?.onClicked
   if (!clicked || clicked.hasListener(onNotificationClicked)) return
   clicked.addListener(onNotificationClicked)
-  chrome.notifications.onButtonClicked.addListener(onNotificationButton)
+  // Only a notification that can carry a button can report one being pressed.
+  if (can.richNotifications) {
+    browser.notifications.onButtonClicked.addListener(onNotificationButton)
+  }
 }
 
 watchNotificationClicks()
-chrome.permissions.onAdded.addListener(() => {
+browser.permissions.onAdded.addListener(() => {
   watchNotificationClicks()
   scheduleAttention()
 })
-chrome.permissions.onRemoved.addListener(scheduleAttention)
+browser.permissions.onRemoved.addListener(scheduleAttention)
 
 // Compiled away entirely in a production build.
 if (import.meta.env.MODE === 'development') startDevReload()

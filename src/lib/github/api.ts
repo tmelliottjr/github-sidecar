@@ -454,7 +454,7 @@ export class GitHubApiError extends Error {
   readonly status: number | undefined
   /**
    * What the caller can do about it, rather than what went wrong. Survives the
-   * trip through `chrome.runtime.sendMessage`, which flattens an Error to its
+   * trip through `runtime.sendMessage`, which flattens an Error to its
    * message, so the panel can still offer the right next step.
    */
   readonly kind: ApiErrorKind

@@ -1,3 +1,4 @@
+import { browser } from './browser.ts'
 import type { ApiCall } from './github/api'
 import type { ArrivedEnrichment } from './github/enrichment'
 import type { ApiErrorKind, SearchItem, SearchPage } from './github/types'
@@ -101,7 +102,7 @@ export type ResultFor<M extends RequestMessage> = M extends { type: 'search' }
             : void
 
 /**
- * A failure that crossed the worker boundary. `chrome.runtime.sendMessage`
+ * A failure that crossed the worker boundary. `browser.runtime.sendMessage`
  * flattens an Error to its message, so anything the panel needs in order to
  * react — whether retrying could help, whether to offer the settings page —
  * has to travel as its own field and be rebuilt here.
@@ -126,7 +127,7 @@ export class RequestError extends Error {
 export async function sendMessage<M extends RequestMessage>(
   message: M,
 ): Promise<ResultFor<M>> {
-  const response = (await chrome.runtime.sendMessage(message)) as
+  const response = (await browser.runtime.sendMessage(message)) as
     | ResponseMessage<ResultFor<M>>
     | undefined
 

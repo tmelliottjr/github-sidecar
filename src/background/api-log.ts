@@ -1,3 +1,4 @@
+import { browser } from '@/lib/browser'
 import type { ApiCall } from '@/lib/github/api'
 import type { ApiLogEntry } from '@/lib/messages'
 
@@ -27,7 +28,7 @@ export const MAX_LOG_ENTRIES = 150
 let queue: Promise<void> = Promise.resolve()
 
 export async function readApiLog(): Promise<ApiLogEntry[]> {
-  const stored = await chrome.storage.session.get(LOG_KEY)
+  const stored = await browser.storage.session.get(LOG_KEY)
   const entries = stored[LOG_KEY]
   return Array.isArray(entries) ? (entries as ApiLogEntry[]) : []
 }
@@ -38,7 +39,7 @@ export function recordApiCall(call: ApiCall): Promise<void> {
     .then(async () => {
       const entries = await readApiLog()
       const next = [{ ...call, at: Date.now() }, ...entries].slice(0, MAX_LOG_ENTRIES)
-      await chrome.storage.session.set({ [LOG_KEY]: next })
+      await browser.storage.session.set({ [LOG_KEY]: next })
     })
     // A log that cannot be written must never take down the request it is
     // about, so this is the end of it.
@@ -47,5 +48,5 @@ export function recordApiCall(call: ApiCall): Promise<void> {
 }
 
 export async function clearApiLog(): Promise<void> {
-  await chrome.storage.session.remove(LOG_KEY)
+  await browser.storage.session.remove(LOG_KEY)
 }
