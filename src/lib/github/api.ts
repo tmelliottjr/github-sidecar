@@ -1010,7 +1010,8 @@ export async function searchIssues(
   }
 
   const nodes = (search.nodes ?? []).filter(
-    (node): node is GraphQLNode => '__typename' in node && node.__typename !== undefined,
+    (node): node is GraphQLNode =>
+      node !== null && '__typename' in node && node.__typename !== undefined,
   )
 
   const errors = body.errors ?? []
