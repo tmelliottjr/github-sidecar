@@ -710,6 +710,15 @@ describe('partially refused results', () => {
     assert.equal(page.items[0].id, 'I_1')
   })
 
+  it('ignores null nodes GitHub withheld', async () => {
+    stubFetch({ ...searchPayload([null, issueNode]), errors: [ssoError] })
+
+    const page = await searchIssues('token', { q: 'is:open', first: 30 })
+
+    assert.equal(page.items.length, 1)
+    assert.equal(page.items[0].id, 'I_1')
+  })
+
   it('reports the refusal as an actionable warning rather than GitHub prose', async () => {
     stubFetch({ ...searchPayload([issueNode]), errors: [ssoError] })
 
