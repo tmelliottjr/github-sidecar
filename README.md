@@ -7,6 +7,8 @@ about.
 It runs on Chrome, Firefox, and Safari. See [Browser support](#browser-support)
 for the two places they differ.
 
+<img width="2334" height="1390" alt="CleanShot 2026-09-30 at 16 45 09" src="https://github.com/user-attachments/assets/c93cf474-9f2d-4590-9d33-da365fd1b0dc" />
+
 ## Features
 
 <details>
