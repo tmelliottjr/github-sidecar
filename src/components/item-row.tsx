@@ -29,6 +29,8 @@ import {
   ReminderMark,
   ReviewIndicator,
   StateIcon,
+  StatusPill,
+  drawsMergeState,
 } from '@/components/status-icons'
 import {
   ContextMenu,
@@ -58,8 +60,20 @@ import {
 import type { SearchItem } from '@/lib/github/types'
 import { cn, relativeTime } from '@/lib/utils'
 
-/** Row padding (12px) plus the state icon (16px) and the gap after it (10px). */
-const MARKS_INDENT = 'pl-[38px]'
+/** Row padding (10px) plus the state disc (28px) and the gap after it (10px). */
+const MARKS_INDENT = 'pl-12'
+
+/**
+ * The colors a row and its chips are drawn on, as variables so the marks
+ * inside can match them: label discs ring themselves in the surface, and the
+ * gray chips swap to the page color whenever the row itself turns gray.
+ */
+const SURFACES = cn(
+  '[--row-surface:var(--color-background)] [--row-chip:var(--color-muted)]',
+  'hover:[--row-surface:var(--color-accent)] hover:[--row-chip:var(--color-background)]',
+  'has-[:focus-visible]:[--row-surface:var(--color-accent)] has-[:focus-visible]:[--row-chip:var(--color-background)]',
+  'group-data-[state=open]/row:[--row-surface:var(--color-accent)] group-data-[state=open]/row:[--row-chip:var(--color-background)]',
+)
 
 interface Props {
   item: SearchItem
@@ -192,6 +206,9 @@ function ItemRowImpl({
    */
   const awaitingMarks = item.enrichment === 'pending'
 
+  const hasStatus =
+    Boolean(item.checkState) || drawsMergeState(mergeState) || Boolean(item.reviewDecision)
+
   const hasMarks =
     awaitingMarks ||
     Boolean(stack) ||
@@ -200,9 +217,7 @@ function ItemRowImpl({
     isHidden ||
     item.labels.length > 0 ||
     item.commentCount > 0 ||
-    Boolean(item.checkState) ||
-    Boolean(mergeState) ||
-    Boolean(item.reviewDecision)
+    hasStatus
 
   return (
     <ContextMenu>
@@ -211,29 +226,22 @@ function ItemRowImpl({
           data-pinned={isPinned || undefined}
           data-current={isCurrent || undefined}
           data-row-hidden={isHidden || undefined}
-          className={cn(
-            'group flex flex-col',
-            isPinned && 'bg-accent/40',
-            // A row only on screen because the reader asked to see what they
-            // had hidden is drawn as what it is: still here, still put away.
-            isHidden && 'opacity-55',
-            // Layered over a pin rather than instead of it: a row can be both,
-            // and the tint is faint enough to read as a wash either way.
-            isCurrent && 'bg-ring/8',
-          )}
+          className="group/row flex flex-col"
         >
           {/*
            * Hover and focus are carried by the row's own wrapper rather than
-           * the button, so the marks below the meta line — which sit outside
-           * the click target now that one of them is a control — still read as
+           * the button, so the marks below the meta line, which sit outside
+           * the click target because some of them are controls, still read as
            * part of the same row.
            */}
           <div
             data-item-body=""
             className={cn(
-              'flex flex-col transition-colors',
-              'hover:bg-accent has-[:focus-visible]:bg-accent',
-              'group-data-[state=open]:bg-accent',
+              'relative flex flex-col rounded-xl bg-[color:var(--row-surface)] transition-colors',
+              SURFACES,
+              isCurrent &&
+                '[--row-surface:color-mix(in_oklab,var(--color-ring)_8%,var(--color-background))]',
+              'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/70',
             )}
           >
             <button
@@ -242,24 +250,41 @@ function ItemRowImpl({
               aria-busy={refresh.status === 'loading'}
               aria-current={isCurrent ? 'page' : undefined}
               className={cn(
-                'flex w-full min-w-0 gap-2.5 px-3 pt-2.5 text-left focus-visible:outline-none',
-                hasMarks ? 'pb-1' : 'pb-2.5',
+                'flex w-full min-w-0 gap-2.5 rounded-xl px-2.5 pt-2 text-left focus-visible:outline-none',
+                hasMarks ? 'pb-1.5' : 'pb-2',
               )}
             >
-              <StateIcon item={item} />
+              <span className="relative mt-0.5 shrink-0">
+                <StateIcon
+                  item={item}
+                  variant="disc"
+                  // Still here, still put away: the disc loses its fill but keeps its glyph.
+                  className={cn(isHidden && 'border border-dashed border-muted-foreground/70 bg-transparent')}
+                />
+                {hasChanges && (
+                  <span
+                    aria-hidden
+                    className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-link ring-2 ring-[color:var(--row-surface)]"
+                  />
+                )}
+              </span>
 
-              <span className="flex min-w-0 flex-1 flex-col gap-1">
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="flex items-start gap-2">
                   <ClampedTitle
                     title={item.title}
-                    className="line-clamp-2 flex-1 text-[13px] font-semibold leading-snug text-foreground"
+                    className={cn(
+                      'line-clamp-2 flex-1 text-[13px] font-semibold leading-[18px]',
+                      isHidden ? 'text-muted-foreground' : 'text-foreground',
+                    )}
                   />
                   {/*
                    * A refresh reports itself in the same slot as the timestamp it
                    * is about to change, so the row says what it is doing without
                    * reflowing around a new element.
                    */}
-                  <span className="flex shrink-0 items-center pt-px text-[11px] tabular-nums text-muted-foreground">
+                  <span className="flex shrink-0 items-center gap-1 pt-px text-[11px] tabular-nums text-muted-foreground">
+                    {isPinned && <PinIcon className="size-3 shrink-0" aria-label="Pinned" />}
                     {refresh.status === 'loading' ? (
                       <SyncIcon
                         className="size-3 animate-spin-slow"
@@ -278,15 +303,11 @@ function ItemRowImpl({
                   </span>
                 </span>
 
-                <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  {isPinned && (
-                    <PinIcon
-                      className="size-3 shrink-0 text-accent-foreground"
-                      aria-label="Pinned"
-                    />
-                  )}
-                  <span className="truncate font-medium">{item.repository}</span>
-                  <span aria-hidden>#{item.number}</span>
+                <span className="flex min-w-0 items-center gap-1.5 text-[12px] leading-4 text-muted-foreground">
+                  <span className="truncate">{item.repository}</span>
+                  <span aria-hidden className="tabular-nums">
+                    #{item.number}
+                  </span>
                   {item.authorLogin && (
                     <Author login={item.authorLogin} avatarUrl={item.authorAvatarUrl} />
                   )}
@@ -295,28 +316,39 @@ function ItemRowImpl({
             </button>
 
             {/*
-             * Indented past the state icon so the marks line up under the
-             * title. `MARKS_INDENT` is that icon plus the row's own padding.
+             * Indented past the state disc so the marks line up under the
+             * title. `MARKS_INDENT` is that disc plus the row's own padding.
              */}
             {hasMarks && (
               <div
                 className={cn(
-                  'flex flex-wrap items-center gap-1.5 pb-2.5 pr-3',
+                  'flex flex-wrap items-center gap-x-2 gap-y-1 pb-2 pr-2.5',
                   MARKS_INDENT,
-                  // Holds the line open at the height of the marks it is
-                  // waiting for, which are all drawn at 14px.
-                  awaitingMarks && 'min-h-[14px]',
+                  // Holds the line open at the height of the pill it is
+                  // waiting for, plus the line's own bottom padding.
+                  awaitingMarks && 'min-h-7',
                 )}
               >
                 {/*
-                 * What changed leads the line: it is the only mark here that
-                 * is about the reader rather than about the item.
+                 * The pill leads, so checks, review, and merge state sit in
+                 * the same place on every row and can be read down the list.
                  */}
-                {hasChanges && <ChangeBadge kinds={changes} item={item} seen={seen} />}
-                {reminder !== 'none' && reminderDetail && (
-                  <ReminderMark state={reminder} label={describeReminder(reminderDetail)} />
+                {hasStatus && (
+                  <StatusPill>
+                    <CheckIndicator
+                      state={item.checkState}
+                      failing={failing}
+                      isOpen={isChecksOpen}
+                      partial={
+                        item.checkCount != null && (item.checksRead ?? 0) < item.checkCount
+                      }
+                      onToggle={showFailingChecks ? toggleChecks : undefined}
+                    />
+                    <ReviewIndicator decision={item.reviewDecision} />
+                    <MergeIndicator state={mergeState} />
+                  </StatusPill>
                 )}
-                {isHidden && <HiddenMark />}
+                {hasChanges && <ChangeBadge kinds={changes} item={item} seen={seen} />}
                 {stack && (
                   <StackBadge
                     stack={stack}
@@ -324,32 +356,20 @@ function ItemRowImpl({
                     onToggle={toggleStack}
                   />
                 )}
-                <CheckIndicator
-                  state={item.checkState}
-                  failing={failing}
-                  isOpen={isChecksOpen}
-                  partial={
-                    item.checkCount != null && (item.checksRead ?? 0) < item.checkCount
-                  }
-                  onToggle={showFailingChecks ? toggleChecks : undefined}
-                />
-                <MergeIndicator state={mergeState} />
-                <ReviewIndicator decision={item.reviewDecision} />
+                {reminder !== 'none' && reminderDetail && (
+                  <ReminderMark state={reminder} label={describeReminder(reminderDetail)} />
+                )}
+                {isHidden && <HiddenMark />}
 
                 {item.commentCount > 0 && (
-                  <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
-                    <CommentIcon className="size-3" />
+                  <span className="flex items-center gap-1 text-[12px] tabular-nums text-muted-foreground">
+                    <CommentIcon className="size-3.5" />
                     {item.commentCount}
                   </span>
                 )}
 
-                {/*
-                 * Labels are the least of what this line says, so they are put
-                 * where the eye lands last rather than in the run of marks.
-                 */}
-                <span className="ml-auto flex items-center pl-1.5">
-                  <LabelDots labels={item.labels} total={item.labelCount} />
-                </span>
+                {/* Labels are the least of what this line says, so they come last. */}
+                <LabelDots labels={item.labels} total={item.labelCount} />
               </div>
             )}
           </div>

@@ -376,8 +376,8 @@ describe('content script', { concurrency: false, skip }, () => {
       const box = dot.getBoundingClientRect()
       const styles = getComputedStyle(dot)
 
-      // The label's colour put through the same mixer at full strength, so the
-      // fill can be compared with it in the space it was actually mixed in.
+      // The label's color put through the same mixer at full strength, so the
+      // edge can be compared with it in the space it was actually mixed in.
       const probe = document.createElement('span')
       probe.style.backgroundColor = 'color-mix(in oklab, #d73a4a 100%, transparent 0%)'
       dot.after(probe)
@@ -395,17 +395,17 @@ describe('content script', { concurrency: false, skip }, () => {
     })
 
     assert.ok(dots.width > 0 && dots.width <= 16, `saw a ${dots.width}px disc`)
-    // The label's own colour draws the disc.
-    assert.equal(dots.border, 'rgb(215, 58, 74)')
+    // The label's own color fills the disc.
+    assert.equal(dots.fill, 'rgb(215, 58, 74)')
     assert.doesNotMatch(dots.text, /bug/)
 
-    // The fill is that same colour taken back towards the surface: lighter
-    // than the label, and opaque, so overlapping discs stay legible.
-    assert.doesNotMatch(dots.fill, /\//, `expected an opaque fill, saw ${dots.fill}`)
-    const lightness = (colour: string) => Number(colour.match(/[\d.]+/)![0])
+    // The edge is that color taken toward the text color, which is dark in
+    // light mode, so even a pale label keeps a visible outline on white.
+    assert.doesNotMatch(dots.border, /\//, `expected an opaque edge, saw ${dots.border}`)
+    const lightness = (color: string) => Number(color.match(/[\d.]+/)![0])
     assert.ok(
-      lightness(dots.fill) > lightness(dots.pure),
-      `expected a lighter fill, saw ${dots.fill} against ${dots.pure}`,
+      lightness(dots.border) < lightness(dots.pure),
+      `expected a darker edge, saw ${dots.border} against ${dots.pure}`,
     )
   })
 
@@ -453,8 +453,9 @@ describe('content script', { concurrency: false, skip }, () => {
       )
     })
 
-    // Leave the row alone again so later tests see an unhovered list.
-    await page.mouse.move(0, 0)
+    // Leave the row alone again so later tests see an unhovered list. In steps,
+    // so Radix sees the pointer leave the tooltip grace area and closes it.
+    await page.mouse.move(0, 0, { steps: 8 })
   })
 
   it('offers the full title only when the row cannot show it', async () => {

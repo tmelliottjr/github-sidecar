@@ -33,40 +33,75 @@ import type {
   SearchItem,
 } from '@/lib/github/types'
 
-const STATE_META: Record<
-  SearchItem['state'],
-  { label: string; className: string }
-> = {
-  open: { label: 'Open', className: 'text-open' },
-  closed: { label: 'Closed', className: 'text-closed' },
-  merged: { label: 'Merged', className: 'text-merged' },
-  draft: { label: 'Draft', className: 'text-draft' },
-  queued: { label: 'Queued to merge', className: 'text-attention' },
+/** Text color for the glyph, and the tint for the disc behind it. */
+const TONES = {
+  open: { text: 'text-open', disc: 'bg-open/12' },
+  closed: { text: 'text-closed', disc: 'bg-closed/12' },
+  done: { text: 'text-merged', disc: 'bg-merged/12' },
+  muted: { text: 'text-draft', disc: 'bg-draft/12' },
+  queued: { text: 'text-attention', disc: 'bg-attention/15' },
+} as const
+
+type StateItem = Pick<SearchItem, 'kind' | 'state' | 'stateReason'>
+
+/**
+ * GitHub's own colors: a completed issue is purple like a merge, and one
+ * closed as not planned is gray. Only a closed pull request is red.
+ */
+function describeState(item: StateItem): { label: string; tone: keyof typeof TONES } {
+  switch (item.state) {
+    case 'merged':
+      return { label: 'Merged', tone: 'done' }
+    case 'draft':
+      return { label: 'Draft', tone: 'muted' }
+    case 'queued':
+      return { label: 'Queued to merge', tone: 'queued' }
+    case 'closed':
+      if (item.kind === 'pull-request') return { label: 'Closed', tone: 'closed' }
+      return item.stateReason === 'NOT_PLANNED'
+        ? { label: 'Closed as not planned', tone: 'muted' }
+        : { label: 'Closed', tone: 'done' }
+    default:
+      return { label: 'Open', tone: 'open' }
+  }
 }
 
-/** The leading glyph: encodes item kind and lifecycle state in one mark. */
+/**
+ * The leading glyph: encodes item kind and lifecycle state in one mark. As a
+ * disc it sits on a tint of its own color, like the GitHub mark on the launcher.
+ */
 export function StateIcon({
   item,
+  variant = 'bare',
+  className,
 }: {
-  item: Pick<SearchItem, 'kind' | 'state' | 'stateReason'>
+  item: StateItem
+  variant?: 'bare' | 'disc'
+  /** Added to the disc, or to the bare glyph's wrapper. */
+  className?: string
 }) {
-  const meta = STATE_META[item.state]
+  const { label, tone } = describeState(item)
   const Icon = pickIcon(item)
-  const detail =
-    item.state === 'closed' && item.stateReason === 'NOT_PLANNED'
-      ? 'Closed as not planned'
-      : meta.label
 
   return (
-    <Hint label={`${item.kind === 'issue' ? 'Issue' : 'Pull request'} · ${detail}`}>
-      <span className={cn('mt-px flex shrink-0 items-center', meta.className)}>
-        <Icon className="size-4" aria-label={detail} />
+    <Hint label={`${item.kind === 'issue' ? 'Issue' : 'Pull request'} · ${label}`}>
+      <span
+        className={cn(
+          'flex shrink-0 items-center',
+          TONES[tone].text,
+          variant === 'disc'
+            ? cn('size-7 justify-center rounded-full', TONES[tone].disc)
+            : 'mt-px',
+          className,
+        )}
+      >
+        <Icon className="size-4" aria-label={label} />
       </span>
     </Hint>
   )
 }
 
-function pickIcon(item: Pick<SearchItem, 'kind' | 'state' | 'stateReason'>) {
+function pickIcon(item: StateItem) {
   if (item.kind === 'issue') {
     if (item.state === 'closed') {
       return item.stateReason === 'NOT_PLANNED' ? SkipIcon : IssueClosedIcon
@@ -81,7 +116,7 @@ function pickIcon(item: Pick<SearchItem, 'kind' | 'state' | 'stateReason'>) {
     case 'draft':
       return GitPullRequestDraftIcon
     // Octicons carries GitHub's own mark for the merge queue, so a queued
-    // pull request is now told apart by its glyph as well as its colour.
+    // pull request is told apart by its glyph as well as its color.
     case 'queued':
       return GitMergeQueueIcon
     default:
@@ -137,7 +172,7 @@ export function CheckIndicator({
 
     return (
       <Hint label={unnamed}>
-        <span data-check={state} className={cn('flex items-center', className)}>
+        <span data-check={state} className={cn('flex h-full items-center px-1.5', className)}>
           {/*
            * In-progress checks are GitHub's amber dot, which is drawn still:
            * the mark is rotationally symmetric, so the slow spin the pending
@@ -162,14 +197,12 @@ export function CheckIndicator({
         aria-expanded={isOpen}
         aria-label={isOpen ? 'Hide the failing checks' : 'Show the failing checks'}
         className={cn(
-          'flex shrink-0 cursor-pointer items-center gap-0.5 rounded-full border px-1.5 py-px text-[10px] font-semibold leading-[1.5]',
-          'transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-          isOpen
-            ? 'border-closed/40 bg-closed/15 text-closed'
-            : 'border-border bg-muted text-closed hover:border-closed/40',
+          'flex h-full shrink-0 cursor-pointer items-center gap-1 px-1.5 text-[11px] font-semibold text-closed',
+          'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+          isOpen ? 'bg-closed/15' : 'hover:bg-closed/10',
         )}
       >
-        <Icon className="size-2.5" aria-hidden />
+        <Icon className="size-3.5" aria-hidden />
         <span className="tabular-nums">{count}</span>
         <span className="sr-only">{said}</span>
       </button>
@@ -205,11 +238,28 @@ export function MergeIndicator({ state }: { state: MergeState | null }) {
 
   return (
     <Hint label={label}>
-      <span className={cn('flex items-center', className)}>
+      <span className={cn('flex h-full items-center px-1.5', className)}>
         <Icon className="size-3.5" />
         <span className="sr-only">{label}</span>
       </span>
     </Hint>
+  )
+}
+
+/** Whether `MergeIndicator` draws anything for this state. */
+export function drawsMergeState(state: MergeState | null): boolean {
+  return state !== null && MERGE_META[state] !== undefined
+}
+
+/**
+ * Checks, review, and merge state as one gray capsule, always in that order,
+ * so each sits in the same place on every row.
+ */
+export function StatusPill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="flex h-5 items-center divide-x divide-border overflow-hidden rounded-full bg-[color:var(--row-chip,var(--color-muted))]">
+      {children}
+    </span>
   )
 }
 
@@ -256,7 +306,7 @@ export function HiddenMark() {
 /**
  * What has happened to a row since the reader last looked at it. The loudest
  * change leads, because a row has one line to make its case; the rest arrive
- * on hover.
+ * on hover. The dot that flags the row sits on its state disc instead.
  */
 export function ChangeBadge({
   kinds,
@@ -273,9 +323,8 @@ export function ChangeBadge({
     <Hint label={describeChanges(kinds, item, seen)}>
       <span
         data-change={kinds[0]}
-        className="flex items-center gap-1 text-[11px] font-semibold text-foreground"
+        className="flex min-w-0 items-center gap-1 text-[12px] font-medium text-link"
       >
-        <DotFillIcon className="size-2.5 shrink-0 text-ring" />
         <span className="max-w-[140px] truncate">{describeChange(kinds[0], item, seen)}</span>
         {kinds.length > 1 && (
           <span className="text-muted-foreground tabular-nums">+{kinds.length - 1}</span>
@@ -307,7 +356,7 @@ export function ReviewIndicator({ decision }: { decision: ReviewDecision | null 
   const { label, className, Icon } = REVIEW_META[decision]
   return (
     <Hint label={label}>
-      <span className={cn('flex items-center', className)}>
+      <span className={cn('flex h-full items-center px-1.5', className)}>
         <Icon className="size-3.5" />
         <span className="sr-only">{label}</span>
       </span>
@@ -319,14 +368,14 @@ export function ReviewIndicator({ decision }: { decision: ReviewDecision | null 
 const MAX_LABEL_DOTS = 5
 
 /**
- * Labels as a row of overlapping colour discs. Names are what a label is for,
- * but at three or four to a row they crowd out the title, so the colour does
+ * Labels as a row of overlapping color discs. Names are what a label is for,
+ * but at three or four to a row they crowd out the title, so the color does
  * the work at rest and the name arrives on hover.
  *
- * Each disc is the label's own colour twice over: full strength as the ring
- * that draws it, and mixed into the surface behind it as the fill. Tinting
- * against `background` rather than using an alpha keeps the discs opaque, so
- * where they overlap the one in front still reads as the one in front.
+ * Each disc is filled with the label color and edged with that color mixed
+ * toward the text color, which keeps pale labels at 3:1 against the row in
+ * either color mode. The fill is opaque, so where discs overlap the one in
+ * front still reads as the one in front.
  */
 export function LabelDots({ labels, total }: { labels: Label[]; total: number }) {
   if (labels.length === 0) return null
@@ -343,15 +392,15 @@ export function LabelDots({ labels, total }: { labels: Label[]; total: number })
             <span
               role="img"
               aria-label={label.name}
-              // The ring is the row's own background, which is what makes the
+              // The ring is the row's own surface, which is what makes the
               // overlap read as separate discs rather than one smear.
               className={cn(
-                'size-3.5 rounded-full border ring-2 ring-background group-hover:ring-accent',
-                index > 0 && '-ml-1.5',
+                'size-3 rounded-full border ring-2 ring-[color:var(--row-surface,var(--color-background))]',
+                index > 0 && '-ml-1',
               )}
               style={{
-                borderColor: `#${label.color}`,
-                backgroundColor: `color-mix(in oklab, #${label.color} 28%, var(--color-background))`,
+                backgroundColor: `#${label.color}`,
+                borderColor: `color-mix(in oklab, #${label.color} 60%, var(--color-foreground))`,
               }}
             />
           </Hint>
@@ -359,7 +408,7 @@ export function LabelDots({ labels, total }: { labels: Label[]; total: number })
       </span>
 
       {hidden > 0 && (
-        <span className="text-[10px] font-semibold tabular-nums text-muted-foreground">
+        <span className="text-[11px] font-semibold tabular-nums text-muted-foreground">
           +{hidden}
         </span>
       )}

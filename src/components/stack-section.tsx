@@ -30,14 +30,14 @@ export function StackBadge({
         aria-expanded={isOpen}
         aria-label={isOpen ? 'Hide the stack' : 'Show the stack'}
         className={cn(
-          'flex shrink-0 cursor-pointer items-center gap-0.5 rounded-full border px-1.5 py-px text-[10px] font-semibold leading-[1.5]',
-          'transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+          'flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-full px-1.5 text-[11px] font-semibold',
+          'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           isOpen
-            ? 'border-foreground/25 bg-accent text-foreground'
-            : 'border-border bg-muted text-muted-foreground hover:border-foreground/25 hover:text-foreground',
+            ? 'bg-foreground/10 text-foreground ring-1 ring-inset ring-foreground/20'
+            : 'bg-[color:var(--row-chip,var(--color-muted))] text-muted-foreground hover:text-foreground',
         )}
       >
-        <StackIcon className="size-2.5" aria-hidden />
+        <StackIcon className="size-3.5" aria-hidden />
         <span className="tabular-nums">
           {stack.position}/{stack.size}
         </span>

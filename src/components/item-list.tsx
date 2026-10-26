@@ -47,7 +47,9 @@ interface Props {
   onUnhide: (item: SearchItem) => void
 }
 
-const ESTIMATED_ROW_HEIGHT = 78
+const ESTIMATED_ROW_HEIGHT = 88
+/** Space above the first row and below the last, inside the scroller. */
+const LIST_PADDING = 6
 /** Start fetching this many rows before the end so scrolling stays smooth. */
 const PREFETCH_THRESHOLD = 6
 
@@ -168,6 +170,8 @@ export function ItemList({
     count,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    paddingStart: LIST_PADDING,
+    paddingEnd: LIST_PADDING,
     overscan: 8,
     getItemKey: useCallback(
       (index: number) => visibleRows[index]?.key ?? `loader-${index}`,
@@ -326,9 +330,11 @@ export function ItemList({
               key={virtualRow.key}
               data-index={virtualRow.index}
               ref={isCurrent ? measureCurrent : virtualizer.measureElement}
+              // The gap below each row is inside the measured box, so the
+              // virtualizer spaces the tiles without knowing about it.
               className={cn(
-                'absolute left-0 top-0 w-full',
-                row?.type !== 'header' && 'border-b border-border/60 last:border-b-0',
+                'absolute left-0 top-0 w-full px-1.5',
+                row?.type !== 'header' && 'pb-0.5',
               )}
               style={{ transform: `translateY(${virtualRow.start}px)` }}
             >
@@ -428,8 +434,8 @@ function GroupHeader({
       aria-expanded={!isCollapsed}
       aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${label}`}
       className={cn(
-        'flex w-full items-center gap-1.5 border-b border-border bg-muted/40 px-2.5 py-1 text-left',
-        'hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring',
+        'flex w-full items-center gap-1.5 rounded-lg px-2 pb-1 pt-2.5 text-left',
+        'hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
       )}
     >
       <ChevronDownIcon
@@ -442,10 +448,12 @@ function GroupHeader({
       {avatarUrl && (
         <img src={avatarUrl} alt="" className="size-4 shrink-0 rounded-full" />
       )}
-      <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-muted-foreground">
+      <span className="min-w-0 truncate text-[12px] font-semibold text-muted-foreground">
         {label}
       </span>
-      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">{count}</span>
+      <span className="shrink-0 rounded-full bg-muted px-1.5 text-[11px] font-semibold leading-[18px] tabular-nums text-muted-foreground">
+        {count}
+      </span>
     </button>
   )
 }
