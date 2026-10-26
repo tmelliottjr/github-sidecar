@@ -1,5 +1,11 @@
 import { useId, useRef } from 'react'
-import { ChevronLeftIcon, ChevronRightIcon, MarkGithubIcon, XIcon } from '@primer/octicons-react'
+import {
+  ArrowUpRightIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  MarkGithubIcon,
+  XIcon,
+} from '@primer/octicons-react'
 
 import { Hint } from '@/components/ui/tooltip'
 import { DOCK_INSET } from '@/content/page-layout'
@@ -24,9 +30,10 @@ interface Props {
 }
 
 /**
- * Stands in for the panel while it is hidden or collapsed: a pill in the corner
- * with the query name, the result count, and an open action. Shrunk, it shows
- * the GitHub mark with the count as a bubble.
+ * Stands in for the panel while it is hidden or collapsed: a capsule in the
+ * corner with the GitHub mark, the query name, and the result count, with the
+ * open action riding beside it as its own disc. Shrunk, it shows the GitHub
+ * mark with the count as a bubble.
  */
 export function Launcher({ side, title, count, compact, onOpen, onCompactChange }: Props) {
   const detailId = useId()
@@ -34,11 +41,11 @@ export function Launcher({ side, title, count, compact, onOpen, onCompactChange 
   const inset = side === 'left' ? DOCK_INSET : FLOAT_INSET
   const detail =
     count === null
-      ? 'GitHub Sidecar'
-      : `${count.toLocaleString()} ${count === 1 ? 'result' : 'results'}`
+      ? title
+      : `${title}, ${count.toLocaleString()} ${count === 1 ? 'result' : 'results'}`
 
-  // The shrink button goes inert and the expand button unmounts, so focus has
-  // to move or it falls back to the page body.
+  // Shrinking unmounts the shrink button and growing unmounts the expand
+  // button, so focus has to move or it falls back to the page body.
   const setCompact = (next: boolean) => {
     onCompactChange(next)
     openRef.current?.focus()
@@ -63,68 +70,83 @@ export function Launcher({ side, title, count, compact, onOpen, onCompactChange 
     >
       <div
         className={cn(
-          'rounded-full border border-border bg-background p-[3px] text-foreground shadow-launcher',
-          'transition-transform duration-200 ease-stack group-hover/launcher:-translate-y-0.5',
+          'relative transition-transform duration-200 ease-stack group-hover/launcher:-translate-y-0.5',
           'motion-reduce:transition-none motion-reduce:group-hover/launcher:translate-y-0',
         )}
       >
-        <div className="flex items-center rounded-full border-2 border-link">
-          <button
-            ref={openRef}
-            type="button"
-            onClick={onOpen}
-            aria-label="Open GitHub Sidecar"
-            aria-describedby={detailId}
-            className={cn(
-              'group/open flex min-w-0 items-center rounded-full p-[3px] outline-none',
-              'focus-visible:ring-2 focus-visible:ring-ring/60',
-            )}
-          >
-            <Badge count={compact ? count : null} />
-            {/* Outside the inert label, so it is still read out when shrunk. */}
-            <span id={detailId} className="sr-only">
-              {title}, {detail}
-            </span>
+        <button
+          ref={openRef}
+          type="button"
+          onClick={onOpen}
+          aria-label="Open GitHub Sidecar"
+          aria-describedby={detailId}
+          className={cn(
+            'group/open flex items-center rounded-full text-foreground outline-none',
+            'focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2',
+          )}
+        >
+          <span id={detailId} className="sr-only">
+            {detail}
+          </span>
+
+          <span className="flex h-11 items-center rounded-full border border-border bg-background p-[5px] shadow-launcher">
+            <Mark count={compact ? count : null} />
 
             <span className={fold} inert={compact}>
               <span className="min-w-0 overflow-hidden">
-                <span className="flex items-center gap-6 whitespace-nowrap pl-3 pr-2">
-                  <span className="flex flex-col items-start text-left leading-snug">
-                    <span className="max-w-52 truncate text-[14px] font-semibold">{title}</span>
-                    <span className="text-[12px] tabular-nums text-muted-foreground">
-                      {detail}
+                <span className="flex items-center gap-2 whitespace-nowrap pl-2.5 pr-3">
+                  <span className="max-w-52 truncate text-[13px] font-semibold">{title}</span>
+                  {count !== null && (
+                    <span
+                      data-launcher-chip=""
+                      className="rounded-full bg-muted px-2 text-[12px] font-semibold leading-5 tabular-nums text-muted-foreground"
+                    >
+                      {count.toLocaleString()}
                     </span>
-                  </span>
-                  <span
-                    className="text-[14px] font-bold text-link underline-offset-2 group-hover/open:underline"
-                    aria-hidden
-                  >
-                    Open
-                  </span>
+                  )}
                 </span>
               </span>
             </span>
-          </button>
+          </span>
 
-          <span className={fold} inert={compact}>
-            <span className="min-w-0 overflow-hidden">
-              <Hint label="Shrink to the GitHub mark" side="top">
-                <button
-                  type="button"
-                  onClick={() => setCompact(true)}
-                  aria-label="Shrink launcher"
-                  className={cn(
-                    'mr-1.5 flex size-8 items-center justify-center rounded-full outline-none',
-                    'text-foreground/70 transition-colors hover:bg-accent hover:text-foreground',
-                    'focus-visible:ring-2 focus-visible:ring-ring/60',
-                  )}
-                >
-                  <XIcon className="size-4" />
-                </button>
-              </Hint>
+          {/* The sidecar disc. It folds by width, since the grid fold's
+              overflow-hidden would clip its shadow. */}
+          <span
+            inert={compact}
+            className={cn(
+              'flex justify-end transition-[width,opacity] duration-300 ease-stack motion-reduce:transition-none',
+              compact ? 'w-0 opacity-0' : 'w-12 opacity-100',
+            )}
+          >
+            <span
+              className={cn(
+                'flex size-11 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-launcher',
+                'transition-transform duration-200 ease-stack group-hover/open:scale-105',
+                'motion-reduce:transition-none motion-reduce:group-hover/open:scale-100',
+              )}
+            >
+              <ArrowUpRightIcon className="size-4" />
             </span>
           </span>
-        </div>
+        </button>
+
+        {!compact && (
+          <Hint label="Shrink to the GitHub mark" side="top">
+            <button
+              type="button"
+              onClick={() => setCompact(true)}
+              aria-label="Shrink launcher"
+              className={cn(
+                'absolute -left-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full outline-none',
+                'border border-border bg-background text-muted-foreground shadow-sm hover:text-foreground',
+                'opacity-0 transition-opacity group-hover/launcher:opacity-100 focus-visible:opacity-100',
+                'focus-visible:ring-2 focus-visible:ring-ring/60',
+              )}
+            >
+              <XIcon className="size-3" />
+            </button>
+          </Hint>
+        )}
       </div>
 
       {compact && (
@@ -152,19 +174,17 @@ export function Launcher({ side, title, count, compact, onOpen, onCompactChange 
   )
 }
 
-/** The GitHub mark in a ringed disc, with the result count as a bubble when one is given. */
-function Badge({ count }: { count: number | null }) {
+/** The GitHub mark on a solid disc, with the result count as a bubble when one is given. */
+function Mark({ count }: { count: number | null }) {
   return (
-    <span className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
-      <span className="flex size-7 items-center justify-center rounded-full bg-background shadow-sm">
-        <MarkGithubIcon className="size-6" />
-      </span>
+    <span className="relative flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
+      <MarkGithubIcon className="size-[18px]" />
 
       {count !== null && count > 0 && (
         <span
           data-launcher-count=""
           className={cn(
-            'absolute -right-1.5 -top-1.5 min-w-4 rounded-full bg-link px-1',
+            'absolute -right-2 -top-2 min-w-4 rounded-full bg-link px-1',
             'text-center text-[10px] font-bold leading-4 tabular-nums text-background',
           )}
         >

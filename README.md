@@ -29,16 +29,18 @@ dropped on `tabs.onRemoved`; otherwise the next tab to take that id would
 inherit a panel nobody opened.
 
 Out of the way is not the same as gone, though, so a tab that has not been
-asked still shows a launcher: a pill with the query name, the result count once
-there is one, and an **Open** action. It sits in the bottom-right corner while
-the panel floats, and in the bottom-left, under where the panel goes, while it
-is docked. It costs no request, since a launcher is not an open panel, and it
-floats over the page without moving it. Nobody has to go to the browser's
-extensions menu to find a panel that is meant to be part of the page.
+asked still shows a launcher: a capsule with the GitHub mark, the query name,
+and the result count once there is one, with an ↗ open button riding beside it
+as its own disc. It sits in the bottom-right corner while the panel floats, and
+in the bottom-left, under where the panel goes, while it is docked. It costs no
+request, since a launcher is not an open panel, and it floats over the page
+without moving it. Nobody has to go to the browser's extensions menu to find a
+panel that is meant to be part of the page.
 
-The ✕ on the launcher shrinks it to the GitHub mark, with the count as a bubble.
-Hovering the mark shows a › beside it that grows the full pill back. Which of
-the two shows is shared across tabs, like the rest of the window state.
+Hovering the launcher shows a ✕ on its corner that shrinks it to the GitHub
+mark, with the count as a bubble. Hovering the mark shows a › beside it that
+grows the launcher back. Which of the two shows is shared across tabs, like the
+rest of the window state.
 
 Opening a panel for the first time does not mean going to the network. The
 request goes to the worker like any other, which answers from its shared
@@ -761,7 +763,7 @@ neither, and no notification to play a sound alongside.
 | Collapse / expand     | Chevron button in the header                     |
 | Collapse a dock       | Panel button in the header, then click the launcher |
 | Show / hide this tab  | The launcher, the ✕ button, or the toolbar icon  |
-| Shrink the launcher   | ✕ on the launcher; hover the mark and click › to grow it back |
+| Shrink the launcher   | Hover it, then ✕ on its corner; hover the mark and click › to grow it back |
 | Switch queries        | Click the query name in the header               |
 | Edit queries          | Query menu → **Manage queries**                  |
 | Open an item          | Click a row (⌘/Ctrl-click for a tab)             |

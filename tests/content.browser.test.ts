@@ -906,6 +906,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
         bottom: box.bottom,
         width: box.width,
         text: node.textContent ?? '',
+        chip: shadow.querySelector('[data-launcher-chip]')?.textContent ?? null,
         bubble: shadow.querySelector('[data-launcher-count]')?.textContent ?? null,
         panelGone: !shadow.querySelector('[data-docked]'),
       }
@@ -930,7 +931,9 @@ describe('docked mode', { concurrency: false, skip }, () => {
   })
 
   it('keeps taking results while collapsed', async () => {
-    assert.match((await launcher())!.text, /Needs my review\s*400 results/)
+    const pill = (await launcher())!
+    assert.match(pill.text, /Needs my review/)
+    assert.equal(pill.chip, '400')
 
     // A refresh landing while collapsed has to reach the launcher, otherwise
     // the count it is showing is decoration rather than status.
@@ -952,7 +955,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
     })
     await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)))
 
-    assert.match((await launcher())!.text, /7 results/)
+    assert.equal((await launcher())!.chip, '7')
   })
 
   /** Activates a launcher control from the keyboard, the way focus handling matters. */
@@ -984,7 +987,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
 
   it('shrinks to the GitHub mark, keeps the count, and remembers it', async () => {
     const full = (await launcher())!
-    assert.equal(full.bubble, null, 'the full pill already says the count')
+    assert.equal(full.bubble, null, 'the full launcher already shows the count')
 
     await pressOn('Shrink launcher')
     const mark = (await launcher())!
@@ -1841,13 +1844,15 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
         right: box.right,
         bottom: box.bottom,
         text: shadow.querySelector('[data-launcher]')!.textContent,
+        chip: Boolean(shadow.querySelector('[data-launcher-chip]')),
       }
     })
     assert.equal(layout.panel, false)
     assert.equal(layout.right, 1280 - 20)
     assert.equal(layout.bottom, 800 - 20)
     // Nothing has loaded in a closed tab, so there is no count to show yet.
-    assert.match(layout.text ?? '', /Needs my review\s*GitHub Sidecar\s*Open/)
+    assert.match(layout.text ?? '', /Needs my review/)
+    assert.equal(layout.chip, false)
   })
 
   it('asks GitHub for nothing until it is opened', async () => {
