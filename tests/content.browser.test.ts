@@ -1012,12 +1012,21 @@ describe('docked mode', { concurrency: false, skip }, () => {
     assert.equal(await focused(), 'Open GitHub Sidecar')
   })
 
-  it('expands again from the launcher alone', async () => {
+  it('opens again from the launcher, scrolled past the sticky header', async () => {
+    await dockPage.evaluate(() => window.scrollTo(0, 800))
+    await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
     await clickDock('Open GitHub Sidecar')
 
     const box = await panel()
     assert.equal(box.docked, true)
     assert.ok(box.width > 100, `expected the panel back, saw ${box.width}px`)
+
+    // The pinned header still ends above the page, even though <main> has
+    // scrolled up past it, so it has to stay full-bleed.
+    const hostPage = await host()
+    assert.ok(hostPage.bodyPadding > 0, 'expected the page to be pushed across')
+    assert.equal(hostPage.chromeLeft, 0)
+    assert.equal(hostPage.chromeWidth, NARROW)
   })
 
   it('gives the page its space back when undocked', async () => {

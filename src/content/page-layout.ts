@@ -110,8 +110,9 @@ function mainLandmark(): Element | null {
  * header, the nav rows, and anything stacked with them, such as the staff bar.
  *
  * Boxes have to end above `<main>` to count, so a sidebar laid out beside it
- * is never taken for a header. Boxes out of flow are skipped, since body
- * padding never moves them.
+ * is never taken for a header. Sticky boxes are exempt, because once pinned
+ * they sit below a `<main>` that has scrolled up past them. Boxes out of flow
+ * are skipped, since body padding never moves them.
  */
 function topChrome(): Element[] {
   const main = mainLandmark()
@@ -126,8 +127,8 @@ function topChrome(): Element[] {
       const position = getComputedStyle(bar).position
       if (position === 'fixed' || position === 'absolute') continue
       const rect = bar.getBoundingClientRect()
-      if (rect.height === 0 || rect.bottom > mainTop + 1) continue
-      if (rect.width < window.innerWidth * FULL_WIDTH_RATIO) continue
+      if (rect.height === 0 || rect.width < window.innerWidth * FULL_WIDTH_RATIO) continue
+      if (position !== 'sticky' && rect.bottom > mainTop + 1) continue
       bars.push(bar)
     }
     node = node.parentElement
