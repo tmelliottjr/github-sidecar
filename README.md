@@ -29,13 +29,13 @@ dropped on `tabs.onRemoved`; otherwise the next tab to take that id would
 inherit a panel nobody opened.
 
 Out of the way is not the same as gone, though, so a tab that has not been
-asked still shows a launcher: a capsule with the GitHub mark, the query name,
-and the result count once there is one, with an ↗ open button riding beside it
-as its own disc. It sits in the bottom-right corner while the panel floats, and
-in the bottom-left, under where the panel goes, while it is docked. It costs no
-request, since a launcher is not an open panel, and it floats over the page
-without moving it. Nobody has to go to the browser's extensions menu to find a
-panel that is meant to be part of the page.
+asked still shows a launcher: a pill with the GitHub mark, the query name, the
+result count once there is one, and an ↗ to open it. It sits in the
+bottom-right corner while the panel floats, and in the bottom-left, under where
+the panel goes, while it is docked. It costs no request, since a launcher is
+not an open panel, and it floats over the page without moving it. Nobody has to
+go to the browser's extensions menu to find a panel that is meant to be part of
+the page.
 
 Hovering the launcher shows a ✕ on its corner that shrinks it to the GitHub
 mark, with the count as a bubble. Hovering the mark shows a › beside it that

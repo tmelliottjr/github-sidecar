@@ -31,9 +31,8 @@ interface Props {
 
 /**
  * Stands in for the panel while it is hidden or collapsed: a capsule in the
- * corner with the GitHub mark, the query name, and the result count, with the
- * open action riding beside it as its own disc. Shrunk, it shows the GitHub
- * mark with the count as a bubble.
+ * corner with the GitHub mark, the query name, the result count, and an open
+ * arrow. Shrunk, it shows the GitHub mark with the count as a bubble.
  */
 export function Launcher({ side, title, count, compact, onOpen, onCompactChange }: Props) {
   const detailId = useId()
@@ -80,8 +79,10 @@ export function Launcher({ side, title, count, compact, onOpen, onCompactChange 
           onClick={onOpen}
           aria-label="Open GitHub Sidecar"
           aria-describedby={detailId}
+          data-launcher-capsule=""
           className={cn(
-            'group/open flex items-center rounded-full text-foreground outline-none',
+            'group/open flex h-11 items-center rounded-full border border-border bg-background p-[5px]',
+            'text-foreground shadow-launcher outline-none',
             'focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2',
           )}
         >
@@ -89,43 +90,28 @@ export function Launcher({ side, title, count, compact, onOpen, onCompactChange 
             {detail}
           </span>
 
-          <span className="flex h-11 items-center rounded-full border border-border bg-background p-[5px] shadow-launcher">
-            <Mark count={compact ? count : null} />
+          <Mark count={compact ? count : null} />
 
-            <span className={fold} inert={compact}>
-              <span className="min-w-0 overflow-hidden">
-                <span className="flex items-center gap-2 whitespace-nowrap pl-2.5 pr-3">
-                  <span className="max-w-52 truncate text-[13px] font-semibold">{title}</span>
-                  {count !== null && (
-                    <span
-                      data-launcher-chip=""
-                      className="rounded-full bg-muted px-2 text-[12px] font-semibold leading-5 tabular-nums text-muted-foreground"
-                    >
-                      {count.toLocaleString()}
-                    </span>
+          <span className={fold} inert={compact}>
+            <span className="min-w-0 overflow-hidden">
+              <span className="flex items-center gap-2 whitespace-nowrap pl-2.5 pr-2">
+                <span className="max-w-52 truncate text-[13px] font-semibold">{title}</span>
+                {count !== null && (
+                  <span
+                    data-launcher-chip=""
+                    className="rounded-full bg-muted px-2 text-[12px] font-semibold leading-5 tabular-nums text-muted-foreground"
+                  >
+                    {count.toLocaleString()}
+                  </span>
+                )}
+                <ArrowUpRightIcon
+                  className={cn(
+                    'ml-1 size-4 text-muted-foreground transition-[color,translate] duration-200 ease-stack',
+                    'group-hover/open:translate-x-px group-hover/open:-translate-y-px group-hover/open:text-foreground',
+                    'motion-reduce:transition-none',
                   )}
-                </span>
+                />
               </span>
-            </span>
-          </span>
-
-          {/* The sidecar disc. It folds by width, since the grid fold's
-              overflow-hidden would clip its shadow. */}
-          <span
-            inert={compact}
-            className={cn(
-              'flex justify-end transition-[width,opacity] duration-300 ease-stack motion-reduce:transition-none',
-              compact ? 'w-0 opacity-0' : 'w-12 opacity-100',
-            )}
-          >
-            <span
-              className={cn(
-                'flex size-11 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-launcher',
-                'transition-transform duration-200 ease-stack group-hover/open:scale-105',
-                'motion-reduce:transition-none motion-reduce:group-hover/open:scale-100',
-              )}
-            >
-              <ArrowUpRightIcon className="size-4" />
             </span>
           </span>
         </button>
