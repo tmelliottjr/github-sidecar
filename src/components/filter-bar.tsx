@@ -1,5 +1,13 @@
 import { useEffect, useRef } from 'react'
-import { FoldIcon, RowsIcon, SortDescIcon, UnfoldIcon, XIcon } from '@primer/octicons-react'
+import {
+  CheckIcon,
+  FilterIcon,
+  FoldIcon,
+  RowsIcon,
+  SortDescIcon,
+  UnfoldIcon,
+  XIcon,
+} from '@primer/octicons-react'
 
 import {
   DropdownMenu,
@@ -60,8 +68,12 @@ export function FilterBar({
   }, [])
 
   return (
-    <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
-      <div className="relative min-w-0 flex-1">
+    <div className="flex shrink-0 items-center gap-0.5 border-b border-border/70 px-2 py-2">
+      <div className="relative mr-1 min-w-0 flex-1">
+        <FilterIcon
+          className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+          aria-hidden
+        />
         <Input
           ref={inputRef}
           value={text}
@@ -75,13 +87,13 @@ export function FilterBar({
               onClose()
             }
           }}
-          className="h-7 pr-12 text-[12px]"
+          className="h-8 rounded-full pl-8 pr-12 text-[12px]"
         />
         {text.length > 0 && (
           <span
             className={cn(
-              'pointer-events-none absolute right-2 top-1/2 -translate-y-1/2',
-              'text-[11px] tabular-nums',
+              'pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-muted px-1.5',
+              'text-[11px] font-semibold leading-[18px] tabular-nums',
               matches === 0 ? 'text-closed' : 'text-muted-foreground',
             )}
           >
@@ -93,11 +105,7 @@ export function FilterBar({
       <DropdownMenu>
         <Hint label={`Group: ${GROUP_LABELS[group]}`}>
           <DropdownMenuTrigger
-            className={cn(
-              'flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground',
-              'hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-              group !== 'none' && 'text-foreground',
-            )}
+            className={cn(CONTROL, group !== 'none' && SET)}
             aria-label="Group the rows"
           >
             <RowsIcon className="size-3.5" />
@@ -110,6 +118,7 @@ export function FilterBar({
               onSelect={() => onGroupChange(option)}
               data-selected={option === group || undefined}
             >
+              <CheckIcon className={cn(option !== group && 'invisible')} />
               {GROUP_LABELS[option]}
             </DropdownMenuItem>
           ))}
@@ -122,7 +131,7 @@ export function FilterBar({
             type="button"
             onClick={onToggleAllGroups}
             aria-label={allGroupsCollapsed ? 'Expand all groups' : 'Collapse all groups'}
-            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className={CONTROL}
           >
             {allGroupsCollapsed ? (
               <UnfoldIcon className="size-3.5" />
@@ -136,11 +145,7 @@ export function FilterBar({
       <DropdownMenu>
         <Hint label={`Order: ${SORT_LABELS[sort]}`}>
           <DropdownMenuTrigger
-            className={cn(
-              'flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground',
-              'hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-              sort !== 'default' && 'text-foreground',
-            )}
+            className={cn(CONTROL, sort !== 'default' && SET)}
             aria-label="Change the order"
           >
             <SortDescIcon className="size-3.5" />
@@ -153,6 +158,7 @@ export function FilterBar({
               onSelect={() => onSortChange(order)}
               data-selected={order === sort || undefined}
             >
+              <CheckIcon className={cn(order !== sort && 'invisible')} />
               {SORT_LABELS[order]}
             </DropdownMenuItem>
           ))}
@@ -160,15 +166,19 @@ export function FilterBar({
       </DropdownMenu>
 
       <Hint label="Close the filter">
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close the filter"
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        >
+        <button type="button" onClick={onClose} aria-label="Close the filter" className={CONTROL}>
           <XIcon className="size-3.5" />
         </button>
       </Hint>
     </div>
   )
 }
+
+const CONTROL = cn(
+  'flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors',
+  'hover:bg-accent hover:text-foreground data-[state=open]:bg-accent',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+)
+
+/** A grouping or order other than the default, so the bar says it is in force. */
+const SET = 'bg-accent text-foreground'

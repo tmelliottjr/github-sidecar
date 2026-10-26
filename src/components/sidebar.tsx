@@ -448,6 +448,11 @@ export function Sidebar() {
     return null
 
   const lastFetchedAt = search.data?.pages[0]?.fetchedAt
+  const freshness = isRefreshing
+    ? 'updating…'
+    : lastFetchedAt
+      ? `updated ${relativeTime(new Date(lastFetchedAt).toISOString())}`
+      : null
   const totalCount = search.data?.pages[0]?.totalCount ?? 0
 
   // Rendered before the panel, so the panel paints over it as it fades in.
@@ -663,11 +668,13 @@ export function Sidebar() {
       </div>
 
       {!editing && hasToken && (
-        <footer className="flex h-7 shrink-0 items-center justify-between gap-2 border-t border-border px-2.5 text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-2">
-            <span className="tabular-nums">
-              {items.length > 0 ? `${visibleItems.length} of ${totalCount.toLocaleString()}` : '—'}
-            </span>
+        <footer className="flex h-9 shrink-0 items-center justify-between gap-2 border-t border-border/70 px-3 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            {items.length > 0 && (
+              <span className="tabular-nums">
+                {visibleItems.length} of {totalCount.toLocaleString()}
+              </span>
+            )}
             {/*
              * Hidden rows are still results, so the count says where they went
              * rather than quietly leaving them out of it — and is the way back
@@ -678,28 +685,31 @@ export function Sidebar() {
                 type="button"
                 onClick={() => setShowHidden((current) => !current)}
                 aria-pressed={showHidden}
-                className="rounded px-1 tabular-nums underline-offset-2 hover:text-foreground hover:underline"
+                className={cn(
+                  'rounded-full bg-muted px-2 leading-5 tabular-nums transition-colors hover:text-foreground',
+                  'aria-pressed:bg-accent aria-pressed:text-foreground',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                )}
               >
                 {showHidden ? 'hide' : 'show'} {hiddenIds.size} hidden
               </button>
             )}
           </span>
-          <span className="flex items-center gap-1.5">
-            {settings.pollIntervalMs > 0 && (
-              <span
-                className={cn(
-                  'size-1.5 rounded-full',
-                  isRefreshing ? 'animate-pulse bg-open' : 'bg-border',
-                )}
-                aria-hidden
-              />
-            )}
-            {isRefreshing
-              ? 'updating…'
-              : lastFetchedAt
-                ? `updated ${relativeTime(new Date(lastFetchedAt).toISOString())}`
-                : 'idle'}
-          </span>
+          {/* Says nothing rather than a placeholder until there is a result to date. */}
+          {freshness && (
+            <span className="flex items-center gap-1.5">
+              {settings.pollIntervalMs > 0 && (
+                <span
+                  className={cn(
+                    'size-1.5 rounded-full',
+                    isRefreshing ? 'animate-pulse bg-open' : 'bg-muted-foreground/40',
+                  )}
+                  aria-hidden
+                />
+              )}
+              {freshness}
+            </span>
+          )}
         </footer>
       )}
     </div>
@@ -737,21 +747,52 @@ export function Sidebar() {
 
 function noop() {}
 
+/** The icon, heading, text, and actions that stand in for the list when it has nothing to show. */
+function StatePanel({
+  icon,
+  tone,
+  title,
+  children,
+  actions,
+}: {
+  icon: React.ReactNode
+  /** Classes for the disc behind the icon. */
+  tone: string
+  title: string
+  children: React.ReactNode
+  actions: React.ReactNode
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+      <span className={cn('flex size-10 items-center justify-center rounded-full', tone)}>
+        {icon}
+      </span>
+      <p className="mt-1 text-[13px] font-semibold">{title}</p>
+      <p className="text-[12px] leading-relaxed text-muted-foreground">{children}</p>
+      <div className="mt-1.5 flex items-center gap-2">{actions}</div>
+    </div>
+  )
+}
+
 function TokenPrompt() {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <MarkGithubIcon className="size-7 text-muted-foreground" />
-      <div className="space-y-1">
-        <p className="text-[13px] font-semibold">Connect your GitHub account</p>
-        <p className="text-[12px] leading-relaxed text-muted-foreground">
-          Add a personal access token to start tracking the issues and pull requests you
-          care about.
-        </p>
-      </div>
-      <Button size="sm" onClick={() => void sendMessage({ type: 'open-options' })}>
-        Open settings
-      </Button>
-    </div>
+    <StatePanel
+      icon={<MarkGithubIcon className="size-5" />}
+      tone="bg-foreground text-background"
+      title="Connect your GitHub account"
+      actions={
+        <Button
+          size="sm"
+          className="rounded-full"
+          onClick={() => void sendMessage({ type: 'open-options' })}
+        >
+          Open settings
+        </Button>
+      }
+    >
+      Add a personal access token to start tracking the issues and pull requests you care
+      about.
+    </StatePanel>
   )
 }
 
@@ -768,25 +809,35 @@ function ErrorState({
   const isAuth = error instanceof RequestError && error.kind === 'auth'
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      {isAuth ? (
-        <KeyIcon className="size-6 text-attention" />
-      ) : (
-        <AlertIcon className="size-6 text-attention" />
-      )}
-      <p className="text-[12px] leading-relaxed text-muted-foreground">{message}</p>
-      <div className="flex items-center gap-2">
-        {isAuth && (
-          <Button size="sm" onClick={() => void sendMessage({ type: 'open-options' })}>
-            Open settings
+    <StatePanel
+      icon={isAuth ? <KeyIcon className="size-5" /> : <AlertIcon className="size-5" />}
+      tone={isAuth ? 'bg-attention/15 text-attention' : 'bg-closed/12 text-closed'}
+      title={isAuth ? 'GitHub didn’t accept the token' : 'Couldn’t load results'}
+      actions={
+        <>
+          {isAuth && (
+            <Button
+              size="sm"
+              className="rounded-full"
+              onClick={() => void sendMessage({ type: 'open-options' })}
+            >
+              Open settings
+            </Button>
+          )}
+          <Button
+            variant={isAuth ? 'outline' : 'default'}
+            size="sm"
+            className="rounded-full"
+            onClick={onRetry}
+          >
+            <SyncIcon />
+            Try again
           </Button>
-        )}
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          <SyncIcon />
-          Try again
-        </Button>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {message}
+    </StatePanel>
   )
 }
 
@@ -810,7 +861,7 @@ function WarningBanner({
   if (dismissed) return null
 
   return (
-    <div className="flex items-start gap-2 border-b border-attention/30 bg-attention/10 px-2.5 py-1.5">
+    <div className="mx-2 mt-2 flex shrink-0 items-start gap-2 rounded-lg bg-attention/12 py-1.5 pl-2.5 pr-1">
       <AlertIcon className="mt-px size-3.5 shrink-0 text-attention" />
       <p className="flex-1 text-[11px] leading-snug text-foreground">
         {message}
@@ -818,7 +869,7 @@ function WarningBanner({
           <button
             type="button"
             onClick={action.onClick}
-            className="ml-1 underline underline-offset-2 hover:text-attention"
+            className="ml-1 font-semibold underline underline-offset-2 hover:text-attention"
           >
             {action.label}
           </button>
@@ -828,7 +879,7 @@ function WarningBanner({
         type="button"
         onClick={() => setDismissed(true)}
         aria-label="Dismiss warning"
-        className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+        className="flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
       >
         <XIcon className="size-3" />
       </button>
@@ -838,16 +889,19 @@ function WarningBanner({
 
 function EmptyState({ onEdit }: { onEdit: () => void }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <InboxIcon className="size-6 text-muted-foreground" />
-      <p className="text-[12px] leading-relaxed text-muted-foreground">
-        Nothing matches this query right now.
-      </p>
-      <Button variant="outline" size="sm" onClick={onEdit}>
-        <SlidersIcon />
-        Edit query
-      </Button>
-    </div>
+    <StatePanel
+      icon={<InboxIcon className="size-5" />}
+      tone="bg-muted text-muted-foreground"
+      title="All clear"
+      actions={
+        <Button variant="outline" size="sm" className="rounded-full" onClick={onEdit}>
+          <SlidersIcon />
+          Edit query
+        </Button>
+      }
+    >
+      Nothing matches this query right now.
+    </StatePanel>
   )
 }
 
@@ -858,29 +912,34 @@ function EmptyState({ onEdit }: { onEdit: () => void }) {
  */
 function FilteredOutState({ onClear }: { onClear: () => void }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <FilterIcon className="size-5 text-muted-foreground" />
-      <p className="text-[12px] leading-relaxed text-muted-foreground">
-        Every row is hidden, by the filter or by you.
-      </p>
-      <Button variant="outline" size="sm" onClick={onClear}>
-        Show them all
-      </Button>
-    </div>
+    <StatePanel
+      icon={<FilterIcon className="size-5" />}
+      tone="bg-muted text-muted-foreground"
+      title="No rows to show"
+      actions={
+        <Button variant="outline" size="sm" className="rounded-full" onClick={onClear}>
+          Show them all
+        </Button>
+      }
+    >
+      Every row is hidden, by the filter or by you.
+    </StatePanel>
   )
 }
 
 const SKELETON_ROWS = ['a', 'b', 'c', 'd', 'e', 'f']
 
+/** Placeholder rows in the shape of the real ones, so nothing jumps when they land. */
 function LoadingState() {
   return (
-    <div className="flex flex-col gap-4 p-3">
+    <div className="flex flex-col gap-0.5 p-1.5" aria-hidden>
       {SKELETON_ROWS.map((row) => (
-        <div key={row} className="flex gap-2.5">
-          <Skeleton className="size-4 shrink-0 rounded-full" />
-          <div className="flex-1 space-y-1.5">
-            <Skeleton className="h-3 w-[85%]" />
-            <Skeleton className="h-2.5 w-[45%]" />
+        <div key={row} className="flex gap-2.5 px-2.5 py-2">
+          <Skeleton className="mt-0.5 size-7 shrink-0 rounded-full" />
+          <div className="flex-1 space-y-2 pt-0.5">
+            <Skeleton className="h-3 w-[78%] rounded-full" />
+            <Skeleton className="h-2.5 w-[46%] rounded-full" />
+            <Skeleton className="h-4 w-14 rounded-full" />
           </div>
         </div>
       ))}
