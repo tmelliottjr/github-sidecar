@@ -1,6 +1,6 @@
-import { ChevronUpIcon, LinkExternalIcon, XCircleFillIcon } from '@primer/octicons-react'
+import { LinkExternalIcon, XCircleFillIcon } from '@primer/octicons-react'
 
-import { Hint } from '@/components/ui/tooltip'
+import { Drawer } from '@/components/drawer'
 import type { FailingCheck } from '@/lib/github/types'
 import { cn } from '@/lib/utils'
 
@@ -35,11 +35,13 @@ export function ChecksSection({ checks, total, read, onOpen, onCollapse }: Props
   const unread = total === null ? 0 : Math.max(0, total - read)
 
   return (
-    <div className="border-t border-border/60 bg-muted/40">
-      <CollapseHandle onCollapse={onCollapse} />
-
+    <Drawer
+      caption={`${checks.length} failing ${checks.length === 1 ? 'check' : 'checks'}`}
+      closeLabel="Hide the failing checks"
+      onClose={onCollapse}
+    >
       <ul
-        className="scrollbar-slim flex flex-col overflow-y-auto overscroll-contain pb-1 pl-[26px] pr-2"
+        className="scrollbar-slim flex flex-col overflow-y-auto overscroll-contain px-1 pb-1"
         style={{ maxHeight: MAX_VISIBLE * ROW_HEIGHT }}
       >
         {checks.map((check) => (
@@ -54,31 +56,7 @@ export function ChecksSection({ checks, total, read, onOpen, onCollapse }: Props
           </li>
         )}
       </ul>
-    </div>
-  )
-}
-
-/** The lid, shared in spirit with the stack's: shut it where the eye is. */
-function CollapseHandle({ onCollapse }: { onCollapse: () => void }) {
-  return (
-    <Hint label="Hide the failing checks" side="top">
-      <button
-        type="button"
-        onClick={onCollapse}
-        aria-label="Hide the failing checks"
-        className="group/lid flex w-full cursor-pointer items-center justify-center py-1 focus-visible:outline-none"
-      >
-        <ChevronUpIcon
-          className={cn(
-            'size-3.5 text-muted-foreground transition-[color,transform] duration-200',
-            'group-hover/lid:-translate-y-px group-hover/lid:text-foreground',
-            'group-focus-visible/lid:-translate-y-px group-focus-visible/lid:text-foreground',
-            'motion-reduce:transition-none',
-          )}
-          aria-hidden
-        />
-      </button>
-    </Hint>
+    </Drawer>
   )
 }
 
@@ -91,8 +69,8 @@ function CheckRow({
 }) {
   const name = (
     <>
-      <XCircleFillIcon className="size-3 shrink-0 text-closed" aria-hidden />
-      <span className="truncate text-[12px] text-foreground">{check.name}</span>
+      <XCircleFillIcon className="size-3.5 shrink-0 text-closed" aria-hidden />
+      <span className="truncate text-[12px]">{check.name}</span>
     </>
   )
 
@@ -100,7 +78,7 @@ function CheckRow({
   // followed, and saying so quietly beats a control that does nothing.
   if (!check.url) {
     return (
-      <span className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 opacity-70">
+      <span className="flex h-[26px] w-full items-center gap-2 rounded-lg px-1.5 text-muted-foreground">
         {name}
       </span>
     )
@@ -111,8 +89,8 @@ function CheckRow({
       type="button"
       onClick={(event) => onOpen(check.url as string, event)}
       className={cn(
-        'group/check flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left transition-colors',
-        'hover:bg-accent focus-visible:bg-accent focus-visible:outline-none',
+        'group/check flex h-[26px] w-full items-center gap-2 rounded-lg px-1.5 text-left text-foreground transition-colors',
+        'hover:bg-background focus-visible:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
       )}
     >
       {name}

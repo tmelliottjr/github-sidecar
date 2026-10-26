@@ -1,5 +1,6 @@
-import { ChevronRightIcon, ChevronUpIcon, StackIcon } from '@primer/octicons-react'
+import { StackIcon } from '@primer/octicons-react'
 
+import { Drawer } from '@/components/drawer'
 import { ReviewIndicator, StateIcon } from '@/components/status-icons'
 import { ClampedTitle } from '@/components/ui/clamped-title'
 import { Hint } from '@/components/ui/tooltip'
@@ -63,10 +64,19 @@ export function StackSection({ stack, currentId, onOpen, onCollapse }: Props) {
   const hidden = stack.size - stack.entries.length
 
   return (
-    <div className="border-t border-border/60 bg-muted/40">
-      <CollapseHandle onCollapse={onCollapse} />
-
-      <ul className="flex flex-col pb-1 pl-[26px] pr-2">
+    <Drawer
+      caption={
+        <>
+          <StackIcon className="size-3 shrink-0" aria-hidden />
+          <span className="truncate">
+            Stack #{stack.number} <span className="font-normal">· onto {stack.baseRefName}</span>
+          </span>
+        </>
+      }
+      closeLabel="Hide the stack"
+      onClose={onCollapse}
+    >
+      <ul className="flex flex-col px-1 pb-1">
         {stack.entries.map((entry) => (
           <li key={entry.id}>
             <StackRow
@@ -82,41 +92,8 @@ export function StackSection({ stack, currentId, onOpen, onCollapse }: Props) {
             and {hidden} more {hidden === 1 ? 'layer' : 'layers'}
           </li>
         )}
-
-        <li className="flex items-center gap-1.5 py-1 pl-1.5 text-[11px] text-muted-foreground">
-          <span className="h-3 w-px bg-border" aria-hidden />
-          <span className="truncate">onto {stack.baseRefName}</span>
-        </li>
       </ul>
-    </div>
-  )
-}
-
-/**
- * The lid of the slide-out. It reads as the edge the section was pulled from,
- * so shutting it again is where the eye already is — the badge that opened it
- * is now several rows away.
- */
-function CollapseHandle({ onCollapse }: { onCollapse: () => void }) {
-  return (
-    <Hint label="Hide the stack" side="top">
-      <button
-        type="button"
-        onClick={onCollapse}
-        aria-label="Hide the stack"
-        className="group/lid flex w-full cursor-pointer items-center justify-center py-1 focus-visible:outline-none"
-      >
-        <ChevronUpIcon
-          className={cn(
-            'size-3.5 text-muted-foreground transition-[color,transform] duration-200',
-            'group-hover/lid:-translate-y-px group-hover/lid:text-foreground',
-            'group-focus-visible/lid:-translate-y-px group-focus-visible/lid:text-foreground',
-            'motion-reduce:transition-none',
-          )}
-          aria-hidden
-        />
-      </button>
-    </Hint>
+    </Drawer>
   )
 }
 
@@ -135,18 +112,12 @@ function StackRow({
       onClick={(event) => onOpen(entry.url, event)}
       aria-current={isCurrent || undefined}
       className={cn(
-        'relative flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left transition-colors',
-        'hover:bg-accent focus-visible:bg-accent focus-visible:outline-none',
-        isCurrent && 'bg-accent/60',
+        'flex h-7 w-full items-center gap-2 rounded-lg px-1.5 text-left transition-colors',
+        'hover:bg-background focus-visible:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+        // The row this stack was opened from, marked in place rather than with a pointer.
+        isCurrent && 'bg-background shadow-[0_0_0_1px_var(--color-border)]',
       )}
     >
-      {/* Hangs into the section's left gutter so it never shifts the row. */}
-      {isCurrent && (
-        <ChevronRightIcon
-          className="pointer-events-none absolute -left-4 top-1/2 size-4 -translate-y-1/2 text-foreground"
-          aria-hidden
-        />
-      )}
       <span
         className={cn(
           'w-3 shrink-0 text-[10px] font-bold tabular-nums',
