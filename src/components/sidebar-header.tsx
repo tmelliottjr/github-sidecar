@@ -168,11 +168,17 @@ export function SidebarHeader({
             <span className="truncate text-[13px] font-semibold">
               {activeQuery?.name ?? 'No query'}
             </span>
-            {/* The footer still has the count when the panel is too narrow for both. */}
+            {/*
+             * The footer still has the count when the header is too narrow for it.
+             * Floating, it needs more room, so the drag region stays wide enough to grab.
+             */}
             {count !== null && (
               <span
                 data-header-count=""
-                className="hidden shrink-0 rounded-full bg-muted px-1.5 text-[11px] font-semibold leading-[18px] tabular-nums text-muted-foreground @xs:inline"
+                className={cn(
+                  'hidden shrink-0 rounded-full bg-muted px-1.5 text-[11px] font-semibold leading-[18px] tabular-nums text-muted-foreground',
+                  docked ? '@xs:inline' : '@md:inline',
+                )}
               >
                 {count.toLocaleString()}
               </span>
