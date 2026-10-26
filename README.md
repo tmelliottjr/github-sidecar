@@ -50,7 +50,9 @@ stays shared, because those are preferences rather than per-tab facts.
 
 github.com centres its pages in a max-width column, which on a wide display
 leaves a wide empty gutter down the left. Docked mode puts the panel there, so
-nothing is covered and the page needs no cooperation from us.
+nothing is covered and the page needs no cooperation from us. The panel is a
+rounded card inset 12px from the viewport edges and from the header above it,
+so it reads as floating in the gutter.
 
 Finding that gutter means measuring a page we do not control. Reading it off a
 selector would break the first time github.com reorganised its markup, so

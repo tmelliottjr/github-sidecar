@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 
 import puppeteer, { type Browser, type Page } from 'puppeteer-core'
 
+import { DOCK_INSET } from '../src/content/page-layout.ts'
+
 const CHROME_PATHS = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/Applications/Chromium.app/Contents/MacOS/Chromium',
@@ -756,9 +758,12 @@ describe('docked mode', { concurrency: false, skip }, () => {
         docked: node.hasAttribute('data-docked'),
         x: box.x,
         y: box.y,
+        right: box.right,
         bottom: box.bottom,
         width: box.width,
+        borderLeft: styles.borderLeftWidth,
         borderRight: styles.borderRightWidth,
+        radius: parseFloat(styles.borderTopLeftRadius),
         boxShadow: styles.boxShadow,
       }
     })
@@ -767,11 +772,13 @@ describe('docked mode', { concurrency: false, skip }, () => {
   const host = () =>
     dockPage.evaluate(() => {
       const chrome = document.querySelector('.AppHeader')!.getBoundingClientRect()
+      const nav = document.querySelector('.js-header-wrapper')!.getBoundingClientRect()
       return {
         bodyPadding: parseFloat(getComputedStyle(document.body).paddingLeft),
         headingLeft: document.getElementById('heading')!.getBoundingClientRect().left,
         chromeLeft: chrome.left,
         chromeWidth: chrome.width,
+        chromeBottom: nav.bottom,
       }
     })
 
@@ -789,20 +796,21 @@ describe('docked mode', { concurrency: false, skip }, () => {
     assert.equal((await host()).bodyPadding, 0)
   })
 
-  it('docks into the page gutter, below the header and nav', async () => {
+  it('docks into the page gutter, floating below the header and nav', async () => {
     await clickDock('Dock to the page')
     const box = await panel()
 
     assert.equal(box.docked, true)
-    assert.equal(box.x, 0)
-    // 64px header plus a 48px nav row, and it must not cover them.
-    assert.ok(box.y >= 112, `expected the panel below the chrome, saw y=${box.y}`)
-    assert.equal(box.bottom, 900)
+    assert.equal(box.x, DOCK_INSET)
+    assert.equal(box.y, (await host()).chromeBottom + DOCK_INSET)
+    assert.equal(box.bottom, 900 - DOCK_INSET)
   })
 
-  it('carries an edge so it reads against a white page', async () => {
+  it('floats as a rounded card with an edge on every side', async () => {
     const box = await panel()
+    assert.equal(box.borderLeft, '1px')
     assert.equal(box.borderRight, '1px')
+    assert.ok(box.radius > 0, 'expected rounded corners')
     assert.match(box.boxShadow, /oklch/)
   })
 
@@ -813,8 +821,8 @@ describe('docked mode', { concurrency: false, skip }, () => {
     assert.equal(hostPage.bodyPadding, 0)
     assert.equal(hostPage.chromeLeft, 0)
     assert.ok(
-      hostPage.headingLeft > box.width,
-      `expected the page clear of the panel, saw ${hostPage.headingLeft} vs ${box.width}`,
+      hostPage.headingLeft > box.right,
+      `expected the page clear of the panel, saw ${hostPage.headingLeft} vs ${box.right}`,
     )
   })
 
@@ -826,7 +834,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
     const box = await panel()
 
     assert.ok(hostPage.bodyPadding > 0, 'expected the page to be pushed across')
-    assert.ok(hostPage.headingLeft >= box.width, 'expected the content clear of the panel')
+    assert.ok(hostPage.headingLeft >= box.right, 'expected the content clear of the panel')
     // Only the page body moves. The header keeps spanning the window, and the
     // panel hangs below it rather than beside it, so the page still reads as
     // github.com with a drawer open.
@@ -923,7 +931,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
       collapsedPush < expandedPush,
       `expected less room taken, ${collapsedPush} vs ${expandedPush}`,
     )
-    assert.ok(collapsedPush <= rail.width + 16, `rail took ${collapsedPush}px`)
+    assert.ok(collapsedPush <= DOCK_INSET + rail.width + 16, `rail took ${collapsedPush}px`)
   })
 
   it('keeps taking results while collapsed', async () => {
@@ -1082,7 +1090,7 @@ describe('docked on a page from the newer frontend', { concurrency: false, skip 
     await newerPage.evaluate(() => window.scrollTo(0, 600))
     await newerPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)))
 
-    assert.equal((await layout()).panelTop, 0)
+    assert.equal((await layout()).panelTop, DOCK_INSET)
   })
 })
 

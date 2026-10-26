@@ -29,6 +29,9 @@ const FULL_BLEED_ATTR = 'data-github-sidecar-full-bleed'
 /** Breathing room between the docked panel and the page's own content. */
 export const DOCK_GAP = 16
 
+/** Space between the docked panel and the viewport edges and the header above it. */
+export const DOCK_INSET = 12
+
 /** How far right we look before giving up on finding page content. */
 const MAX_GUTTER = 760
 

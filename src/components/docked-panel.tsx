@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { MarkGithubIcon, SidebarCollapseIcon } from '@primer/octicons-react'
 
 import { Hint } from '@/components/ui/tooltip'
+import { DOCK_INSET } from '@/content/page-layout'
 import { cn, clamp } from '@/lib/utils'
 
 const MIN_DOCK_WIDTH = 280
@@ -15,7 +16,7 @@ export function clampDockWidth(width: number): number {
 
 interface Props {
   width: number
-  /** Viewport y the panel starts at, just below the page's own top chrome. */
+  /** Viewport y of the bottom of github.com's header, which the panel floats below. */
   top: number
   onWidthChange: (width: number) => void
   header: ReactNode
@@ -23,10 +24,10 @@ interface Props {
 }
 
 /**
- * The panel in docked mode: pinned to the left edge, filling the page's gutter
- * from the bottom of github.com's header down to the bottom of the viewport.
- * Its top edge is remeasured as the page scrolls, so it stays tucked under
- * whatever chrome github.com currently has at the top.
+ * The panel in docked mode: a card floating in the page's gutter, inset from
+ * the left edge, the bottom of the viewport, and github.com's header above it.
+ * Its top edge is remeasured as the page scrolls, so it stays below whatever
+ * chrome github.com currently has at the top.
  * Only the inner edge resizes, and like the floating window the new width is
  * written straight to the DOM during the drag and committed on release.
  */
@@ -77,13 +78,16 @@ export function DockedPanel({ width, top, onWidthChange, header, children }: Pro
       aria-label="GitHub Sidecar"
       data-docked=""
       className={cn(
-        'fixed bottom-0 left-0 z-[2147483646] flex flex-col overflow-hidden',
-        // A hairline plus a soft shadow off the inner edge: the panel and the
-        // page are both white, so a border alone reads as an accident.
-        'border-r border-border bg-background text-foreground shadow-dock',
+        'fixed z-[2147483646] flex flex-col overflow-hidden',
+        'rounded-window border border-border bg-background text-foreground shadow-window',
         'data-[gesture=active]:select-none',
       )}
-      style={{ top, width: widthRef.current }}
+      style={{
+        top: top + DOCK_INSET,
+        left: DOCK_INSET,
+        bottom: DOCK_INSET,
+        width: widthRef.current,
+      }}
     >
       {header}
 
@@ -91,7 +95,7 @@ export function DockedPanel({ width, top, onWidthChange, header, children }: Pro
 
       <div
         onPointerDown={startResize}
-        className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize touch-none"
+        className="absolute inset-y-3 right-0 z-10 w-1.5 cursor-ew-resize touch-none"
         aria-hidden
       />
     </div>
