@@ -1360,10 +1360,12 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
   it('marks a stacked row with its position in the stack', async () => {
     assert.match(await stackRow(), /2\/3/)
-    // An unstacked row says nothing about stacks and offers no expander.
+    // An unstacked row says nothing about stacks and offers no expander. Menu
+    // buttons report `aria-expanded` too, so they are left out of the count.
     const expanders = await menuPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      return shadow.querySelectorAll('[data-index="0"] [aria-expanded]').length
+      return shadow.querySelectorAll('[data-index="0"] [aria-expanded]:not([aria-haspopup])')
+        .length
     })
     assert.equal(expanders, 0)
   })
@@ -1796,6 +1798,318 @@ describe('row context menu', { concurrency: false, skip }, () => {
       () =>
         !document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector('[role="menu"]'),
     )
+  })
+})
+
+describe('quick actions on a row', { concurrency: false, skip }, () => {
+  let quickBrowser: Browser
+  let quickPage: Page
+
+  before(async () => {
+    quickBrowser = await puppeteer.launch({ executablePath, headless: true })
+    quickPage = await quickBrowser.newPage()
+    await quickPage.setViewport({ width: 1280, height: 900 })
+    await quickPage.setContent('<!doctype html><html data-color-mode="light"><body></body></html>')
+    await quickPage.evaluate(CHROME_STUB)
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await quickPage.evaluate(bundle)
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+  })
+
+  after(async () => {
+    await quickBrowser?.close()
+  })
+
+  /** The quick actions on one row: their names, and how visible the group is. */
+  const actionsOn = (index: number) =>
+    quickPage.evaluate((rowIndex) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const group = shadow.querySelector(
+        `[data-index="${rowIndex}"] [data-quick-actions]`,
+      ) as HTMLElement | null
+      return {
+        labels: group
+          ? [...group.querySelectorAll('button')].map((node) => node.getAttribute('aria-label'))
+          : [],
+        opacity: group ? getComputedStyle(group).opacity : null,
+      }
+    }, index)
+
+  const waitForActionsShown = (index: number) =>
+    quickPage.waitForFunction((rowIndex) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const group = shadow.querySelector(`[data-index="${rowIndex}"] [data-quick-actions]`)
+      return Boolean(group) && getComputedStyle(group!).opacity === '1'
+    }, {}, index)
+
+  const hoverRow = async (index: number) => {
+    const point = await quickPage.evaluate((rowIndex) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = shadow.querySelector(`[data-index="${rowIndex}"] button`)!.getBoundingClientRect()
+      return { x: box.x + 40, y: box.y + 12 }
+    }, index)
+    await quickPage.mouse.move(point.x, point.y, { steps: 4 })
+  }
+
+  const clickAction = (index: number, label: string) =>
+    quickPage.evaluate(
+      ({ rowIndex, name }) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const button = shadow.querySelector(
+          `[data-index="${rowIndex}"] [data-quick-actions] [aria-label="${name}"]`,
+        ) as HTMLElement
+        button.click()
+      },
+      { rowIndex: index, name: label },
+    )
+
+  const pinnedIds = async () =>
+    (await quickPage.evaluate(() => chrome.storage.local.get('pinnedIds'))).pinnedIds as string[]
+
+  /** Waits for a menu entry by its exact text, then picks it. */
+  const pickMenuItem = async (label: string) => {
+    await quickPage.waitForFunction(
+      (text: string) =>
+        [
+          ...document
+            .getElementById('github-sidecar-root')!
+            .shadowRoot!.querySelectorAll('[role="menuitem"]'),
+        ].some((node) => node.textContent?.trim() === text),
+      {},
+      label,
+    )
+    await quickPage.evaluate((text) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[role="menuitem"]')].find(
+        (node) => node.textContent?.trim() === text,
+      )
+      ;(entry as HTMLElement).click()
+    }, label)
+  }
+
+  it('stays out of sight until the row is hovered, and moves nothing when it shows', async () => {
+    /** Every box in the row apart from the quick actions themselves. */
+    const layout = () =>
+      quickPage.evaluate(() => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const row = shadow.querySelector('[data-index="1"]')!
+        const boxes = [row, ...row.querySelectorAll('*')]
+          .filter((node) => !node.closest('[data-quick-actions]'))
+          .map((node) => {
+            const box = node.getBoundingClientRect()
+            return [box.x, box.y, box.width, box.height].join(',')
+          })
+        return boxes
+      })
+
+    assert.equal((await actionsOn(1)).opacity, '0')
+    const atRest = await layout()
+
+    await hoverRow(1)
+    await waitForActionsShown(1)
+    assert.deepEqual(await layout(), atRest)
+
+    // Laid over the row's own corner, not hanging outside it.
+    const inside = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const body = shadow.querySelector('[data-index="1"] [data-item-body]')!.getBoundingClientRect()
+      const group = shadow
+        .querySelector('[data-index="1"] [data-quick-actions]')!
+        .getBoundingClientRect()
+      return (
+        group.left >= body.left &&
+        group.right <= body.right &&
+        group.top >= body.top &&
+        group.bottom <= body.bottom
+      )
+    })
+    assert.equal(inside, true)
+
+    await quickPage.mouse.move(0, 0, { steps: 4 })
+  })
+
+  it('is reached from the keyboard right after the row, and pins it as the menu does', async () => {
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('.scrollbar-slim') as HTMLElement).focus()
+    })
+    await quickPage.keyboard.press('j')
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return shadow.activeElement === shadow.querySelector('[data-index="0"] button')
+    })
+
+    // A row that holds keyboard focus shows its actions without a pointer.
+    await waitForActionsShown(0)
+
+    await quickPage.keyboard.press('Tab')
+    const focused = await quickPage.evaluate(
+      () =>
+        document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement?.getAttribute(
+          'aria-label',
+        ) ?? null,
+    )
+    assert.equal(focused, 'Pin item')
+
+    await quickPage.keyboard.press('Enter')
+    await quickPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="0"][data-pinned], [data-index="0"] [data-pinned]'),
+      ),
+    )
+    assert.deepEqual(await pinnedIds(), ['item_0'])
+    assert.deepEqual((await actionsOn(0)).labels, ['Unpin item', 'Remind me', 'Copy link'])
+
+    await clickAction(0, 'Unpin item')
+    await quickPage.waitForFunction(
+      () =>
+        !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-pinned]'),
+    )
+    assert.deepEqual(await pinnedIds(), [])
+  })
+
+  it('copies the same link the menu copies, and says it did', async () => {
+    await quickPage.evaluate(() => {
+      const scope = window as unknown as {
+        __copied: Array<Record<string, string>>
+        ClipboardItem: unknown
+      }
+      scope.__copied = []
+      scope.ClipboardItem = class {
+        readonly flavours: Record<string, Blob>
+        constructor(flavours: Record<string, Blob>) {
+          this.flavours = flavours
+        }
+        get types() {
+          return Object.keys(this.flavours)
+        }
+        async getType(type: string) {
+          return this.flavours[type]
+        }
+      }
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          write: async (items: ClipboardItem[]) => {
+            const flavours = items.flatMap((item) =>
+              item.types.map(async (type) => [type, await (await item.getType(type)).text()]),
+            )
+            scope.__copied.push(Object.fromEntries(await Promise.all(flavours)))
+          },
+        },
+      })
+    })
+    const copies = () =>
+      quickPage.evaluate(
+        () => (window as unknown as { __copied: Array<Record<string, string>> }).__copied,
+      )
+
+    await clickAction(1, 'Copy link')
+    await quickPage.waitForFunction(
+      () => (window as unknown as { __copied: unknown[] }).__copied.length === 1,
+    )
+    assert.ok((await actionsOn(1)).labels.includes('Copied'))
+
+    // The same row, copied through the context menu instead.
+    const point = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = shadow.querySelector('[data-index="1"] button')!.getBoundingClientRect()
+      return { x: box.x + 40, y: box.y + 20 }
+    })
+    await quickPage.mouse.click(point.x, point.y, { button: 'right' })
+    await pickMenuItem('Copy')
+    await pickMenuItem('Link')
+    await quickPage.waitForFunction(
+      () => (window as unknown as { __copied: unknown[] }).__copied.length === 2,
+    )
+
+    const [quick, menu] = await copies()
+    assert.equal(quick['text/plain'], 'https://github.com/acme/app/pull/2')
+    assert.deepEqual(quick, menu)
+  })
+
+  it('marks a changed row as seen, as the menu does', async () => {
+    // Pushed as a poll would push it, then left in the seed so a refetch agrees.
+    await quickPage.evaluate(() => {
+      const scope = window as unknown as {
+        __items: Array<Record<string, unknown>>
+        __broadcast: (message: unknown) => void
+      }
+      const item = { ...scope.__items[0], commentCount: 25 }
+      scope.__broadcast({ type: 'item-updated', item })
+      scope.__items[0] = item
+    })
+    await quickPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="0"] [data-change]'),
+      ),
+    )
+    assert.deepEqual((await actionsOn(0)).labels, [
+      'Mark as seen',
+      'Pin item',
+      'Remind me',
+      'Copy link',
+    ])
+
+    await clickAction(0, 'Mark as seen')
+    await quickPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="0"] [data-change]'),
+    )
+    assert.deepEqual((await actionsOn(0)).labels, ['Pin item', 'Remind me', 'Copy link'])
+  })
+
+  it('sets a reminder from its own menu, as the context menu does', async () => {
+    await hoverRow(2)
+    await waitForActionsShown(2)
+
+    // A Radix trigger opens only on a real pointer, so click it where it is.
+    const trigger = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = shadow
+        .querySelector('[data-index="2"] [data-quick-actions] [aria-label="Remind me"]')!
+        .getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+    await quickPage.mouse.click(trigger.x, trigger.y)
+    await quickPage.waitForFunction(() =>
+      [
+        ...document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelectorAll('[role="menuitem"]'),
+      ].some((node) => node.textContent?.trim() === 'When it changes'),
+    )
+
+    // The pointer is on the menu now, and the actions stay up behind it.
+    assert.equal((await actionsOn(2)).opacity, '1')
+
+    await pickMenuItem('When it changes')
+
+    await quickPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="2"] [data-reminder="waiting"]'),
+      ),
+    )
+    const reminder = await quickPage.evaluate(
+      async () =>
+        (await chrome.storage.local.get('itemMemory')).itemMemory?.item_2?.reminder ?? null,
+    )
+    assert.equal(reminder?.dueAt, null)
+    assert.deepEqual((await actionsOn(2)).labels, ['Pin item', 'Remind me instead', 'Copy link'])
+
+    await quickPage.mouse.move(0, 0, { steps: 4 })
   })
 })
 

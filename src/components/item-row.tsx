@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from 'react'
+import { memo, useCallback, useRef, useState } from 'react'
 import {
   AlertIcon,
   BellIcon,
@@ -43,6 +43,14 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { ClampedTitle } from '@/components/ui/clamped-title'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Hint } from '@/components/ui/tooltip'
 import { copyLink, copyText } from '@/lib/clipboard'
 import { itemMarkdown, stackMarkdown, stackUrls } from '@/lib/links'
@@ -186,6 +194,10 @@ function ItemRowImpl({
 
   const markSeen = useCallback(() => onMarkSeen(item), [item, onMarkSeen])
   const clearReminder = useCallback(() => onClearReminder(item), [item, onClearReminder])
+  const remindAbout = useCallback(
+    (choice: ReminderChoice) => onRemind(item, choice),
+    [item, onRemind],
+  )
   const hide = useCallback(() => onHide(item), [item, onHide])
   const unhide = useCallback(() => onUnhide(item), [item, onUnhide])
 
@@ -237,7 +249,7 @@ function ItemRowImpl({
           <div
             data-item-body=""
             className={cn(
-              'relative flex flex-col rounded-xl bg-[color:var(--row-surface)] transition-colors',
+              'group/body relative flex flex-col rounded-xl bg-[color:var(--row-surface)] transition-colors',
               SURFACES,
               isCurrent &&
                 '[--row-surface:color-mix(in_oklab,var(--color-ring)_8%,var(--color-background))]',
@@ -314,6 +326,23 @@ function ItemRowImpl({
                 </span>
               </span>
             </button>
+
+            {/*
+             * After the row's own button, so moving to a row still focuses the
+             * row and Tab steps from it into these.
+             */}
+            <QuickActions
+              isPinned={isPinned}
+              hasChanges={hasChanges}
+              canRemind={canRemind}
+              hasReminder={reminder !== 'none'}
+              reminderOverrides={reminderOverrides}
+              onTogglePin={togglePin}
+              onMarkSeen={markSeen}
+              onRemind={remindAbout}
+              onClearReminder={clearReminder}
+              onCopyLink={copyItemLink}
+            />
 
             {/*
              * Indented past the state disc so the marks line up under the
@@ -529,6 +558,134 @@ function ItemRowImpl({
 }
 
 export const ItemRow = memo(ItemRowImpl)
+
+/** How long the copy button shows a check after copying. */
+const COPIED_FOR_MS = 1500
+
+/**
+ * The commonest row actions as a capsule over the row's top-right corner,
+ * shown while the row is hovered or holds keyboard focus. Laid over the row
+ * rather than in it, so showing it never moves anything. The context menu
+ * still lists every action.
+ */
+function QuickActions({
+  isPinned,
+  hasChanges,
+  canRemind,
+  hasReminder,
+  reminderOverrides,
+  onTogglePin,
+  onMarkSeen,
+  onRemind,
+  onClearReminder,
+  onCopyLink,
+}: {
+  isPinned: boolean
+  hasChanges: boolean
+  canRemind: boolean
+  hasReminder: boolean
+  reminderOverrides: ReminderOverrides | null
+  onTogglePin: () => void
+  onMarkSeen: () => void
+  onRemind: (choice: ReminderChoice) => void
+  onClearReminder: () => void
+  onCopyLink: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+  const copiedTimer = useRef(0)
+
+  const copyAndConfirm = () => {
+    onCopyLink()
+    setCopied(true)
+    window.clearTimeout(copiedTimer.current)
+    copiedTimer.current = window.setTimeout(() => setCopied(false), COPIED_FOR_MS)
+  }
+
+  return (
+    <div
+      data-quick-actions=""
+      role="group"
+      aria-label="Quick actions"
+      className={cn(
+        'absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded-full border border-border bg-background p-0.5 shadow-capsule',
+        'pointer-events-none opacity-0 transition-opacity duration-150 ease-stack motion-reduce:transition-none',
+        'group-hover/body:pointer-events-auto group-hover/body:opacity-100',
+        'group-has-[:focus-visible]/body:pointer-events-auto group-has-[:focus-visible]/body:opacity-100',
+        // Stays up while its reminder menu is open, after the pointer has left for the menu.
+        'group-has-[[data-state=open]]/body:pointer-events-auto group-has-[[data-state=open]]/body:opacity-100',
+      )}
+    >
+      {hasChanges && (
+        <QuickAction label="Mark as seen" onClick={onMarkSeen}>
+          <CheckIcon />
+        </QuickAction>
+      )}
+
+      <QuickAction label={isPinned ? 'Unpin item' : 'Pin item'} onClick={onTogglePin}>
+        {isPinned ? <PinSlashIcon /> : <PinIcon />}
+      </QuickAction>
+
+      {canRemind && (
+        <DropdownMenu>
+          <Hint label={hasReminder ? 'Remind me instead' : 'Remind me'} side="top">
+            <DropdownMenuTrigger
+              aria-label={hasReminder ? 'Remind me instead' : 'Remind me'}
+              className={QUICK_ACTION}
+            >
+              <BellIcon />
+            </DropdownMenuTrigger>
+          </Hint>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Remind me</DropdownMenuLabel>
+            {(Object.keys(REMINDER_LABELS) as ReminderChoice[]).map((choice) => (
+              <DropdownMenuItem key={choice} onSelect={() => onRemind(choice)}>
+                {reminderChoiceLabel(choice, reminderOverrides)}
+              </DropdownMenuItem>
+            ))}
+            {hasReminder && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={onClearReminder}>
+                  <BellSlashIcon />
+                  Clear the reminder
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      <QuickAction label={copied ? 'Copied' : 'Copy link'} onClick={copyAndConfirm}>
+        {copied ? <CheckIcon className="text-open" /> : <LinkIcon />}
+      </QuickAction>
+    </div>
+  )
+}
+
+const QUICK_ACTION = cn(
+  'flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors',
+  'hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+  '[&_svg]:size-3.5',
+)
+
+function QuickAction({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <Hint label={label} side="top">
+      <button type="button" onClick={onClick} aria-label={label} className={QUICK_ACTION}>
+        {children}
+      </button>
+    </Hint>
+  )
+}
 
 /**
  * The author, as a face and a handle. The avatar stands in for the separator
