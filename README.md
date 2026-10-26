@@ -137,11 +137,14 @@ the panel is there, not what is in it.
 
 #### Row states
 
-The leading mark carries both what a row is and where it stands:
+Each row is a rounded tile. Its leading mark sits on a disc tinted in its own
+color, like the GitHub mark on the launcher, and carries both what a row is and
+where it stands. The colors are GitHub's own:
 
 | Mark                  | Meaning                                          |
 | --------------------- | ------------------------------------------------ |
-| Green circle / check  | Issue, open / closed                             |
+| Green circle          | Issue, open                                      |
+| Purple check          | Issue, closed as completed                       |
 | Grey slashed circle   | Issue closed as not planned                      |
 | Green pull request    | Pull request, open                               |
 | **Amber pull request**| **Queued to merge** (`isInMergeQueue`)           |
@@ -154,17 +157,24 @@ A queued pull request is still open, so GitHub reports it as `OPEN` with
 the reader any more — it is on its way in — which is worth telling apart at a
 glance from an open pull request that is still waiting on someone.
 
-The marks under the title say what is being asked of whom: the check rollup,
-the review decision, comments, labels, and — for a pull request that cannot go
-in — why not.
+The line under the title leads with a gray status pill: the check rollup, the
+review decision, and, for a pull request that cannot go in, why not. They are
+always in that order, so each sits in the same place on every row and can be
+read down the list. What changed, the stack badge, reminders, comments, and
+labels follow.
 
 | Mark                    | Meaning                                        |
 | ----------------------- | ---------------------------------------------- |
-| Red triangle            | Conflicts with the base branch                 |
+| Orange slashed square   | Conflicts with the base branch                 |
 | Amber sync              | Behind the base branch                         |
 | Red cross, then a count | How many checks are red; click it to list them |
 | Bell                    | A reminder waiting on this row                 |
 | Filled amber bell       | A reminder that has come round                 |
+
+Every status color keeps at least 3:1 contrast against the row, hovered or not,
+and every status also has its own glyph, so none of them depends on color
+alone. Label dots use the label color with an edge darkened toward the text, so
+pale labels stay visible on white.
 
 Merge state is flattened from two GitHub fields. `mergeable` is the older one
 and only knows about conflicts; `mergeStateStatus` knows why a mergeable branch
@@ -269,6 +279,23 @@ other route that still carries both flavours at once.
 </details>
 
 <details>
+<summary><strong>Quick actions</strong> — pin, remind, copy a link, or mark as seen without opening a menu.</summary>
+
+#### Acting on a row
+
+Hovering a row, or moving to it with `j` and `k`, shows a small capsule of
+buttons over its top-right corner: **Mark as seen** when the row has changed,
+**Pin**, **Remind me**, and **Copy link**. They do exactly what the matching
+context menu entries do, and the context menu still lists every action.
+
+The capsule sits over the row rather than in it, so showing it never moves the
+row. It comes right after the row in tab order, so Tab from a focused row
+reaches it. Each row builds its capsule the first time it is hovered or
+focused, which keeps scrolling through hundreds of rows cheap.
+
+</details>
+
+<details>
 <summary><strong>Knows where you are</strong> — the row for the issue or pull request you are reading marks itself.</summary>
 
 #### The row you are on
@@ -325,6 +352,7 @@ Every row carries a signature: its state, review decision, check rollup,
 comment count and head commit. What the reader has seen is stored per row and
 shared across their tabs, and the difference between the two is what the row
 reports — "3 new comments", "Checks failed", "Merged" — loudest change first.
+A changed row also shows a blue dot on its state disc.
 
 `updatedAt` is deliberately not part of it. GitHub bumps that timestamp when a
 label moves or a description is edited, and a list that lit up for those would
@@ -403,8 +431,8 @@ panel and wakes the worker anyway.
 Hiding is the other half of the same problem, and deliberately not the same
 thing: a hidden row is one the reader does not want to see, rather than one
 they want back later. It leaves the list and stops counting, but not the
-records — the footer says how many are hidden and shows them on request, marked
-and dimmed, one menu entry away from coming back.
+records — the footer says how many are hidden and shows them on request, with a
+dashed disc and a muted title, one menu entry away from coming back.
 
 That count is of hidden rows *this view holds*, worked out after the filter
 rather than before it: an offer to reveal rows the current view would not show
@@ -586,10 +614,10 @@ number, size, base branch, and entries. Nothing is inferred from branch names.
 
 A stacked row carries a `layer/size` badge, and that badge is the control: it
 slides open a list of the whole stack, read from the base branch up. The row it
-was expanded from stays in that list and is marked with a chevron instead of
-being filtered out, because a stack is only legible as a whole. A chevron along
-the top edge of the slide-out shuts it again, since by then the badge that
-opened it may be several layers up the panel. Expansion is
+was expanded from stays in that list and is outlined instead of being filtered
+out, because a stack is only legible as a whole. The chevron in the slide-out's
+caption shuts it again, since by then the badge that opened it may be several
+layers up the panel. Expansion is
 deliberately not on the row itself: clicking a row still means "open this pull
 request".
 
@@ -761,10 +789,10 @@ neither, and no notification to play a sound alongside.
 | --------------------- | ----------------------------------------------- |
 | Move the window       | Drag the empty strip in the header               |
 | Resize                | Drag any edge or corner                          |
-| Dock / undock         | Panel button in the header                       |
+| Dock / undock         | Panel button in the header (hover the header to show it) |
 | Resize while docked   | Drag the panel's inner edge                      |
-| Lock / unlock         | Padlock button in the header                     |
-| Collapse / expand     | Chevron button in the header                     |
+| Lock / unlock         | Padlock button in the header (hover the header to show it) |
+| Collapse / expand     | Chevron button in the header (hover the header to show it) |
 | Collapse a dock       | Panel button in the header, then click the launcher |
 | Show / hide this tab  | The launcher, the ✕ button, or the toolbar icon  |
 | Shrink the launcher   | Hover it, then ✕ on its corner; hover the mark and click › to grow it back |
@@ -772,19 +800,20 @@ neither, and no notification to play a sound alongside.
 | Edit queries          | Query menu → **Manage queries**                  |
 | Open an item          | Click a row (⌘/Ctrl-click for a tab)             |
 | Refresh one row       | Right-click it → **Refresh this item**           |
-| Pin a row to the top  | Right-click it → **Pin item** (again to unpin)   |
+| Use a row's quick actions | Hover the row, or move to it with `j`/`k` and press Tab |
+| Pin a row to the top  | The pin in its quick actions, or right-click → **Pin item** (again to unpin) |
 | See a stack           | The `layer/size` badge on a stacked row, or right-click → **Show the stack** |
-| Shut a stack          | The chevron at the top of the slide-out, or the badge again      |
-| Copy a link           | Right-click a row → **Copy** → **Link** (rich text, titled; the URL as plain text) |
+| Shut a stack          | The chevron in the slide-out's caption, or the badge again      |
+| Copy a link           | The link button in a row's quick actions, or right-click → **Copy** → **Link** (rich text, titled; the URL as plain text) |
 | Copy it as Markdown   | **Copy** → **Link as Markdown**                  |
 | Copy a title          | **Copy** → **Title**                             |
 | Copy a branch         | **Copy** → **Branch** (pull requests)            |
 | Copy a whole stack    | **Copy** → **Stack links**, or **Stack links as Markdown** |
-| Clear a change mark   | Open the row, be on its page, or right-click → **Mark as seen** |
+| Clear a change mark   | Open the row, be on its page, the check in its quick actions, or right-click → **Mark as seen** |
 | Clear all of them     | Query menu → **Mark all as seen**                |
-| See the failing checks| Click the red checks mark on the row             |
-| Ask for a row again   | Right-click it → **Remind me…** (`r` for when it changes) |
-| Cancel that           | Right-click it → **Clear the reminder**          |
+| See the failing checks| Click the red count in the row's status pill     |
+| Ask for a row again   | The bell in its quick actions, or right-click → **Remind me…** (`r` for when it changes) |
+| Cancel that           | The bell in its quick actions, or right-click → **Clear the reminder** |
 | Hide a row            | Right-click it → **Hide this row** (`h`)         |
 | Review what is hidden | The count in the footer, then right-click → **Show it again** |
 | Manage all of it      | Settings → **Hidden rows** / **Reminders** / **Pinned rows** |
