@@ -1280,7 +1280,13 @@ describe('row context menu', { concurrency: false, skip }, () => {
       const dot = shadow.querySelector('[data-check] svg.octicon-dot-fill')
       if (!dot) return null
       const styles = getComputedStyle(dot)
-      return { animationName: styles.animationName, colour: styles.color }
+      // The token as the browser resolves it, so the minified source spelling does not matter.
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--color-attention)'
+      dot.parentElement!.append(probe)
+      const attention = getComputedStyle(probe).color
+      probe.remove()
+      return { animationName: styles.animationName, colour: styles.color, attention }
     })
 
     assert.ok(mark, 'expected a pending checks mark to be rendered')
@@ -1288,7 +1294,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     // rotationally symmetric, so the slow spin it used to carry was motion
     // nobody could have seen.
     assert.equal(mark.animationName, 'none')
-    assert.equal(mark.colour, 'oklch(0.72 0.16 70.7)')
+    assert.equal(mark.colour, mark.attention)
   })
 
   const firstRowText = () =>

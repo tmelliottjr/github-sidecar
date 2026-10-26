@@ -23,7 +23,8 @@
   --color-foreground: oklch(0.21 0.006 285.9);
   --color-card: oklch(1 0 0);
   --color-muted: oklch(0.968 0.002 286);
-  --color-muted-foreground: oklch(0.552 0.014 285.9);
+  /* 4.5:1 on `muted` as well as on white, since rows turn `muted` on hover. */
+  --color-muted-foreground: oklch(0.52 0.014 285.9);
   --color-border: oklch(0.919 0.004 286.3);
   --color-input: oklch(0.919 0.004 286.3);
   --color-accent: oklch(0.968 0.002 286);
@@ -34,18 +35,19 @@
   /* github.com's own accent blue, dark enough to pass 4.5:1 as text on white. */
   --color-link: oklch(0.54 0.191 257.5);
 
-  --color-open: oklch(0.63 0.16 149.2);
+  /* Status marks keep 3:1 against `muted` (WCAG 1.4.11), not only against white. */
+  --color-open: oklch(0.58 0.16 149);
   --color-closed: oklch(0.58 0.22 27.3);
   --color-merged: oklch(0.55 0.22 302.3);
   --color-draft: oklch(0.552 0.014 285.9);
-  --color-attention: oklch(0.72 0.16 70.7);
+  --color-attention: oklch(0.62 0.15 68);
   /*
    * A conflict is a harder stop than a pending check, so it sits between the
    * amber that means "wait" and the red that means "failed" rather than
    * borrowing either. Sharing amber exactly would leave it and a stale branch
    * telling apart on glyph alone.
    */
-  --color-conflict: oklch(0.65 0.19 45);
+  --color-conflict: oklch(0.62 0.19 45);
 
   --radius-window: 0.875rem;
 
@@ -82,6 +84,10 @@
 
   --shadow-launcher:
     0 10px 28px -6px oklch(0 0 0 / 0.2), 0 2px 6px -1px oklch(0 0 0 / 0.08);
+
+  /* The launcher shadow, scaled down for a capsule that floats over a row. */
+  --shadow-capsule:
+    0 4px 12px -4px oklch(0 0 0 / 0.18), 0 1px 3px oklch(0 0 0 / 0.08);
 }
 
 .dark {
@@ -112,6 +118,9 @@
 
   --shadow-launcher:
     0 10px 28px -6px oklch(0 0 0 / 0.6), 0 2px 6px -1px oklch(0 0 0 / 0.4);
+
+  --shadow-capsule:
+    0 4px 12px -4px oklch(0 0 0 / 0.55), 0 1px 3px oklch(0 0 0 / 0.35);
 }
 
 /*
