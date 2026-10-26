@@ -66,13 +66,20 @@ selector would break the first time github.com reorganised its markup, so
   header, always — beside it is where an overlay would sit, and the point is to
   read as part of the page. That is the lower of the bars currently pinned to
   the top of the viewport, found by hit-testing for sticky and fixed boxes, and
-  the header and nav rows in normal flow, which are not pinned yet at the top
-  of a page. Remeasured on scroll, so the panel follows the header as it pins
-  and unpins. Pinned bars stack — a pull request pins a mini header beneath the
+  the header rows in normal flow, which are not pinned yet at the top of a
+  page. Remeasured on scroll, so the panel follows the header as it pins and
+  unpins. Pinned bars stack — a pull request pins a mini header beneath the
   global one — so they are found by walking down from the top of the viewport
   for as long as each step is still covered, rather than by looking for one bar
   flush at the top. A bar also only has to be as wide as the page column, since
-  the mini header is not full-bleed.
+  the mini header is not full-bleed, but it has to be taller than a progress
+  bar.
+- **What counts as the header.** Everything full-width that ends above the
+  page's `<main>` landmark. github.com serves pages from more than one
+  frontend, and each names its header differently (`.js-header-wrapper` on
+  one, a bare `header.GlobalNav` beside a staff bar on another), but every one
+  puts its header before `<main>`. A sidebar laid out beside `<main>` does not
+  end above it, so it is never taken for a header.
 
 When the gutter is too narrow, the page is moved across by padding `<body>` —
 the one element Turbo navigation never replaces, so the reservation survives
@@ -81,15 +88,10 @@ the shortfall: padding moves every box by exactly that much, so anything less
 would leave the centred column's own inset absorbing part of it and the page
 still starting underneath us.
 
-The chrome at the top is then handed that space straight back. The header and
-the nav rows are tagged with an attribute while the page is measured bare — the
-outermost box of each nested stack, and nothing taken out of flow, so nothing
-moves twice or is moved that body's padding never touched — and a single rule
-pulls them back out with a negative margin and an `auto` width. They go on
-spanning the window as github.com drew them, and only the page body beneath is
-inset. A header stopping short of the window is the one thing that would give
-away that the page has been moved at all, and it is the part of github.com a
-reader is most likely to know by sight.
+The header is then handed that space straight back. Its rows are tagged with an
+attribute while the page is measured bare, and a single rule pulls them back
+out with a negative margin and an `auto` width. They go on spanning the window
+as github.com drew them, and only the page beneath is inset.
 
 ##### Collapsing a dock
 

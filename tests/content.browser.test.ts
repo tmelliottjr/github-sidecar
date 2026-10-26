@@ -988,6 +988,104 @@ describe('docked mode', { concurrency: false, skip }, () => {
   })
 })
 
+/**
+ * The shell github.com serves its newer pages from: a staff bar and a header
+ * with none of the older class names, side by side above `<main>`, and a
+ * fixed two-pixel progress bar across the top of the viewport.
+ */
+const NEWER_GITHUB_PAGE = `<!doctype html><html data-color-mode="light"><body style="margin:0">
+<span class="progress-pjax-loader" style="position:fixed;top:0;left:0;width:100%;height:2px"></span>
+<div><div>
+  <aside id="staffbar" aria-label="Staffbar" style="height:32px;background:#1f2328"></aside>
+  <header id="global-nav" class="GlobalNav" aria-label="Global navigation menu">
+    <div style="height:52px"></div>
+    <nav aria-label="Repository" style="height:48px;border-bottom:1px solid #d1d9e0"></nav>
+  </header>
+  <main>
+    <div style="max-width:1280px;margin:0 auto;padding:24px">
+      <h1 id="heading" style="margin:0">A repository</h1>
+      <div style="height:2400px;background:#f6f8fa"></div>
+    </div>
+  </main>
+</div></div>
+</body></html>`
+
+describe('docked on a page from the newer frontend', { concurrency: false, skip }, () => {
+  let newerBrowser: Browser
+  let newerPage: Page
+
+  const NARROW = 1100
+
+  before(async () => {
+    newerBrowser = await puppeteer.launch({ executablePath, headless: true })
+    newerPage = await newerBrowser.newPage()
+    await newerPage.setViewport({ width: NARROW, height: 900 })
+    await newerPage.setContent(NEWER_GITHUB_PAGE)
+    await newerPage.evaluate(CHROME_STUB)
+    await newerPage.evaluate(async () => {
+      const stored = await chrome.storage.local.get('windowState')
+      await chrome.storage.local.set({
+        windowState: { ...stored.windowState, docked: true, dockWidth: 380 },
+      })
+    })
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await newerPage.evaluate(bundle)
+    await newerPage.waitForSelector('#github-sidecar-root')
+    await newerPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
+  })
+
+  after(async () => {
+    await newerBrowser?.close()
+  })
+
+  const layout = () =>
+    newerPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const panel = shadow.querySelector('[data-docked]')!.getBoundingClientRect()
+      const box = (id: string) => {
+        const rect = document.getElementById(id)!.getBoundingClientRect()
+        return { left: rect.left, width: rect.width, bottom: rect.bottom }
+      }
+      return {
+        panelTop: panel.top,
+        panelRight: panel.right,
+        staffbar: box('staffbar'),
+        header: box('global-nav'),
+        heading: box('heading'),
+      }
+    })
+
+  it('moves the page clear of the panel, but not the header or staff bar', async () => {
+    const boxes = await layout()
+
+    assert.ok(boxes.heading.left >= boxes.panelRight, 'expected the content clear of the panel')
+    assert.deepEqual(
+      { left: boxes.staffbar.left, width: boxes.staffbar.width },
+      { left: 0, width: NARROW },
+    )
+    assert.deepEqual(
+      { left: boxes.header.left, width: boxes.header.width },
+      { left: 0, width: NARROW },
+    )
+  })
+
+  it('starts the panel below the header', async () => {
+    const boxes = await layout()
+    assert.ok(
+      boxes.panelTop >= boxes.header.bottom,
+      `expected the panel below ${boxes.header.bottom}, saw ${boxes.panelTop}`,
+    )
+  })
+
+  it('moves up to the top once the header scrolls away, past the progress bar', async () => {
+    await newerPage.evaluate(() => window.scrollTo(0, 600))
+    await newerPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)))
+
+    assert.equal((await layout()).panelTop, 0)
+  })
+})
+
 describe('row context menu', { concurrency: false, skip }, () => {
   let menuBrowser: Browser
   let menuPage: Page

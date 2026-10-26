@@ -5,8 +5,9 @@
  * left of its centred content, so it has to answer two questions about a page
  * it does not control: where the page's own content starts horizontally, and
  * where the chrome at the top of the page ends. Both are measured from the
- * rendered result by hit-testing rather than read off a selector, because
- * github.com's markup changes far more often than its layout does.
+ * rendered result and the `<main>` landmark rather than read off class names,
+ * because github.com serves pages from more than one frontend and each one
+ * names its header differently.
  *
  * The panel sits below that chrome and never beside it: the header and the nav
  * rows go on spanning the window as github.com drew them, and only the page
@@ -36,6 +37,8 @@ const MAX_CHROME = 240
 const CHROME_STEP = 8
 /** Widest seam between two stacked bars that is not a break in the stack. */
 const CHROME_GAP = 16
+/** Pinned bars thinner than this are progress bars and hairlines, not chrome. */
+const MIN_BAR_HEIGHT = 8
 
 /** Chrome in normal flow has to span this much of the viewport to count. */
 const FULL_WIDTH_RATIO = 0.8
@@ -48,28 +51,6 @@ const COLUMN_RATIO = 0.4
 
 /** Never take more than this share of the viewport from the page. */
 const MAX_PUSH_RATIO = 0.6
-
-/**
- * How far down the document a bar can start and still be top chrome. Measured
- * from the top of the document rather than the viewport so that scrolling
- * cannot turn the header into something else while it is off screen.
- */
-const TOP_CHROME_DEPTH = 320
-
-/**
- * Full-width chrome github.com renders above the page body. At the top of a
- * page the nav row is not pinned yet, so hit-testing for sticky boxes cannot
- * find it, and the panel still has to start below it.
- */
-const TOP_CHROME_SELECTOR = [
-  '.AppHeader',
-  'header[role="banner"]',
-  '.js-header-wrapper',
-  '.UnderlineNav',
-  'nav[aria-label="Repository"]',
-  'nav[aria-label="Global"]',
-  '.pagehead',
-].join(',')
 
 /** Elements at this point, ignoring our own shadow host. */
 function stackAt(x: number, y: number): Element[] {
@@ -90,7 +71,8 @@ function isPinnedChrome(x: number, y: number): boolean {
   return stackAt(x, y).some((element) => {
     const position = getComputedStyle(element).position
     if (position !== 'sticky' && position !== 'fixed') return false
-    return element.getBoundingClientRect().width >= window.innerWidth * COLUMN_RATIO
+    const rect = element.getBoundingClientRect()
+    return rect.width >= window.innerWidth * COLUMN_RATIO && rect.height >= MIN_BAR_HEIGHT
   })
 }
 
@@ -110,17 +92,51 @@ function pinnedBottom(): number {
   return bottom === 0 ? 0 : bottom + CHROME_STEP
 }
 
+/** Skips a `<main>` that is hidden or too narrow to be the page itself. */
+function mainLandmark(): Element | null {
+  for (const element of document.querySelectorAll('main, [role="main"]')) {
+    if (element.getBoundingClientRect().width >= window.innerWidth * COLUMN_RATIO) {
+      return element
+    }
+  }
+  return null
+}
+
+/**
+ * The full-width bars github.com draws above its `<main>` landmark: the
+ * header, the nav rows, and anything stacked with them, such as the staff bar.
+ *
+ * Boxes have to end above `<main>` to count, so a sidebar laid out beside it
+ * is never taken for a header. Boxes out of flow are skipped, since body
+ * padding never moves them.
+ */
+function topChrome(): Element[] {
+  const main = mainLandmark()
+  if (!main) return []
+
+  const mainTop = main.getBoundingClientRect().top
+  const bars: Element[] = []
+
+  let node: Element | null = main
+  while (node && node !== document.body) {
+    for (let bar = node.previousElementSibling; bar; bar = bar.previousElementSibling) {
+      const position = getComputedStyle(bar).position
+      if (position === 'fixed' || position === 'absolute') continue
+      const rect = bar.getBoundingClientRect()
+      if (rect.height === 0 || rect.bottom > mainTop + 1) continue
+      if (rect.width < window.innerWidth * FULL_WIDTH_RATIO) continue
+      bars.push(bar)
+    }
+    node = node.parentElement
+  }
+
+  return bars
+}
+
 /** Bottom of the header and nav rows, whether or not they are pinned yet. */
 function chromeBottom(): number {
   let bottom = 0
-
-  for (const element of document.querySelectorAll(TOP_CHROME_SELECTOR)) {
-    const rect = element.getBoundingClientRect()
-    const isWide = rect.width >= window.innerWidth * FULL_WIDTH_RATIO
-    const isNearTop = rect.bottom > 0 && rect.top < window.innerHeight / 2
-    if (isWide && isNearTop) bottom = Math.max(bottom, rect.bottom)
-  }
-
+  for (const bar of topChrome()) bottom = Math.max(bottom, bar.getBoundingClientRect().bottom)
   return bottom
 }
 
@@ -131,31 +147,15 @@ export function measureContentTop(): number {
 }
 
 /**
- * Tags the full-width bars at the top of the document so the reservation can
- * hand them back the space it takes from everything else.
- *
- * Only the outermost box of a nested stack is tagged — github.com wraps its
- * header in a positioning div that matches too, and pulling both back would
- * move the header twice. Bars taken out of flow are skipped: body's padding
- * never moved them, so nothing owes them anything.
+ * Tags the bars at the top of the document so the reservation can hand them
+ * back the space it takes from everything else.
  *
  * Must be called while the page is measured bare, since a bar's width is what
  * says whether it is full-bleed and the reservation would distort it.
  */
 function markFullBleedChrome(): void {
   clearFullBleedChrome()
-
-  const bars = [...document.querySelectorAll(TOP_CHROME_SELECTOR)].filter((element) => {
-    const rect = element.getBoundingClientRect()
-    if (rect.width < window.innerWidth * FULL_WIDTH_RATIO) return false
-    if (rect.top + window.scrollY > TOP_CHROME_DEPTH) return false
-    return getComputedStyle(element).position !== 'fixed'
-  })
-
-  for (const bar of bars) {
-    if (bars.some((other) => other !== bar && other.contains(bar))) continue
-    bar.setAttribute(FULL_BLEED_ATTR, '')
-  }
+  for (const bar of topChrome()) bar.setAttribute(FULL_BLEED_ATTR, '')
 }
 
 function clearFullBleedChrome(): void {
