@@ -897,7 +897,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
   const launcher = () =>
     dockPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      await Promise.all(shadow.getAnimations().map((animation) => animation.finished))
+      await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
       const node = shadow.querySelector('[data-launcher]') as HTMLElement | null
       if (!node) return null
       const box = node.firstElementChild!.getBoundingClientRect()
@@ -1837,7 +1837,7 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
     assert.equal(await launcher(), true)
     const layout = await quietPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      await Promise.all(shadow.getAnimations().map((animation) => animation.finished))
+      await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
       const box = shadow.querySelector('[data-launcher]')!.getBoundingClientRect()
       return {
         panel: Boolean(shadow.querySelector('[role="complementary"]')),
@@ -1916,7 +1916,7 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
   const pill = () =>
     closedPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      await Promise.all(shadow.getAnimations().map((animation) => animation.finished))
+      await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
       const node = shadow.querySelector('[data-launcher]') as HTMLElement | null
       if (!node) return null
       const box = node.getBoundingClientRect()
@@ -1969,8 +1969,74 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
     )
   })
 
-  it('opens from the launcher alone', async () => {
-    await clickLauncher()
+  /**
+   * Clicks a control, then reads where the morph shell starts and ends once
+   * it is moving, along with the boxes it should start and end on.
+   */
+  const morphOn = (label: string, from: string, to: string) =>
+    closedPage.evaluate(
+      async (control, fromSelector, toSelector) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const box = (selector: string) => {
+          const rect = shadow.querySelector(selector)!.getBoundingClientRect()
+          return [rect.left, rect.top, rect.width, rect.height].map(Math.round)
+        }
+        const frames = (count: number): Promise<void> =>
+          count === 0
+            ? Promise.resolve()
+            : new Promise((resolve) => requestAnimationFrame(() => resolve(frames(count - 1))))
+
+        const start = box(fromSelector)
+        ;(shadow.querySelector(`[aria-label="${control}"]`) as HTMLElement).click()
+        // The shell waits two frames for the dock to settle before it moves.
+        await frames(4)
+        const shell = shadow.querySelector('[data-morph]') as HTMLElement | null
+        const effect = shell?.getAnimations()[0]?.effect
+        const keyframes = effect instanceof KeyframeEffect ? effect.getKeyframes() : []
+        const at = (frame: Keyframe | undefined) =>
+          ['left', 'top', 'width', 'height'].map((key) =>
+            Math.round(parseFloat(String(frame?.[key]))),
+          )
+        return {
+          start,
+          end: box(toSelector),
+          shellFrom: at(keyframes[0]),
+          shellTo: at(keyframes[keyframes.length - 1]),
+          targetOpacity: getComputedStyle(shadow.querySelector(toSelector)!).opacity,
+        }
+      },
+      label,
+      from,
+      to,
+    )
+
+  /** Waits for the shell to go, then reads how opaque the element it ended on is. */
+  const settledOpacity = async (selector: string) => {
+    await closedPage.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-morph]'),
+    )
+    return closedPage.evaluate(
+      (target) =>
+        getComputedStyle(
+          document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector(target)!,
+        ).opacity,
+      selector,
+    )
+  }
+
+  it('opens from the launcher alone, growing the pill into the panel', async () => {
+    const morph = await morphOn(
+      'Open GitHub Sidecar',
+      '[data-launcher-capsule]',
+      '[role="complementary"]',
+    )
+
+    assert.deepEqual(morph.shellFrom, morph.start)
+    // A tab that was never opened has not measured the page yet, so this is
+    // also where a stale dock position would show.
+    assert.deepEqual(morph.shellTo, morph.end)
+    assert.equal(morph.targetOpacity, '0', 'expected the panel hidden until the shell arrives')
+    assert.equal(await settledOpacity('[role="complementary"]'), '1')
 
     assert.equal(await panelShowing(), true)
     const opened = await closedPage.evaluate(() =>
@@ -2002,6 +2068,33 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
 
     await clickLauncher()
     assert.equal(await panelShowing(), true)
+  })
+
+  it('shrinks the panel back into the pill when hidden', async () => {
+    await settledOpacity('[role="complementary"]')
+    const morph = await morphOn('Hide sidebar', '[role="complementary"]', '[data-launcher-capsule]')
+
+    assert.deepEqual(morph.shellFrom, morph.start)
+    assert.deepEqual(morph.shellTo, morph.end)
+    assert.equal(morph.targetOpacity, '0', 'expected the pill hidden until the shell arrives')
+    assert.equal(await settledOpacity('[data-launcher-capsule]'), '1')
+  })
+
+  it('skips the morph for anyone who asks for reduced motion', async () => {
+    await closedPage.emulateMediaFeatures([
+      { name: 'prefers-reduced-motion', value: 'reduce' },
+    ])
+    try {
+      const morph = await morphOn(
+        'Open GitHub Sidecar',
+        '[data-launcher-capsule]',
+        '[role="complementary"]',
+      )
+      assert.deepEqual(morph.shellFrom.filter(Number.isFinite), [], 'expected no shell')
+      assert.equal(morph.targetOpacity, '1')
+    } finally {
+      await closedPage.emulateMediaFeatures([])
+    }
   })
 })
 

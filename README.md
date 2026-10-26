@@ -37,6 +37,10 @@ not an open panel, and it floats over the page without moving it. Nobody has to
 go to the browser's extensions menu to find a panel that is meant to be part of
 the page.
 
+Opening grows the pill into the panel, and hiding or collapsing shrinks the
+panel back into the pill. Both are skipped when the system asks for reduced
+motion.
+
 Hovering the launcher shows a ✕ on its corner that shrinks it to the GitHub
 mark, with the count as a bubble. Hovering the mark shows a › beside it that
 grows the launcher back. Which of the two shows is shared across tabs, like the
