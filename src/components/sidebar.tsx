@@ -504,6 +504,7 @@ export function Sidebar() {
       queries={savedQueries}
       activeQuery={activeQuery}
       isFetching={search.isFetching}
+      count={search.data ? totalCount : null}
       isRefreshing={isRefreshing}
       canRefresh={hasToken}
       onSelectQuery={selectQuery}
