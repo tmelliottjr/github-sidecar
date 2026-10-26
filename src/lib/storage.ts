@@ -33,6 +33,8 @@ export interface WindowState {
   docked: boolean
   /** Width of the docked panel, kept apart so undocking restores the float. */
   dockWidth: number
+  /** Whether the launcher is shrunk to the GitHub mark rather than the full pill. */
+  launcherCompact: boolean
 }
 
 /**
@@ -215,6 +217,7 @@ export const DEFAULT_WINDOW_STATE: WindowState = {
   locked: false,
   docked: false,
   dockWidth: 380,
+  launcherCompact: false,
 }
 
 export const DEFAULTS: StorageShape = {

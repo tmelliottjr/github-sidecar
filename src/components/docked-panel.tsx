@@ -1,7 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, type ReactNode } from 'react'
-import { MarkGithubIcon, SidebarCollapseIcon } from '@primer/octicons-react'
 
-import { Hint } from '@/components/ui/tooltip'
 import { DOCK_INSET } from '@/content/page-layout'
 import { cn, clamp } from '@/lib/utils'
 
@@ -99,69 +97,5 @@ export function DockedPanel({ width, top, onWidthChange, header, children }: Pro
         aria-hidden
       />
     </div>
-  )
-}
-
-/** Width of the collapsed rail. Narrow enough to fit any page's gutter. */
-export const DOCK_RAIL_WIDTH = 44
-
-interface RailProps {
-  top: number
-  /** Name of the active query, so the rail says what it is holding. */
-  label: string
-  /** Total matches, or null while nothing has loaded yet. */
-  count: number | null
-  onExpand: () => void
-}
-
-/**
- * The dock with the panel put away: a rail down the edge of the gutter.
- *
- * Putting the panel away has to get it out of the way without hiding it,
- * otherwise there is nothing left to click to bring it back and the only route
- * to it is the browser's own extensions menu. The rail is small enough to fit
- * in any page's gutter — so the page is barely moved for it — while still
- * being a target the whole height of the viewport. It stands in both for a
- * dock that was collapsed and for one that has not been opened in this tab
- * yet, and it keeps reporting the result count whenever there is one, which is
- * the point of leaving it on screen at all.
- */
-export function DockRail({ top, label, count, onExpand }: RailProps) {
-  return (
-    <Hint label={`Expand ${label}`} side="right">
-      <button
-        type="button"
-        onClick={onExpand}
-        aria-expanded={false}
-        aria-label={`Expand ${label}`}
-        className={cn(
-          'group fixed bottom-0 left-0 z-[2147483646] flex flex-col items-center gap-2 py-3',
-          'border-r border-border bg-background text-foreground shadow-dock',
-          'transition-colors hover:bg-accent',
-        )}
-        style={{ top, width: DOCK_RAIL_WIDTH }}
-      >
-        <MarkGithubIcon className="size-4 shrink-0 text-muted-foreground" />
-
-        {count !== null && count > 0 && (
-          <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-bold tabular-nums text-muted-foreground">
-            {count > 99 ? '99+' : count}
-          </span>
-        )}
-
-        {/*
-         * Kept with the other marks at the top, where the panel's header was
-         * and so where anyone looking for it will look, rather than stranded
-         * at the far end of a rail the height of the viewport.
-         *
-         * Octicon's sidebar marks are drawn for a sidebar on the right, so
-         * their names run opposite to this dock, which sits on the left: it is
-         * `sidebar-collapse` that carries the rightward arrow. The pair is
-         * chosen by which way the arrow points, not by what it is called, so
-         * the mark always points the way the panel is about to move.
-         */}
-        <SidebarCollapseIcon className="size-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
-      </button>
-    </Hint>
   )
 }

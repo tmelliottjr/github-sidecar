@@ -893,59 +893,47 @@ describe('docked mode', { concurrency: false, skip }, () => {
     )
   })
 
-  it('collapses to a rail that asks the page for far less room', async () => {
-    await dockPage.evaluate(() => window.scrollTo(0, 0))
-    await dockPage.setViewport({ width: NARROW, height: 900 })
-    await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
-
-    const expandedPush = (await host()).bodyPadding
-    assert.ok(expandedPush > 0, 'expected the open panel to need the page moved')
-
-    await clickDock('Collapse')
-
-    const rail = await dockPage.evaluate(() => {
+  /** The launcher in the corner, measured once it settles, or null when it is not showing. */
+  const launcher = () =>
+    dockPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const node = shadow.querySelector('[aria-label^="Expand"]') as HTMLElement | null
+      await Promise.all(shadow.getAnimations().map((animation) => animation.finished))
+      const node = shadow.querySelector('[data-launcher]') as HTMLElement | null
       if (!node) return null
-      const box = node.getBoundingClientRect()
+      const box = node.firstElementChild!.getBoundingClientRect()
       return {
         x: box.x,
-        width: box.width,
         bottom: box.bottom,
-        expanded: node.getAttribute('aria-expanded'),
+        width: box.width,
+        text: node.textContent ?? '',
+        bubble: shadow.querySelector('[data-launcher-count]')?.textContent ?? null,
         panelGone: !shadow.querySelector('[data-docked]'),
       }
     })
 
-    assert.ok(rail, 'expected a rail once collapsed')
-    assert.equal(rail.panelGone, true)
-    assert.equal(rail.x, 0)
-    assert.equal(rail.expanded, 'false')
-    assert.ok(rail.width <= 48, `expected a narrow rail, saw ${rail.width}px`)
-    assert.equal(rail.bottom, 900)
+  it('collapses to the launcher and gives the page its space back', async () => {
+    await dockPage.evaluate(() => window.scrollTo(0, 0))
+    await dockPage.setViewport({ width: NARROW, height: 900 })
+    await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
 
-    // A rail fits where the panel could not, so the page gets most of its
-    // layout back even on a viewport this narrow.
-    const collapsedPush = (await host()).bodyPadding
-    assert.ok(
-      collapsedPush < expandedPush,
-      `expected less room taken, ${collapsedPush} vs ${expandedPush}`,
-    )
-    assert.ok(collapsedPush <= DOCK_INSET + rail.width + 16, `rail took ${collapsedPush}px`)
+    assert.ok((await host()).bodyPadding > 0, 'expected the open panel to need the page moved')
+
+    await clickDock('Collapse')
+    const pill = await launcher()
+
+    assert.ok(pill, 'expected the launcher once collapsed')
+    assert.equal(pill.panelGone, true)
+    // Bottom-left, lined up with where the panel was.
+    assert.equal(pill.x, DOCK_INSET)
+    assert.equal(pill.bottom, 900 - DOCK_INSET)
+    assert.equal((await host()).bodyPadding, 0)
   })
 
   it('keeps taking results while collapsed', async () => {
-    const countOn = () =>
-      dockPage.evaluate(() => {
-        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-        return shadow.querySelector('[aria-label^="Expand"]')?.textContent?.trim()
-      })
+    assert.match((await launcher())!.text, /Needs my review\s*400 results/)
 
-    // The seeded query reports 400 matches, which the rail caps for width.
-    assert.equal(await countOn(), '99+')
-
-    // A refresh landing while collapsed has to reach the rail, otherwise the
-    // count it is showing is decoration rather than status.
+    // A refresh landing while collapsed has to reach the launcher, otherwise
+    // the count it is showing is decoration rather than status.
     await dockPage.evaluate(() => {
       const broadcast = (window as unknown as { __broadcast: (m: unknown) => void })
         .__broadcast
@@ -964,15 +952,68 @@ describe('docked mode', { concurrency: false, skip }, () => {
     })
     await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)))
 
-    assert.equal(await countOn(), '7')
+    assert.match((await launcher())!.text, /7 results/)
   })
 
-  it('expands again from the rail alone', async () => {
-    await dockPage.evaluate(() => {
+  /** Activates a launcher control from the keyboard, the way focus handling matters. */
+  const pressOn = async (label: string) => {
+    await dockPage.evaluate((selector) => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      ;(shadow.querySelector('[aria-label^="Expand"]') as HTMLButtonElement).click()
+      ;(shadow.querySelector(selector) as HTMLElement).focus()
+    }, `[aria-label="${label}"]`)
+    await dockPage.keyboard.press('Enter')
+    await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
+  }
+
+  const focused = () =>
+    dockPage.evaluate(
+      () =>
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.activeElement?.getAttribute('aria-label') ?? null,
+    )
+
+  /** What a screen reader hears after the open button name, or null if it is hidden. */
+  const description = () =>
+    dockPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const open = shadow.querySelector('[aria-label="Open GitHub Sidecar"]')!
+      const target = shadow.getElementById(open.getAttribute('aria-describedby')!)
+      return target && !target.closest('[inert]') ? target.textContent : null
     })
-    await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)))
+
+  it('shrinks to the GitHub mark, keeps the count, and remembers it', async () => {
+    const full = (await launcher())!
+    assert.equal(full.bubble, null, 'the full pill already says the count')
+
+    await pressOn('Shrink launcher')
+    const mark = (await launcher())!
+
+    assert.ok(mark.width < 64, `expected just the mark, saw ${mark.width}px`)
+    assert.equal(mark.bubble, '7')
+    const stored = await dockPage.evaluate(async () => {
+      const { windowState } = await chrome.storage.local.get('windowState')
+      return (windowState as { launcherCompact?: boolean }).launcherCompact
+    })
+    assert.equal(stored, true)
+  })
+
+  it('keeps focus and the spoken count once shrunk', async () => {
+    assert.equal(await focused(), 'Open GitHub Sidecar')
+    assert.equal(await description(), 'Needs my review, 7 results')
+  })
+
+  it('grows back into the full pill, keeping focus', async () => {
+    await pressOn('Expand launcher')
+    const pill = (await launcher())!
+
+    assert.ok(pill.width > 200, `expected the full pill, saw ${pill.width}px`)
+    assert.equal(pill.bubble, null)
+    assert.equal(await focused(), 'Open GitHub Sidecar')
+  })
+
+  it('expands again from the launcher alone', async () => {
+    await clickDock('Open GitHub Sidecar')
 
     const box = await panel()
     assert.equal(box.docked, true)
@@ -1778,15 +1819,26 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
       return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidecar"]'))
     })
 
-  it('starts closed, showing only the launcher', async () => {
+  it('starts closed, showing only the launcher in the bottom-right corner', async () => {
     await quietPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
 
     assert.equal(await launcher(), true)
-    const panel = await quietPage.evaluate(() => {
+    const layout = await quietPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      return Boolean(shadow.querySelector('[role="complementary"]'))
+      await Promise.all(shadow.getAnimations().map((animation) => animation.finished))
+      const box = shadow.querySelector('[data-launcher]')!.getBoundingClientRect()
+      return {
+        panel: Boolean(shadow.querySelector('[role="complementary"]')),
+        right: box.right,
+        bottom: box.bottom,
+        text: shadow.querySelector('[data-launcher]')!.textContent,
+      }
     })
-    assert.equal(panel, false)
+    assert.equal(layout.panel, false)
+    assert.equal(layout.right, 1280 - 20)
+    assert.equal(layout.bottom, 800 - 20)
+    // Nothing has loaded in a closed tab, so there is no count to show yet.
+    assert.match(layout.text ?? '', /Needs my review\s*GitHub Sidecar\s*Open/)
   })
 
   it('asks GitHub for nothing until it is opened', async () => {
@@ -1819,17 +1871,17 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
 })
 
 describe('a docked tab that was never asked', { concurrency: false, skip }, () => {
-  let railBrowser: Browser
-  let railPage: Page
+  let closedBrowser: Browser
+  let closedPage: Page
 
   before(async () => {
-    railBrowser = await puppeteer.launch({ executablePath, headless: true })
-    railPage = await railBrowser.newPage()
-    await railPage.setViewport({ width: 1280, height: 800 })
-    await railPage.setContent(GITHUB_PAGE)
-    await railPage.evaluate(CHROME_STUB)
+    closedBrowser = await puppeteer.launch({ executablePath, headless: true })
+    closedPage = await closedBrowser.newPage()
+    await closedPage.setViewport({ width: 1280, height: 800 })
+    await closedPage.setContent(GITHUB_PAGE)
+    await closedPage.evaluate(CHROME_STUB)
     // A fresh tab, for someone who left the panel docked in the last one.
-    await railPage.evaluate(async () => {
+    await closedPage.evaluate(async () => {
       ;(window as unknown as { __tabOpen: boolean }).__tabOpen = false
       const stored = await chrome.storage.local.get('windowState')
       await chrome.storage.local.set({
@@ -1838,60 +1890,60 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
     })
 
     const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
-    await railPage.evaluate(bundle)
-    await railPage.waitForSelector('#github-sidecar-root')
-    await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
+    await closedPage.evaluate(bundle)
+    await closedPage.waitForSelector('#github-sidecar-root')
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
   })
 
   after(async () => {
-    await railBrowser?.close()
+    await closedBrowser?.close()
   })
 
-  const rail = () =>
-    railPage.evaluate(() => {
+  const pill = () =>
+    closedPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const node = shadow.querySelector('[aria-label^="Expand"]') as HTMLElement | null
+      await Promise.all(shadow.getAnimations().map((animation) => animation.finished))
+      const node = shadow.querySelector('[data-launcher]') as HTMLElement | null
       if (!node) return null
       const box = node.getBoundingClientRect()
-      return { x: box.x, y: box.y, width: box.width, bottom: box.bottom }
+      return { x: box.x, bottom: box.bottom }
     })
 
-  const clickRail = async () => {
-    await railPage.evaluate(() => {
+  const clickLauncher = async () => {
+    await closedPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      ;(shadow.querySelector('[aria-label^="Expand"]') as HTMLButtonElement).click()
+      ;(
+        shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLButtonElement
+      ).click()
     })
-    await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
   }
 
   const panelShowing = () =>
-    railPage.evaluate(() => {
+    closedPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return Boolean(shadow.querySelector('[data-docked]'))
     })
 
-  it('shows the rail rather than nothing at all', async () => {
-    const box = await rail()
+  it('shows the launcher in the bottom-left corner rather than nothing at all', async () => {
+    const box = await pill()
 
-    assert.ok(box, 'expected a docked tab to leave its rail on screen')
-    assert.equal(box.x, 0)
-    assert.equal(box.bottom, 800)
-    assert.ok(box.width <= 48, `expected a narrow rail, saw ${box.width}px`)
-    // Below github.com's own chrome, exactly where the panel would have been.
-    assert.ok(box.y >= 112, `expected the rail below the chrome, saw y=${box.y}`)
+    assert.ok(box, 'expected a docked tab to leave its launcher on screen')
+    assert.equal(box.x, DOCK_INSET)
+    assert.equal(box.bottom, 800 - DOCK_INSET)
     assert.equal(await panelShowing(), false)
   })
 
-  it('leaves the corner launcher to floating mode', async () => {
-    const corner = await railPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidecar"]'))
-    })
-    assert.equal(corner, false)
+  it('leaves the page where it is until the panel opens', async () => {
+    const layout = await closedPage.evaluate(() => ({
+      bodyPadding: parseFloat(getComputedStyle(document.body).paddingLeft),
+      reserved: Boolean(document.getElementById('github-sidecar-dock-style')),
+    }))
+    assert.deepEqual(layout, { bodyPadding: 0, reserved: false })
   })
 
   it('still asks GitHub for nothing until it is opened', async () => {
-    const sent = await railPage.evaluate(
+    const sent = await closedPage.evaluate(
       () =>
         (window as unknown as { __sentMessages: Array<{ type?: string }> })
           .__sentMessages,
@@ -1899,15 +1951,15 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
     assert.deepEqual(
       sent.filter((message) => message.type === 'search'),
       [],
-      'a rail is not an open panel; it must not cost a request',
+      'a launcher is not an open panel; it must not cost a request',
     )
   })
 
-  it('opens from the rail alone', async () => {
-    await clickRail()
+  it('opens from the launcher alone', async () => {
+    await clickLauncher()
 
     assert.equal(await panelShowing(), true)
-    const opened = await railPage.evaluate(() =>
+    const opened = await closedPage.evaluate(() =>
       (
         window as unknown as { __sentMessages: Array<{ type?: string; open?: boolean }> }
       ).__sentMessages.filter((message) => message.type === 'set-tab-open'),
@@ -1916,25 +1968,25 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
   })
 
   it('takes one click to come back from hidden and collapsed at once', async () => {
-    await railPage.evaluate(() => {
+    await closedPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       ;(shadow.querySelector('[aria-label="Collapse"]') as HTMLButtonElement).click()
     })
-    await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
-    assert.ok(await rail(), 'expected collapsing to leave the rail')
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
+    assert.ok(await pill(), 'expected collapsing to leave the launcher')
 
     // The toolbar button hides the panel in this tab, so a collapsed dock can
-    // also be a hidden one. Both reasons for a rail are now set at once, and
-    // one click has to clear both or expanding would just redraw the rail.
-    await railPage.evaluate(() => {
+    // also be a hidden one. Both reasons for the launcher are now set at once,
+    // and one click has to clear both or opening would just redraw it.
+    await closedPage.evaluate(() => {
       ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
         type: 'toggle-sidebar',
       })
     })
-    await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
-    assert.ok(await rail(), 'expected the rail to survive being hidden')
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
+    assert.ok(await pill(), 'expected the launcher to survive being hidden')
 
-    await clickRail()
+    await clickLauncher()
     assert.equal(await panelShowing(), true)
   })
 })

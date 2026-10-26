@@ -29,17 +29,24 @@ dropped on `tabs.onRemoved`; otherwise the next tab to take that id would
 inherit a panel nobody opened.
 
 Out of the way is not the same as gone, though, so a tab that has not been
-asked still leaves something to ask with: floating, a launcher in the corner;
-docked, the rail, exactly where the panel would have been. Neither costs a
-request — a rail is not an open panel — but neither sends anyone to the
-browser's extensions menu to find a panel that is meant to be part of the page.
+asked still shows a launcher: a pill with the query name, the result count once
+there is one, and an **Open** action. It sits in the bottom-right corner while
+the panel floats, and in the bottom-left, under where the panel goes, while it
+is docked. It costs no request, since a launcher is not an open panel, and it
+floats over the page without moving it. Nobody has to go to the browser's
+extensions menu to find a panel that is meant to be part of the page.
+
+The ✕ on the launcher shrinks it to the GitHub mark, with the count as a bubble.
+Hovering the mark shows a › beside it that grows the full pill back. Which of
+the two shows is shared across tabs, like the rest of the window state.
 
 Opening a panel for the first time does not mean going to the network. The
 request goes to the worker like any other, which answers from its shared
 IndexedDB cache and only refreshes if what it has has aged out.
 
-Everything else about the window — size, position, docked, collapsed, locked —
-stays shared, because those are preferences rather than per-tab facts.
+Everything else about the window (size, position, docked, collapsed, locked,
+and the launcher size) stays shared, because those are preferences rather than
+per-tab facts.
 
 </details>
 
@@ -98,24 +105,19 @@ as github.com drew them, and only the page beneath is inset.
 ##### Collapsing a dock
 
 A floating window collapses up into its own header. A docked one has nowhere to
-fold, so it collapses sideways into a rail down the edge of the gutter instead.
+fold, so collapsing swaps it for the launcher in the bottom-left corner and
+gives the page back whatever room the panel had taken.
 
-The rail is deliberately not a hidden edge: something has to stay on screen or
-there is nothing left to click to bring the panel back. At 44px it fits in the
-gutter of any page, so collapsing hands back whatever room had been taken from
-the layout, and the whole height of it is one button. It keeps showing the
-result count, which is the reason to leave it on screen rather than hide it.
+The launcher also stands in for a docked panel that is hidden in this tab, or
+that has never been opened in it. Two states, one launcher, and a click clears
+both at once, so opening always ends with the panel and never with the
+launcher redrawn because the other flag was still set.
 
-The same rail stands in for a docked panel that is hidden in this tab, or that
-has never been opened in it. Two states, one mark, and a click clears both at
-once — expanding out of a rail always ends with the panel, never with the rail
-redrawn because the other flag was still set.
-
-Results therefore go on loading while a dock is collapsed — a count that stops
+Results go on loading while a dock is collapsed, because a count that stops
 updating is decoration, not status. That is the one place the two collapsed
 states differ: a collapsed floating window shows nothing, so it stops asking.
-A rail standing in for a hidden panel stops asking too; it is showing that the
-panel is there, not what is in it.
+A launcher standing in for a hidden panel stops asking too; it is showing that
+the panel is there, not what is in it.
 
 </details>
 
@@ -757,8 +759,9 @@ neither, and no notification to play a sound alongside.
 | Resize while docked   | Drag the panel's inner edge                      |
 | Lock / unlock         | Padlock button in the header                     |
 | Collapse / expand     | Chevron button in the header                     |
-| Collapse a dock       | Panel button in the header, then click the rail  |
-| Show / hide this tab  | The corner launcher or rail, the ✕ button, or the toolbar icon |
+| Collapse a dock       | Panel button in the header, then click the launcher |
+| Show / hide this tab  | The launcher, the ✕ button, or the toolbar icon  |
+| Shrink the launcher   | ✕ on the launcher; hover the mark and click › to grow it back |
 | Switch queries        | Click the query name in the header               |
 | Edit queries          | Query menu → **Manage queries**                  |
 | Open an item          | Click a row (⌘/Ctrl-click for a tab)             |

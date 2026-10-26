@@ -225,10 +225,10 @@ export function SidebarHeader({
         )}
 
         {/*
-         * Collapsing folds a floating window up into its header and a docked
-         * one sideways into a rail, so the mark points the way it will go.
-         * Octicon's sidebar marks are named for a sidebar on the right, so the
-         * leftward arrow this needs is the one called `sidebar-expand`.
+         * Collapsing folds a floating window up into its header and swaps a
+         * docked one for the launcher in the left corner, so the mark points
+         * left. Octicon's sidebar marks are named for a sidebar on the right,
+         * so the leftward arrow is the one called `sidebar-expand`.
          */}
         <Hint label={windowState.collapsed ? 'Expand' : 'Collapse'}>
           <Button

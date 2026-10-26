@@ -31,6 +31,8 @@
   --color-primary: oklch(0.21 0.006 285.9);
   --color-primary-foreground: oklch(0.985 0 0);
   --color-ring: oklch(0.62 0.19 259.8);
+  /* github.com's own accent blue, dark enough to pass 4.5:1 as text on white. */
+  --color-link: oklch(0.54 0.191 257.5);
 
   --color-open: oklch(0.63 0.16 149.2);
   --color-closed: oklch(0.58 0.22 27.3);
@@ -69,6 +71,7 @@
    */
   --animate-view-in: view-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-row-in: row-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-launcher-in: launcher-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Shared by the stack's slide so opening and closing feel like one gesture. */
   --ease-stack: cubic-bezier(0.16, 1, 0.3, 1);
@@ -77,13 +80,8 @@
     0 0 0 1px oklch(0 0 0 / 0.06), 0 12px 32px -8px oklch(0 0 0 / 0.18),
     0 4px 12px -4px oklch(0 0 0 / 0.1);
 
-  /*
-   * Docked, the panel sits flush against a page that is also white, so it
-   * needs its own edge. The shadow is thrown to the right only, away from the
-   * viewport edge, so it reads as a lifted panel rather than a stray blur.
-   */
-  --shadow-dock:
-    2px 0 8px -2px oklch(0 0 0 / 0.1), 8px 0 24px -8px oklch(0 0 0 / 0.12);
+  --shadow-launcher:
+    0 10px 28px -6px oklch(0 0 0 / 0.2), 0 2px 6px -1px oklch(0 0 0 / 0.08);
 }
 
 .dark {
@@ -99,6 +97,7 @@
   --color-primary: oklch(0.96 0.002 286);
   --color-primary-foreground: oklch(0.21 0.006 285.9);
   --color-ring: oklch(0.68 0.16 259.8);
+  --color-link: oklch(0.663 0.169 255.9);
 
   --color-open: oklch(0.72 0.17 150);
   --color-closed: oklch(0.68 0.19 25);
@@ -111,8 +110,8 @@
     0 0 0 1px oklch(1 0 0 / 0.08), 0 16px 40px -8px oklch(0 0 0 / 0.6),
     0 4px 12px -4px oklch(0 0 0 / 0.4);
 
-  --shadow-dock:
-    2px 0 8px -2px oklch(0 0 0 / 0.5), 8px 0 24px -8px oklch(0 0 0 / 0.6);
+  --shadow-launcher:
+    0 10px 28px -6px oklch(0 0 0 / 0.6), 0 2px 6px -1px oklch(0 0 0 / 0.4);
 }
 
 /*
@@ -168,6 +167,13 @@
   }
 }
 
+@keyframes launcher-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+}
+
 /*
  * An animation that loops until some network call comes back is precisely what
  * this preference is asking us not to run. Unlayered, so it outranks the
@@ -187,7 +193,8 @@
    * dropped outright rather than shortened.
    */
   .animate-view-in,
-  .animate-row-in {
+  .animate-row-in,
+  .animate-launcher-in {
     animation: none;
   }
 }

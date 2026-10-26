@@ -10,19 +10,14 @@ import {
   XIcon,
 } from '@primer/octicons-react'
 
-import {
-  DOCK_RAIL_WIDTH,
-  DockRail,
-  DockedPanel,
-  clampDockWidth,
-} from '@/components/docked-panel'
+import { DockedPanel, clampDockWidth } from '@/components/docked-panel'
 import { FloatingWindow } from '@/components/floating-window'
 import { ItemList } from '@/components/item-list'
+import { Launcher } from '@/components/launcher'
 import { QueryEditor } from '@/components/query-editor'
 import { SidebarHeader } from '@/components/sidebar-header'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Hint } from '@/components/ui/tooltip'
 import { FilterBar, type GroupBy, type SortOrder } from '@/components/filter-bar'
 import { useDockLayout } from '@/hooks/use-dock-layout'
 import { useCurrentPageItem } from '@/hooks/use-current-page-item'
@@ -122,21 +117,16 @@ export function Sidebar() {
   const isDocked = windowState?.docked ?? false
   const isCollapsed = windowState?.collapsed ?? false
   // Collapsing means two different things. Floating, it hides the list behind
-  // the header. Docked, it swaps the panel for a rail that keeps reporting the
-  // count, so results have to go on loading.
-  //
-  // The rail also stands in for a docked panel that was never opened in this
-  // tab. A dock that is simply absent has to be recovered from the browser's
-  // own extensions menu, which is a long way to go for a panel that is meant
-  // to be part of the page; leaving the rail keeps it one click away.
-  const isRail = isDocked && (isCollapsed || !isVisible)
+  // the header. Docked, it swaps the panel for the launcher, which keeps
+  // reporting the count, so results have to go on loading.
+  const showsLauncher = !isVisible || (isDocked && isCollapsed)
   const dockWidth = windowState?.dockWidth ?? 0
 
-  // Measuring the host page is only worth doing while the dock is on screen,
-  // and the rail asks the page for far less room than the panel does.
+  // Measuring the host page is only worth doing while the docked panel is on
+  // screen. The launcher floats over the page and takes no room from it.
   const dockTop = useDockLayout({
-    enabled: isDocked,
-    width: isRail ? DOCK_RAIL_WIDTH : dockWidth,
+    enabled: isDocked && !showsLauncher,
+    width: dockWidth,
   })
 
   const toggleDock = useCallback(() => {
@@ -425,45 +415,24 @@ export function Sidebar() {
   if (!settings || !savedQueries || !windowState || !pinnedIds || isOpen === null)
     return null
 
-  // A floating window that is not showing leaves a launcher in the corner.
-  // A docked one leaves its rail instead, which is where the panel itself
-  // would have been.
-  if (!isVisible && !isDocked) {
-    return (
-      <Hint label="Open GitHub Sidecar" side="left">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className={cn(
-            'fixed bottom-5 right-5 z-[2147483646] flex size-10 items-center justify-center',
-            'rounded-full border border-border bg-background text-foreground shadow-window',
-            'transition-transform hover:scale-105 active:scale-95',
-          )}
-          aria-label="Open GitHub Sidecar"
-        >
-          <MarkGithubIcon className="size-4" />
-        </button>
-      </Hint>
-    )
-  }
-
   const lastFetchedAt = search.data?.pages[0]?.fetchedAt
   const totalCount = search.data?.pages[0]?.totalCount ?? 0
 
-  // Collapsed, or never opened here, the dock is a rail. Rendered before
-  // anything else so the list is not built just to sit behind it.
-  if (isRail) {
+  // Rendered before anything else so the list is not built just to sit
+  // behind the launcher.
+  if (showsLauncher) {
     return (
-      <DockRail
-        top={dockTop}
-        label={activeQuery?.name ?? 'GitHub Sidecar'}
+      <Launcher
+        side={isDocked ? 'left' : 'right'}
+        title={activeQuery?.name ?? 'GitHub Sidecar'}
         count={search.data ? totalCount : null}
-        onExpand={() => {
-          // One rail, two reasons to be showing it, and the click has to clear
-          // both — otherwise expanding a hidden panel that was also left
-          // collapsed just draws the same rail again.
+        compact={windowState.launcherCompact}
+        onCompactChange={(launcherCompact) => patchWindow({ launcherCompact })}
+        onOpen={() => {
+          // A docked launcher can stand for a hidden panel, a collapsed one, or
+          // both, and one click has to clear both or it just redraws itself.
           setOpen(true)
-          if (isCollapsed) patchWindow({ collapsed: false })
+          if (isDocked && isCollapsed) patchWindow({ collapsed: false })
         }}
       />
     )
