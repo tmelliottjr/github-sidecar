@@ -237,6 +237,9 @@ export function ItemList({
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
+      // Menus portal out of the list but still bubble through it in React, and
+      // their own arrows and type-ahead must not move or act on rows.
+      if (!event.currentTarget.contains(event.target as Node)) return
       if (!features.keyboard || isTyping(event.target)) return
       const activeRow = activeIndex === null ? null : visibleRows[activeIndex]
       const active = activeRow?.type === 'item' ? activeRow.item : null

@@ -601,6 +601,15 @@ function QuickActions({
 }) {
   const [copied, setCopied] = useState(false)
   const copiedTimer = useRef(0)
+  const [isMenuOpen, setMenuOpen] = useState(false)
+
+  // The button goes away once the row is seen, so focus moves on to the next
+  // action rather than falling back to the page and its own shortcuts.
+  const markSeenKeepingFocus = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const next = event.currentTarget.nextElementSibling
+    if (next instanceof HTMLElement) next.focus()
+    onMarkSeen()
+  }
 
   const copyAndConfirm = () => {
     onCopyLink()
@@ -612,6 +621,7 @@ function QuickActions({
   return (
     <div
       data-quick-actions=""
+      data-menu-open={isMenuOpen || undefined}
       role="group"
       aria-label="Quick actions"
       className={cn(
@@ -620,11 +630,11 @@ function QuickActions({
         'group-hover/body:pointer-events-auto group-hover/body:opacity-100',
         'group-has-[:focus-visible]/body:pointer-events-auto group-has-[:focus-visible]/body:opacity-100',
         // Stays up while its reminder menu is open, after the pointer has left for the menu.
-        'group-has-[[data-state=open]]/body:pointer-events-auto group-has-[[data-state=open]]/body:opacity-100',
+        'data-[menu-open]:pointer-events-auto data-[menu-open]:opacity-100',
       )}
     >
       {hasChanges && (
-        <QuickAction label="Mark as seen" onClick={onMarkSeen}>
+        <QuickAction label="Mark as seen" onClick={markSeenKeepingFocus}>
           <CheckIcon />
         </QuickAction>
       )}
@@ -634,7 +644,7 @@ function QuickActions({
       </QuickAction>
 
       {canRemind && (
-        <DropdownMenu>
+        <DropdownMenu open={isMenuOpen} onOpenChange={setMenuOpen}>
           <Hint label={hasReminder ? 'Remind me instead' : 'Remind me'} side="top">
             <DropdownMenuTrigger
               aria-label={hasReminder ? 'Remind me instead' : 'Remind me'}
@@ -672,7 +682,8 @@ function QuickActions({
 
 const QUICK_ACTION = cn(
   'flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors',
-  'hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground',
+  // `aria-expanded`, since the tooltip around the trigger overrides its `data-state`.
+  'hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground',
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
   '[&_svg]:size-3.5',
 )
@@ -683,7 +694,7 @@ function QuickAction({
   children,
 }: {
   label: string
-  onClick: () => void
+  onClick: React.MouseEventHandler<HTMLButtonElement>
   children: React.ReactNode
 }) {
   return (

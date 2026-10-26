@@ -1870,6 +1870,14 @@ describe('quick actions on a row', { concurrency: false, skip }, () => {
   const pinnedIds = async () =>
     (await quickPage.evaluate(() => chrome.storage.local.get('pinnedIds'))).pinnedIds as string[]
 
+  const focusedLabel = () =>
+    quickPage.evaluate(
+      () =>
+        document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement?.getAttribute(
+          'aria-label',
+        ) ?? null,
+    )
+
   /** Waits for a menu entry by its exact text, then picks it. */
   const pickMenuItem = async (label: string) => {
     await quickPage.waitForFunction(
@@ -1954,13 +1962,7 @@ describe('quick actions on a row', { concurrency: false, skip }, () => {
     await waitForActionsShown(0)
 
     await quickPage.keyboard.press('Tab')
-    const focused = await quickPage.evaluate(
-      () =>
-        document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement?.getAttribute(
-          'aria-label',
-        ) ?? null,
-    )
-    assert.equal(focused, 'Pin item')
+    assert.equal(await focusedLabel(), 'Pin item')
 
     await quickPage.keyboard.press('Enter')
     await quickPage.waitForFunction(() =>
@@ -2066,7 +2068,15 @@ describe('quick actions on a row', { concurrency: false, skip }, () => {
       'Copy link',
     ])
 
-    await clickAction(0, 'Mark as seen')
+    // From the keyboard: the row, then the first of its actions.
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[data-index="0"] button') as HTMLElement).focus()
+    })
+    await quickPage.keyboard.press('Tab')
+    assert.equal(await focusedLabel(), 'Mark as seen')
+    await quickPage.keyboard.press('Enter')
+
     await quickPage.waitForFunction(
       () =>
         !document
@@ -2074,6 +2084,48 @@ describe('quick actions on a row', { concurrency: false, skip }, () => {
           .shadowRoot!.querySelector('[data-index="0"] [data-change]'),
     )
     assert.deepEqual((await actionsOn(0)).labels, ['Pin item', 'Remind me', 'Copy link'])
+    // The button it was on is gone, so focus moves along rather than off the panel.
+    assert.equal(await focusedLabel(), 'Pin item')
+  })
+
+  it('keeps keys pressed in its reminder menu inside the menu', async () => {
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[data-index="3"] button') as HTMLElement).focus()
+    })
+    await quickPage.keyboard.press('Tab')
+    await quickPage.keyboard.press('Tab')
+    assert.equal(await focusedLabel(), 'Remind me')
+
+    await quickPage.keyboard.press('Enter')
+    await quickPage.waitForFunction(
+      () => document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement?.getAttribute('role') === 'menuitem',
+    )
+
+    // The list's own keys: neither moves to a row nor pins one from inside the menu.
+    await quickPage.keyboard.press('ArrowDown')
+    await quickPage.keyboard.press('p')
+    const state = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return {
+        role: shadow.activeElement?.getAttribute('role') ?? null,
+        menus: shadow.querySelectorAll('[role="menu"]').length,
+      }
+    })
+    assert.deepEqual(state, { role: 'menuitem', menus: 1 })
+    assert.deepEqual(await pinnedIds(), [])
+
+    await quickPage.keyboard.press('Escape')
+    await quickPage.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[role="menu"]'),
+    )
+    // Radix hands focus back to the trigger once the menu has unmounted.
+    await quickPage.waitForFunction(
+      () =>
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.activeElement?.getAttribute('aria-label') === 'Remind me',
+    )
   })
 
   it('sets a reminder from its own menu, as the context menu does', async () => {
@@ -2097,7 +2149,20 @@ describe('quick actions on a row', { concurrency: false, skip }, () => {
       ].some((node) => node.textContent?.trim() === 'When it changes'),
     )
 
-    // The pointer is on the menu now, and the actions stay up behind it.
+    // Off the row and onto the menu: the actions stay up behind it.
+    const entry = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const node = [...shadow.querySelectorAll('[role="menuitem"]')].find(
+        (candidate) => candidate.textContent?.trim() === 'When it changes',
+      )!
+      const box = node.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+    await quickPage.mouse.move(entry.x, entry.y, { steps: 6 })
+    const hovered = await quickPage.evaluate(
+      () => document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-index="2"]')!.matches(':hover'),
+    )
+    assert.equal(hovered, false)
     assert.equal((await actionsOn(2)).opacity, '1')
 
     await pickMenuItem('When it changes')

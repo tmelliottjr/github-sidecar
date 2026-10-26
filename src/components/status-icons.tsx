@@ -199,7 +199,8 @@ export function CheckIndicator({
         className={cn(
           'flex h-full shrink-0 cursor-pointer items-center gap-1 px-1.5 text-[11px] font-semibold text-closed',
           'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
-          isOpen ? 'bg-closed/15' : 'hover:bg-closed/10',
+          // The page color rather than a red tint, which would take the count below 4.5:1.
+          isOpen ? 'bg-background ring-1 ring-inset ring-closed/50' : 'hover:bg-background',
         )}
       >
         <Icon className="size-3.5" aria-hidden />

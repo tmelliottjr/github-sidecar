@@ -176,7 +176,8 @@ export function FilterBar({
 
 const CONTROL = cn(
   'flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors',
-  'hover:bg-accent hover:text-foreground data-[state=open]:bg-accent',
+  // `aria-expanded`, since the tooltip around each trigger overrides its `data-state`.
+  'hover:bg-accent hover:text-foreground aria-expanded:bg-accent',
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
 )
 

@@ -540,6 +540,8 @@ export function Sidebar() {
    * on a freshly opened panel is nowhere in particular.
    */
   const onPanelKeyDown = (event: React.KeyboardEvent) => {
+    // A `/` typed into a portaled menu bubbles here in React, but is not the panel's.
+    if (!event.currentTarget.contains(event.target as Node)) return
     if (!features.filter || event.key !== '/' || filtering) return
     const target = event.target
     if (
