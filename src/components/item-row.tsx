@@ -149,6 +149,10 @@ function ItemRowImpl({
   onUnhide,
 }: Props) {
   const [refresh, setRefresh] = useState<RefreshState>({ status: 'idle' })
+  // Quick actions mount on the first hover or focus, so scrolling through
+  // hundreds of rows never builds toolbars nobody reaches.
+  const [hasQuickActions, setHasQuickActions] = useState(false)
+  const showQuickActions = useCallback(() => setHasQuickActions(true), [])
   const stack = item.stack
 
   const refreshItem = useCallback(() => {
@@ -248,6 +252,8 @@ function ItemRowImpl({
            */}
           <div
             data-item-body=""
+            onPointerEnter={hasQuickActions ? undefined : showQuickActions}
+            onFocus={hasQuickActions ? undefined : showQuickActions}
             className={cn(
               'group/body relative flex flex-col rounded-xl bg-[color:var(--row-surface)] transition-colors',
               SURFACES,
@@ -331,18 +337,20 @@ function ItemRowImpl({
              * After the row's own button, so moving to a row still focuses the
              * row and Tab steps from it into these.
              */}
-            <QuickActions
-              isPinned={isPinned}
-              hasChanges={hasChanges}
-              canRemind={canRemind}
-              hasReminder={reminder !== 'none'}
-              reminderOverrides={reminderOverrides}
-              onTogglePin={togglePin}
-              onMarkSeen={markSeen}
-              onRemind={remindAbout}
-              onClearReminder={clearReminder}
-              onCopyLink={copyItemLink}
-            />
+            {hasQuickActions && (
+              <QuickActions
+                isPinned={isPinned}
+                hasChanges={hasChanges}
+                canRemind={canRemind}
+                hasReminder={reminder !== 'none'}
+                reminderOverrides={reminderOverrides}
+                onTogglePin={togglePin}
+                onMarkSeen={markSeen}
+                onRemind={remindAbout}
+                onClearReminder={clearReminder}
+                onCopyLink={copyItemLink}
+              />
+            )}
 
             {/*
              * Indented past the state disc so the marks line up under the

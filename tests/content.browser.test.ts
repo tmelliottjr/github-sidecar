@@ -1906,7 +1906,8 @@ describe('quick actions on a row', { concurrency: false, skip }, () => {
         return boxes
       })
 
-    assert.equal((await actionsOn(1)).opacity, '0')
+    // Not built at all until the row is first hovered or focused.
+    assert.equal((await actionsOn(1)).opacity, null)
     const atRest = await layout()
 
     await hoverRow(1)
@@ -1929,7 +1930,13 @@ describe('quick actions on a row', { concurrency: false, skip }, () => {
     })
     assert.equal(inside, true)
 
+    // Once built, it hides again as the pointer leaves.
     await quickPage.mouse.move(0, 0, { steps: 4 })
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const group = shadow.querySelector('[data-index="1"] [data-quick-actions]')
+      return Boolean(group) && getComputedStyle(group!).opacity === '0'
+    })
   })
 
   it('is reached from the keyboard right after the row, and pins it as the menu does', async () => {
