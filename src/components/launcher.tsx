@@ -23,8 +23,9 @@ interface Props {
 /**
  * Stands in for the panel while it is hidden or collapsed: a tab on the left
  * edge of the viewport, centered vertically, with the GitHub mark, the result
- * count, the query name read from the bottom up, and an open chevron. Shrunk,
- * it shows the GitHub mark with the count as a bubble.
+ * count in a circle, and an open chevron. Shrunk, it shows the GitHub mark
+ * with the count as a bubble. The query name is only in the description that
+ * screen readers announce.
  */
 export function Launcher({ title, count, compact, onOpen, onCompactChange }: Props) {
   const detailId = useId()
@@ -42,7 +43,7 @@ export function Launcher({ title, count, compact, onOpen, onCompactChange }: Pro
   }
 
   // Grid tracks animate between 0fr and 1fr, which a height transition cannot
-  // do without knowing the label length ahead of time.
+  // do without a fixed height, and the count is not always there.
   const fold = cn(
     'grid transition-[grid-template-rows,opacity] duration-300 ease-stack',
     'motion-reduce:transition-none',
@@ -89,19 +90,15 @@ export function Launcher({ title, count, compact, onOpen, onCompactChange }: Pro
 
           <span className={fold} inert={compact}>
             <span className="min-h-0 overflow-hidden">
-              <span className="flex flex-col items-center gap-2.5 pb-1 pt-3">
-                {/* Turned to read from the bottom up, with the tops of the letters toward the edge. */}
-                <span className="flex rotate-180 items-center gap-2 [writing-mode:vertical-rl]">
-                  <span className="max-h-52 truncate text-[13px] font-semibold">{title}</span>
-                  {count !== null && (
-                    <span
-                      data-launcher-chip=""
-                      className="rounded-full bg-muted py-2 text-[12px] font-semibold leading-5 tabular-nums text-muted-foreground"
-                    >
-                      {count.toLocaleString()}
-                    </span>
-                  )}
-                </span>
+              <span className="flex flex-col items-center gap-1.5 pb-0.5 pt-1.5">
+                {count !== null && (
+                  <span
+                    data-launcher-chip=""
+                    className="flex size-8 items-center justify-center rounded-full bg-muted text-[11px] font-semibold tabular-nums text-muted-foreground"
+                  >
+                    {count > 999 ? '999+' : count}
+                  </span>
+                )}
                 <ChevronRightIcon
                   className={cn(
                     'size-4 text-muted-foreground transition-[color,translate] duration-200 ease-stack',
@@ -134,7 +131,7 @@ export function Launcher({ title, count, compact, onOpen, onCompactChange }: Pro
       </div>
 
       {compact && (
-        <Hint label="Show the query and count" side="right">
+        <Hint label="Show the count" side="right">
           <button
             type="button"
             onClick={() => setCompact(false)}

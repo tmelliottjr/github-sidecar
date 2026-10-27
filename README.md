@@ -29,12 +29,13 @@ inherit a panel nobody opened.
 
 Out of the way is not the same as gone, though, so a tab that has not been
 asked still shows a launcher: a vertical tab on the left edge of the window,
-halfway down. It holds the GitHub mark, the result count once there is one, the
-query name reading from the bottom up, and a › to open it. Its border curves
-into the window edge, so it looks attached to the side. It costs no request,
-since a launcher is not an open panel, and it sits over the page without moving
-it. Nobody has to go to the browser's extensions menu to find a panel that is
-meant to be part of the page.
+halfway down. It holds the GitHub mark, the result count in a circle once there
+is one (999+ past that), and a › to open it. The query name is left to screen
+readers, which hear it with the count. Its border curves into the window edge,
+so it looks attached to the side. It costs no request, since a launcher is not
+an open panel, and it sits over the page without moving it. Nobody has to go to
+the browser's extensions menu to find a panel that is meant to be part of the
+page.
 
 Opening grows the tab into the panel, and hiding or collapsing folds the panel
 back into the tab. The contents move with the shape as they fade out. Both are

@@ -781,7 +781,6 @@ describe('docked into the page', { concurrency: false, skip }, () => {
         x: box.x,
         middle: box.top + box.height / 2,
         height: box.height,
-        text: node.textContent ?? '',
         chip: shadow.querySelector('[data-launcher-chip]')?.textContent ?? null,
         bubble: shadow.querySelector('[data-launcher-count]')?.textContent ?? null,
         panelGone: !shadow.querySelector('[data-docked]'),
@@ -812,14 +811,9 @@ describe('docked into the page', { concurrency: false, skip }, () => {
     )
   })
 
-  it('keeps taking results while collapsed', async () => {
-    const pill = (await launcher())!
-    assert.match(pill.text, /Needs my review/)
-    assert.equal(pill.chip, '400')
-
-    // A refresh landing while collapsed has to reach the launcher, otherwise
-    // the count it is showing is decoration rather than status.
-    await dockPage.evaluate(() => {
+  /** Sends the launcher a refreshed total, as the worker does after a poll. */
+  const refreshTotal = async (totalCount: number) => {
+    await dockPage.evaluate((total) => {
       const broadcast = (window as unknown as { __broadcast: (m: unknown) => void })
         .__broadcast
       broadcast({
@@ -828,15 +822,25 @@ describe('docked into the page', { concurrency: false, skip }, () => {
         after: null,
         page: {
           items: [],
-          totalCount: 7,
+          totalCount: total,
           endCursor: null,
           hasNextPage: false,
           fetchedAt: Date.now(),
         },
       })
-    })
+    }, totalCount)
     await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)))
+  }
 
+  it('keeps taking results while collapsed', async () => {
+    assert.equal((await launcher())!.chip, '400')
+
+    // A refresh landing while collapsed has to reach the launcher, otherwise
+    // the count it is showing is decoration rather than status.
+    await refreshTotal(4321)
+    assert.equal((await launcher())!.chip, '999+', 'expected the circle to cap the count')
+
+    await refreshTotal(7)
     assert.equal((await launcher())!.chip, '7')
   })
 
@@ -892,7 +896,7 @@ describe('docked into the page', { concurrency: false, skip }, () => {
     await pressOn('Expand launcher')
     const pill = (await launcher())!
 
-    assert.ok(pill.height > 120, `expected the full tab, saw ${pill.height}px`)
+    assert.ok(pill.height > 80, `expected the full tab, saw ${pill.height}px`)
     assert.equal(Math.round(pill.middle), 450, 'expected the tab to grow from its middle')
     assert.equal(pill.bubble, null)
     assert.equal(await focused(), 'Open GitHub Sidecar')
@@ -2096,15 +2100,18 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
         panel: Boolean(shadow.querySelector('[role="complementary"]')),
         left: box.left,
         middle: box.top + box.height / 2,
-        text: shadow.querySelector('[data-launcher]')!.textContent,
+        // The tab draws no name, so the query is only in what screen readers announce.
+        description: shadow.getElementById(
+          shadow.querySelector('[aria-label="Open GitHub Sidecar"]')!.getAttribute('aria-describedby')!,
+        )?.textContent,
         chip: Boolean(shadow.querySelector('[data-launcher-chip]')),
       }
     })
     assert.equal(layout.panel, false)
     assert.equal(layout.left, 0)
     assert.equal(Math.round(layout.middle), 400)
+    assert.equal(layout.description, 'Needs my review')
     // Nothing has loaded in a closed tab, so there is no count to show yet.
-    assert.match(layout.text ?? '', /Needs my review/)
     assert.equal(layout.chip, false)
   })
 
