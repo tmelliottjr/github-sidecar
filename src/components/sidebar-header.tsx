@@ -2,7 +2,6 @@ import {
   BeakerIcon,
   CheckIcon,
   ChevronDownIcon,
-  FilterIcon,
   FoldDownIcon,
   FoldUpIcon,
   GearIcon,
@@ -46,15 +45,11 @@ interface Props {
    */
   isRefreshing: boolean
   canRefresh: boolean
-  /** Whether the filter is offered at all, and whether it is currently open. */
-  canFilter: boolean
-  isFiltering: boolean
   canMarkAllSeen: boolean
   /** Developer mode only: opens the part of settings that holds the log. */
   canInspect: boolean
   onSelectQuery: (id: string) => void
   onManageQueries: () => void
-  onToggleFilter: () => void
   onMarkAllSeen: () => void
   onRefresh: () => void
   onPatchWindow: (patch: Partial<WindowState>) => void
@@ -71,13 +66,10 @@ export function SidebarHeader({
   count,
   isRefreshing,
   canRefresh,
-  canFilter,
-  isFiltering,
   canMarkAllSeen,
   canInspect,
   onSelectQuery,
   onManageQueries,
-  onToggleFilter,
   onMarkAllSeen,
   onRefresh,
   onPatchWindow,
@@ -233,17 +225,6 @@ export function SidebarHeader({
           </span>
         ) : (
           secondaryControls(true)
-        )}
-
-        {canFilter && (
-          <HeaderButton
-            label="Filter these rows"
-            onClick={onToggleFilter}
-            aria-pressed={isFiltering}
-            className="aria-pressed:bg-accent aria-pressed:text-foreground"
-          >
-            <FilterIcon />
-          </HeaderButton>
         )}
 
         <HeaderButton

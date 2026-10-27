@@ -468,7 +468,7 @@ follow along without the panel telling any of them directly.
 </details>
 
 <details>
-<summary><strong>Filter, reorder, and drive it from the keyboard</strong> — narrow loaded rows, order them, and move with <code>j</code>/<code>k</code>.</summary>
+<summary><strong>Filter, reorder, and drive it from the keyboard</strong> — narrow loaded rows by text, status, or person, order them, and move with <code>j</code>/<code>k</code>.</summary>
 
 #### Filtering, reordering, and the keyboard
 
@@ -483,12 +483,24 @@ a review queue loses first, or grouped by repository. A grouping is remembered
 with the query it was chosen on, so each saved query keeps its own way of being
 read while sharing the one filter box.
 
+The search box sits above the list whenever **Filter and reorder** is on in
+settings; switching it off gives that height back to the rows. The funnel
+beside it narrows the same rows by status and by person: review (needs review,
+approved, changes requested), failing checks, conflicts, behind, draft, author,
+and assignee. Its options come from the loaded rows, and each shows how many
+rows it would leave. Choices in one section add rows, so needs review and
+approved shows both. Sections narrow each other, so approved and an author
+shows that author's approved rows. Each section with a choice shows as a token
+under the search box. Escape clears the typed text and leaves the choices
+alone; their tokens and **Clear** remove them. Merge choices are only offered
+while merge state is switched on, since rows only show those marks then.
+
 `j` and `k` move through the list by moving the browser's own focus onto a
 row's button, so Enter opens it without a handler of the panel's own and a
 screen reader is told where it landed. `o` opens, `p` pins, `h` hides, `r` asks
-to be reminded when the row changes, `/` opens the filter, and Escape gives the
-focus back. The other reminder times are a choice, and a choice belongs in the
-menu that lists them.
+to be reminded when the row changes, `/` jumps to the search box, and Escape
+clears it, then gives the focus back. The other reminder times are a choice,
+and a choice belongs in the menu that lists them.
 
 </details>
 
@@ -817,7 +829,8 @@ neither, and no notification to play a sound alongside.
 | Hide a row            | Right-click it → **Hide this row** (`h`)         |
 | Review what is hidden | The count in the footer, then right-click → **Show it again** |
 | Manage all of it      | Settings → **Hidden rows** / **Reminders** / **Pinned rows** |
-| Filter the loaded rows| The funnel in the header, or `/`                 |
+| Filter the loaded rows| The search box above the list, or `/` to jump to it |
+| Narrow by status or person | The funnel in the filter bar; tokens under the box remove each choice |
 | Reorder them          | The sort control in the filter bar               |
 | Group them            | The grouping control in the filter bar (remembered per query) |
 | Move through the list | `j` and `k`, then Enter or `o` to open, `p` to pin |

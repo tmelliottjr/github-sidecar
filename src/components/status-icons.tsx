@@ -126,7 +126,7 @@ function pickIcon(item: StateItem) {
 
 const NO_CHECKS: readonly FailingCheck[] = []
 
-const CHECK_META: Record<CheckState, { label: string; className: string; Icon: Icon }> = {
+export const CHECK_META: Record<CheckState, { label: string; className: string; Icon: Icon }> = {
   SUCCESS: { label: 'All checks passing', className: 'text-open', Icon: CheckCircleFillIcon },
   FAILURE: { label: 'Checks failing', className: 'text-closed', Icon: XCircleFillIcon },
   ERROR: { label: 'Checks errored', className: 'text-closed', Icon: XCircleFillIcon },
@@ -215,9 +215,10 @@ export function CheckIndicator({
   )
 }
 
-const MERGE_META: Partial<
-  Record<MergeState, { label: string; className: string; Icon: Icon }>
-> = {
+type MergeMark = { label: string; className: string; Icon: Icon }
+
+/** The merge states a row draws a mark for. */
+export const MERGE_META = {
   conflicting: {
     label: 'Conflicts with the base branch',
     className: 'text-conflict',
@@ -228,7 +229,9 @@ const MERGE_META: Partial<
     className: 'text-attention',
     Icon: SyncIcon,
   },
-}
+} satisfies Partial<Record<MergeState, MergeMark>>
+
+const MERGE_MARKS: Partial<Record<MergeState, MergeMark>> = MERGE_META
 
 /**
  * Why a pull request cannot go in, where the rest of the row cannot say it.
@@ -237,7 +240,7 @@ const MERGE_META: Partial<
  * have their own mark on this line.
  */
 export function MergeIndicator({ state }: { state: MergeState | null }) {
-  const meta = state ? MERGE_META[state] : undefined
+  const meta = state ? MERGE_MARKS[state] : undefined
   if (!meta) return null
   const { label, className, Icon } = meta
 
@@ -253,7 +256,7 @@ export function MergeIndicator({ state }: { state: MergeState | null }) {
 
 /** Whether `MergeIndicator` draws anything for this state. */
 export function drawsMergeState(state: MergeState | null): boolean {
-  return state !== null && MERGE_META[state] !== undefined
+  return state !== null && MERGE_MARKS[state] !== undefined
 }
 
 /**
@@ -339,7 +342,7 @@ export function ChangeBadge({
   )
 }
 
-const REVIEW_META: Record<ReviewDecision, { label: string; className: string; Icon: Icon }> = {
+export const REVIEW_META: Record<ReviewDecision, { label: string; className: string; Icon: Icon }> = {
   APPROVED: { label: 'Approved', className: 'text-open', Icon: CheckIcon },
   CHANGES_REQUESTED: {
     label: 'Changes requested',

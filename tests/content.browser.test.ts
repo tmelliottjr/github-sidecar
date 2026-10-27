@@ -3240,9 +3240,8 @@ describe('changes, reminders, hidden rows, and filtering', { concurrency: false,
     // one: clicking it would change nothing, so it is not made.
     await panel.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      ;(shadow.querySelector('[aria-label="Filter these rows"]') as HTMLElement).click()
+      ;(shadow.querySelector('input[aria-label="Filter the rows already loaded"]') as HTMLElement).focus()
     })
-    await panel.waitForSelector('#github-sidecar-root')
     await panel.keyboard.type('regression')
     await panel.waitForFunction(
       () =>
@@ -3479,12 +3478,10 @@ describe('changes, reminders, hidden rows, and filtering', { concurrency: false,
       ;(shadow.querySelector('[data-index="0"] button') as HTMLElement).focus()
     })
     await panel.keyboard.press('/')
-    await panel.waitForFunction(() =>
-      Boolean(
-        document
-          .getElementById('github-sidecar-root')!
-          .shadowRoot!.querySelector('input[aria-label="Filter the rows already loaded"]'),
-      ),
+    await panel.waitForFunction(
+      () =>
+        document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement?.getAttribute('aria-label') ===
+        'Filter the rows already loaded',
     )
 
     // A label only one row carries, so what is left is unambiguous. The rows
@@ -3504,16 +3501,23 @@ describe('changes, reminders, hidden rows, and filtering', { concurrency: false,
     // paging through the whole result set.
     assert.equal(await searches(), searchesBefore)
 
+    // Escape clears what was typed, and a second one leaves the box.
     await panel.keyboard.press('Escape')
     await panel.waitForFunction(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const input = shadow.querySelector<HTMLInputElement>('input[aria-label="Filter the rows already loaded"]')
       return (
-        !shadow.querySelector('input[aria-label="Filter the rows already loaded"]') &&
+        input?.value === '' &&
+        shadow.activeElement === input &&
         [...shadow.querySelectorAll('[data-index]')].some(
           (row) => !row.textContent?.includes('Item number 1 '),
         )
       )
     })
+    await panel.keyboard.press('Escape')
+    await panel.waitForFunction(
+      () => document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement === null,
+    )
   })
 
   it('survives a row cached before the newer fields existed', async () => {
@@ -3744,11 +3748,6 @@ describe('grouping the loaded rows', { concurrency: false, skip }, () => {
     // A flat list to begin with: no section headers.
     assert.equal(await groupHeaderCount(), 0)
 
-    // Reveal the filter bar (a plain button, so a synthetic click is enough).
-    await groupPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      ;(shadow.querySelector('[aria-label="Filter these rows"]') as HTMLElement).click()
-    })
     await groupPage.waitForFunction(() =>
       Boolean(
         document
@@ -3811,5 +3810,256 @@ describe('grouping the loaded rows', { concurrency: false, skip }, () => {
     const stored = await savedQueries()
     assert.equal(stored[0]?.groupBy, 'status')
     assert.equal(stored[1]?.groupBy, undefined)
+  })
+})
+
+describe('quick filters', { concurrency: false, skip }, () => {
+  let quickBrowser: Browser
+  let quickPage: Page
+
+  before(async () => {
+    quickBrowser = await puppeteer.launch({ executablePath, headless: true })
+    quickPage = await quickBrowser.newPage()
+    await quickPage.setViewport({ width: 1280, height: 900 })
+    await quickPage.setContent('<!doctype html><html data-color-mode="light"><body></body></html>')
+    await quickPage.evaluate(CHROME_STUB)
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await quickPage.evaluate(bundle)
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+  })
+
+  after(async () => {
+    await quickBrowser?.close()
+  })
+
+  const searches = () =>
+    quickPage.evaluate(
+      () =>
+        (window as unknown as { __sentMessages: Array<{ type?: string }> }).__sentMessages.filter(
+          (message) => message.type === 'search',
+        ).length,
+    )
+
+  /** The row titles on screen, without the loader row. */
+  const titles = () =>
+    quickPage.evaluate(() =>
+      [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[data-index]')]
+        .map((row) => row.querySelector('button')?.textContent ?? '')
+        .filter((text) => !text.includes('Loading more')),
+    )
+
+  /** Radix opens a trigger only on a real pointer, so click it by its coordinates. */
+  const openMenu = async () => {
+    const box = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const rect = shadow
+        .querySelector('[aria-label="Filter by status or person"]')!
+        .getBoundingClientRect()
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+    })
+    await quickPage.mouse.click(box.x, box.y)
+    await quickPage.waitForFunction(() =>
+      Boolean(
+        document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[role="menu"]'),
+      ),
+    )
+  }
+
+  // Radix hands focus back to the trigger on a timer after the menu closes;
+  // moving focus before that lands would have it taken away again.
+  const closeMenu = async () => {
+    await quickPage.keyboard.press('Escape')
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return (
+        !shadow.querySelector('[role="menu"]') &&
+        shadow.activeElement?.getAttribute('aria-label') === 'Filter by status or person'
+      )
+    })
+  }
+
+  const clickMenuEntry = (text: string) =>
+    quickPage.evaluate((label) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[role="menuitemcheckbox"], [role="menuitem"]')].find(
+        (node) => node.textContent?.startsWith(label),
+      )
+      ;(entry as HTMLElement).click()
+    }, text)
+
+  it('is there from the start, without taking focus from the page', async () => {
+    const state = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return {
+        hasSearch: Boolean(shadow.querySelector('input[aria-label="Filter the rows already loaded"]')),
+        hasHeaderToggle: Boolean(shadow.querySelector('[aria-label="Filter these rows"]')),
+        focusedInPanel: shadow.activeElement !== null,
+      }
+    })
+    assert.deepEqual(state, { hasSearch: true, hasHeaderToggle: false, focusedInPanel: false })
+  })
+
+  it('narrows to the rows with a mark, keeps the menu open, and asks GitHub for nothing', async () => {
+    const searchesBefore = await searches()
+
+    await openMenu()
+    // Only row 1 conflicts and only row 3 has fallen behind.
+    const entries = await quickPage.evaluate(() =>
+      [
+        ...document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelectorAll('[role="menuitemcheckbox"]'),
+      ].map((node) => node.textContent),
+    )
+    assert.ok(entries.includes('Conflicts1'), `expected a Conflicts entry, got ${entries}`)
+    assert.ok(entries.includes('Behind1'), `expected a Behind entry, got ${entries}`)
+
+    await clickMenuEntry('Conflicts')
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const rows = [...shadow.querySelectorAll('[data-index]')].filter(
+        (row) => !row.textContent?.includes('Loading more'),
+      )
+      return rows.length > 0 && rows.every((row) => row.textContent?.includes('Item number 1 '))
+    })
+
+    const state = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[role="menuitemcheckbox"]')].find((node) =>
+        node.textContent?.startsWith('Conflicts'),
+      )
+      return {
+        menuOpen: Boolean(shadow.querySelector('[role="menu"]')),
+        checked: entry?.getAttribute('aria-checked'),
+        token: shadow.querySelector('[data-quick-filter="merge"]')?.textContent,
+      }
+    })
+    assert.equal(state.menuOpen, true, 'expected the menu to stay open for another choice')
+    assert.equal(state.checked, 'true')
+    assert.equal(state.token, 'MergeConflicts')
+    assert.equal(await searches(), searchesBefore)
+
+    await closeMenu()
+  })
+
+  it('picks a person from a submenu, and clears every choice at once', async () => {
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;([...shadow.querySelectorAll('button')].find((node) => node.textContent === 'Clear') as HTMLElement).click()
+    })
+    await quickPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-quick-filter]'),
+    )
+
+    await openMenu()
+    await clickMenuEntry('Assignee')
+    await quickPage.waitForFunction(() =>
+      [
+        ...document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelectorAll('[role="menuitemcheckbox"]'),
+      ].some((node) => node.textContent?.startsWith('hubot')),
+    )
+    await clickMenuEntry('hubot')
+
+    // Rows 1, 6, 11, … are assigned to hubot.
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const rows = [...shadow.querySelectorAll('[data-index] button')]
+        .map((node) => node.textContent ?? '')
+        .filter((text) => text.startsWith('Item number'))
+      return rows.length > 0 && rows.every((text) => Number(/Item number (\d+)/.exec(text)?.[1]) % 5 === 1)
+    })
+    const token = await quickPage.evaluate(
+      () =>
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-quick-filter="assignee"]')?.textContent,
+    )
+    assert.equal(token, 'Assigneehubot')
+
+    // One Escape closes the submenu and the menu under it.
+    await closeMenu()
+  })
+
+  it('clears the typed text on Escape, and keeps the chosen filters', async () => {
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('input[aria-label="Filter the rows already loaded"]') as HTMLElement).focus()
+    })
+    // A label only row 1 carries, and row 1 is one of hubot's.
+    await quickPage.keyboard.type('regression')
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const rows = [...shadow.querySelectorAll('[data-index] button')]
+        .map((node) => node.textContent ?? '')
+        .filter((text) => text.startsWith('Item number'))
+      return rows.length > 0 && rows.every((text) => text.includes('Item number 1 '))
+    })
+
+    await quickPage.keyboard.press('Escape')
+    await quickPage.waitForFunction(() =>
+      [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[data-index] button')].some(
+        (node) => node.textContent?.includes('Item number 6 '),
+      ),
+    )
+    const state = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return {
+        text: shadow.querySelector<HTMLInputElement>('input[aria-label="Filter the rows already loaded"]')?.value,
+        token: shadow.querySelector('[data-quick-filter="assignee"]')?.textContent,
+      }
+    })
+    assert.deepEqual(state, { text: '', token: 'Assigneehubot' })
+    assert.ok((await titles()).every((text) => Number(/Item number (\d+)/.exec(text)?.[1]) % 5 === 1))
+
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;([...shadow.querySelectorAll('button')].find((node) => node.textContent === 'Clear') as HTMLElement).click()
+    })
+    await quickPage.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-quick-filter]'),
+    )
+  })
+
+  it('keeps focus in the bar as tokens are removed', async () => {
+    await openMenu()
+    await clickMenuEntry('Conflicts')
+    await clickMenuEntry('Draft')
+    await closeMenu()
+
+    const focused = () =>
+      quickPage.evaluate(() => {
+        const active = document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement
+        return active?.getAttribute('aria-label') ?? null
+      })
+
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Remove the merge filter"]') as HTMLElement).focus()
+    })
+    await quickPage.keyboard.press('Enter')
+    await quickPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-quick-filter="merge"]'),
+    )
+    assert.equal(await focused(), 'Remove the state filter')
+
+    await quickPage.keyboard.press('Enter')
+    await quickPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-quick-filter]'),
+    )
+    assert.equal(await focused(), 'Filter the rows already loaded')
   })
 })

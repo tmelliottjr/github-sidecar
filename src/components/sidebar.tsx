@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertIcon,
   FilterIcon,
@@ -33,12 +33,22 @@ import { useTabOpen } from '@/hooks/use-tab-open'
 import { changesSince, isHidden, isWhole, nextReminderAt } from '@/lib/attention'
 import { browser } from '@/lib/browser'
 import type { SearchItem } from '@/lib/github/types'
-import { filterItems, sortItems, buildRows, groupKeysOf } from '@/lib/list-view'
+import {
+  FACETS,
+  applyQuickFilter,
+  buildRows,
+  filterItems,
+  groupKeysOf,
+  isQuickFiltered,
+  sortItems,
+  type QuickFilter,
+} from '@/lib/list-view'
 import { sendMessage, RequestError } from '@/lib/messages'
 import { DEFAULT_FEATURES, type SavedQuery, type Settings, type WindowState } from '@/lib/storage'
 import { cn, relativeTime } from '@/lib/utils'
 
 const PANEL_SELECTOR = '[role="complementary"]'
+const NO_QUICK_FILTER: QuickFilter = {}
 const LAUNCHER_SELECTOR = '[data-launcher-capsule]'
 
 export function Sidebar() {
@@ -56,8 +66,9 @@ export function Sidebar() {
   const reminderOverrides = developer?.enabled ? developer.reminderSeconds : null
   const { memory, markSeen, remind, clearReminder, hide, unhide } =
     useItemMemory(reminderOverrides)
-  const [filtering, setFiltering] = useState(false)
+  const filterInputRef = useRef<HTMLInputElement>(null)
   const [filterText, setFilterText] = useState('')
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>({})
   const [sortOrder, setSortOrder] = useState<SortOrder>('default')
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set())
   const [showHidden, setShowHidden] = useState(false)
@@ -228,6 +239,24 @@ export function Sidebar() {
 
   const items = useMemo(() => [...groups.pinned, ...groups.rest], [groups])
 
+  // The merge-state switch hides merge marks on the rows, so it hides merge choices too.
+  const facets = useMemo(
+    () => (features.mergeState ? FACETS : FACETS.filter((facet) => facet !== 'merge')),
+    [features.mergeState],
+  )
+  // With the filter switched off its bar is gone, so nothing it holds may narrow the list.
+  const activeText = features.filter ? filterText : ''
+  const activeFilter = useMemo<QuickFilter>(
+    () =>
+      !features.filter
+        ? NO_QUICK_FILTER
+        : features.mergeState
+          ? quickFilter
+          : { ...quickFilter, merge: [] },
+    [features.filter, features.mergeState, quickFilter],
+  )
+  const isNarrowed = activeText.trim().length > 0 || isQuickFiltered(activeFilter)
+
   /**
    * What the list actually shows, and which of the rows it would have shown
    * are hidden.
@@ -242,7 +271,7 @@ export function Sidebar() {
    */
   const view = useMemo(() => {
     const shape = (group: SearchItem[]) =>
-      sortItems(filterItems(group, filterText), sortOrder)
+      sortItems(applyQuickFilter(filterItems(group, activeText), activeFilter), sortOrder)
     const shapedPinned = shape(groups.pinned)
     const shapedRest = shape(groups.rest)
     const matched = [...shapedPinned, ...shapedRest]
@@ -265,7 +294,19 @@ export function Sidebar() {
       items: [...visiblePinned, ...visibleRest],
       rows: buildRows(visiblePinned, visibleRest, groupBy),
     }
-  }, [features.hide, filterText, groupBy, groups, memory, showHidden, sortOrder])
+  }, [activeFilter, activeText, features.hide, groupBy, groups, memory, showHidden, sortOrder])
+
+  /**
+   * What the quick filter menu offers and counts: the rows the list can show
+   * before anything narrows them, and those the typed text matches. Null while
+   * the filter is switched off.
+   */
+  const quickFilterRows = useMemo(() => {
+    if (!features.filter) return null
+    const shown =
+      features.hide && !showHidden ? items.filter((item) => !isHidden(memory[item.id])) : items
+    return { shown, textMatches: filterItems(shown, filterText) }
+  }, [features.filter, features.hide, filterText, items, memory, showHidden])
 
   const { hiddenIds } = view
   const visibleItems = view.items
@@ -514,9 +555,6 @@ export function Sidebar() {
       canRefresh={hasToken}
       onSelectQuery={selectQuery}
       onManageQueries={() => setEditing(true)}
-      canFilter={features.filter}
-      isFiltering={filtering}
-      onToggleFilter={() => setFiltering((current) => !current)}
       canMarkAllSeen={tracksChanges && items.length > 0}
       canInspect={developer?.enabled ?? false}
       onMarkAllSeen={markAllSeen}
@@ -542,7 +580,7 @@ export function Sidebar() {
   const onPanelKeyDown = (event: React.KeyboardEvent) => {
     // A `/` typed into a portaled menu bubbles here in React, but is not the panel's.
     if (!event.currentTarget.contains(event.target as Node)) return
-    if (!features.filter || event.key !== '/' || filtering) return
+    if (!features.filter || event.key !== '/') return
     const target = event.target
     if (
       target instanceof HTMLInputElement ||
@@ -552,7 +590,8 @@ export function Sidebar() {
       return
     }
     event.preventDefault()
-    setFiltering(true)
+    filterInputRef.current?.focus()
+    filterInputRef.current?.select()
   }
 
   const body = (
@@ -590,21 +629,23 @@ export function Sidebar() {
        * Also outside the keyed pane: what the reader has narrowed the list to
        * must survive a poll that changes the rows underneath it.
        */}
-      {filtering && !editing && hasToken && !search.isError && (
+      {quickFilterRows && !editing && hasToken && !search.isError && (
         <FilterBar
+          inputRef={filterInputRef}
           text={filterText}
           sort={sortOrder}
           group={groupBy}
           allGroupsCollapsed={allGroupsCollapsed}
           matches={visibleItems.length}
+          quickFilter={activeFilter}
+          facets={facets}
+          rows={quickFilterRows.shown}
+          textMatches={quickFilterRows.textMatches}
           onTextChange={setFilterText}
           onSortChange={setSortOrder}
           onGroupChange={setGroupBy}
           onToggleAllGroups={toggleAllGroups}
-          onClose={() => {
-            setFiltering(false)
-            setFilterText('')
-          }}
+          onQuickFilterChange={setQuickFilter}
         />
       )}
       {/*
@@ -633,6 +674,7 @@ export function Sidebar() {
           <FilteredOutState
             onClear={() => {
               setFilterText('')
+              setQuickFilter({})
               setShowHidden(true)
             }}
           />
@@ -652,7 +694,7 @@ export function Sidebar() {
              * would page through the whole result set looking for matches
              * nobody asked it to fetch.
              */
-            hasNextPage={search.hasNextPage && filterText.trim().length === 0}
+            hasNextPage={search.hasNextPage && !isNarrowed}
             isFetchingNextPage={search.isFetchingNextPage}
             onLoadMore={loadMore}
             onToggleGroup={toggleGroup}
