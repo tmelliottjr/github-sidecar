@@ -1,8 +1,7 @@
 # GitHub Sidecar
 
-GitHub Sidecar is a browser extension that keeps a small, draggable sidebar on
-every github.com page, showing the issues and pull requests you actually care
-about.
+GitHub Sidecar is a browser extension that docks a sidebar beside every
+github.com page, showing the issues and pull requests you actually care about.
 
 It runs on Chrome, Firefox, and Safari. See [Browser support](#browser-support)
 for the two places they differ.
@@ -31,11 +30,10 @@ inherit a panel nobody opened.
 Out of the way is not the same as gone, though, so a tab that has not been
 asked still shows a launcher: a pill with the GitHub mark, the query name, the
 result count once there is one, and an ↗ to open it. It sits in the
-bottom-right corner while the panel floats, and in the bottom-left, under where
-the panel goes, while it is docked. It costs no request, since a launcher is
-not an open panel, and it floats over the page without moving it. Nobody has to
-go to the browser's extensions menu to find a panel that is meant to be part of
-the page.
+bottom-left corner, under where the panel goes. It costs no request, since a
+launcher is not an open panel, and it floats over the page without moving it.
+Nobody has to go to the browser's extensions menu to find a panel that is meant
+to be part of the page.
 
 Opening grows the pill into the panel, and hiding or collapsing shrinks the
 panel back into the pill. Both are skipped when the system asks for reduced
@@ -43,27 +41,26 @@ motion.
 
 Hovering the launcher shows a ✕ on its corner that shrinks it to the GitHub
 mark, with the count as a bubble. Hovering the mark shows a › beside it that
-grows the launcher back. Which of the two shows is shared across tabs, like the
-rest of the window state.
+grows the launcher back. Which of the two shows is shared
+across tabs, like the rest of the panel state.
 
 Opening a panel for the first time does not mean going to the network. The
 request goes to the worker like any other, which answers from its shared
 IndexedDB cache and only refreshes if what it has has aged out.
 
-Everything else about the window (size, position, docked, collapsed, locked,
-and the launcher size) stays shared, because those are preferences rather than
-per-tab facts.
+Everything else about the panel (width, collapsed, and the launcher size)
+stays shared, because those are preferences rather than per-tab facts.
 
 </details>
 
 <details>
-<summary><strong>Or docked into the page</strong> — one click drops it into the gutter github.com leaves empty, so nothing is covered.</summary>
+<summary><strong>Docked into the page</strong> — it sits in the gutter github.com leaves empty, so nothing is covered.</summary>
 
-#### Docked mode
+#### Docking
 
 github.com centres its pages in a max-width column, which on a wide display
-leaves a wide empty gutter down the left. Docked mode puts the panel there, so
-nothing is covered and the page needs no cooperation from us. The panel is a
+leaves a wide empty gutter down the left. The panel goes there, so nothing is
+covered and the page needs no cooperation from us. The panel is a
 rounded card inset 12px from the viewport edges and from the header above it,
 so it reads as floating in the gutter.
 
@@ -108,22 +105,19 @@ attribute while the page is measured bare, and a single rule pulls them back
 out with a negative margin and an `auto` width. They go on spanning the window
 as github.com drew them, and only the page beneath is inset.
 
-##### Collapsing a dock
+##### Collapsing the panel
 
-A floating window collapses up into its own header. A docked one has nowhere to
-fold, so collapsing swaps it for the launcher in the bottom-left corner and
-gives the page back whatever room the panel had taken.
+Collapsing swaps the panel for the launcher in every browser tab and gives the
+page back whatever room the panel had taken.
 
-The launcher also stands in for a docked panel that is hidden in this tab, or
-that has never been opened in it. Two states, one launcher, and a click clears
-both at once, so opening always ends with the panel and never with the
-launcher redrawn because the other flag was still set.
+The launcher also stands in for a panel that is hidden in this tab, or that has
+never been opened in it. Two states, one launcher, and a click clears both at
+once, so opening always ends with the panel and never with the launcher
+redrawn because the other flag was still set.
 
-Results go on loading while a dock is collapsed, because a count that stops
-updating is decoration, not status. That is the one place the two collapsed
-states differ: a collapsed floating window shows nothing, so it stops asking.
-A launcher standing in for a hidden panel stops asking too; it is showing that
-the panel is there, not what is in it.
+Results go on loading while the panel is collapsed, because a count that stops
+updating is decoration, not status. A launcher standing in for a hidden panel
+stops asking; it is showing that the panel is there, not what is in it.
 
 </details>
 
@@ -325,8 +319,8 @@ list takes its marker with it rather than leaving one pointing at whatever
 arrived next.
 
 Nothing it depends on moves under React's eye: the list scrolls, the page
-scrolls beneath a docked panel, and dragging the window writes a transform
-straight to the DOM. Each of those schedules the same measure-and-place on the
+scrolls beneath the panel, and resizing the panel writes its width straight to
+the DOM. Each of those schedules the same measure-and-place on the
 next frame, so one mechanism covers movement the panel never renders for.
 
 Knowing when the page changed is the harder half. github.com navigates without
@@ -799,13 +793,8 @@ neither, and no notification to play a sound alongside.
 
 | Action                | How                                             |
 | --------------------- | ----------------------------------------------- |
-| Move the window       | Drag the empty strip in the header               |
-| Resize                | Drag any edge or corner                          |
-| Dock / undock         | Panel button in the header (hover the header to show it) |
-| Resize while docked   | Drag the panel's inner edge                      |
-| Lock / unlock         | Padlock button in the header (hover the header to show it) |
-| Collapse / expand     | Chevron button in the header (hover the header to show it) |
-| Collapse a dock       | Panel button in the header, then click the launcher |
+| Resize                | Drag the panel's inner edge                      |
+| Collapse / expand     | Panel button in the header (hover the header to show it), then click the launcher |
 | Show / hide this tab  | The launcher, the ✕ button, or the toolbar icon  |
 | Shrink the launcher   | Hover it, then ✕ on its corner; hover the mark and click › to grow it back |
 | Switch queries        | Click the query name in the header               |
@@ -849,8 +838,8 @@ src/
                 keyboard isolation, current-page tracking
   offscreen/    Chrome only: the document the sound is played in, since a
                 service worker cannot play audio
-  components/   Window chrome, list, rows, and shadcn-style primitives
-  hooks/        Storage sync, window geometry, dock layout, search, cache
+  components/   Panel chrome, launcher, list, rows, and shadcn-style primitives
+  hooks/        Storage sync, dock layout, search, cache
                 updates, current page
   lib/          GitHub GraphQL client, message protocol, storage schema,
                 change detection, list filtering, the extension API and what
@@ -904,10 +893,8 @@ A few decisions worth knowing:
   keys off what the token cannot do, never off the identity provider enforcing
   it, and the panel offers the settings page instead of a retry that would fail
   identically.
-- **Geometry is written straight to the DOM** during a drag and only committed
-  to storage on release, so dragging never re-renders the list. The window's
-  `style` prop is frozen at mount for the same reason: recomputing it would let
-  an unrelated re-render snap the window back mid-gesture.
+- **The panel width is written straight to the DOM** during a resize and only
+  committed to storage on release, so resizing never re-renders the list.
 - **`@property` does not work inside a shadow root.** Tailwind registers its
   internal custom properties that way, so in the shadow tree they have no
   initial value and every declaration built on one — `box-shadow`,
@@ -990,7 +977,7 @@ extension reload itself, so each change still needs a rebuild in Xcode.
 This is live reload, not hot module replacement. Two things rule HMR out: no
 browser picks up content script edits without reloading the whole extension, and
 github.com's CSP governs content script fetches, so the socket an HMR client
-needs would be blocked. In practice the difference is small — window position,
+needs would be blocked. In practice the difference is small — panel width,
 saved queries, and settings all live in extension storage, so they survive the
 reload.
 
@@ -1009,8 +996,8 @@ Set `DEV_RELOAD_PORT` to use a different port.
 ### Tests
 
 The browser tests load the real `dist/chrome/content.js` into a headless Chrome
-with a stubbed extension API, and cover mounting, styling, virtualisation,
-dragging, locking, and collapsing. Docked mode is exercised against a stand-in
+with a stubbed extension API, and cover mounting, styling, virtualisation, the
+launcher, and collapsing. Docking is exercised against a stand-in
 for a github.com page — full-width chrome above a centred column — at a viewport
 wide enough for the gutter to hold the panel and at one that is not. The options
 page is tested against a served copy of `dist/chrome/`, and the IndexedDB store

@@ -81,7 +81,7 @@ export async function manifestFor(
     name: dev ? 'GitHub Sidecar (dev)' : 'GitHub Sidecar',
     version,
     description:
-      'GitHub Sidecar — an omni-present, draggable sidebar for tracking the GitHub issues and pull requests you care about.',
+      'GitHub Sidecar — a sidebar docked beside github.com for tracking the GitHub issues and pull requests you care about.',
     ...(target === 'chrome' ? { minimum_chrome_version: MINIMUM_CHROME_VERSION } : {}),
     ...(target === 'firefox'
       ? {

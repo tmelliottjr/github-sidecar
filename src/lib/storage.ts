@@ -17,21 +17,18 @@ export interface SavedQuery {
 }
 
 /**
- * Shape and placement, shared by every tab. Whether the panel is *showing* is
+ * Shape of the panel, shared by every tab. Whether the panel is *showing* is
  * deliberately not part of this: that is per tab, and lives in the worker's
  * session storage instead. See `useTabOpen`.
+ *
+ * Older storage also holds the floating window fields `x`, `y`, `width`,
+ * `height`, `locked`, and `docked`. Nothing reads them, but `width` is taken,
+ * so `dockWidth` cannot be renamed to it.
  */
 export interface WindowState {
-  x: number
-  y: number
-  width: number
-  height: number
+  /** Whether every tab shows the launcher in place of the panel. */
   collapsed: boolean
-  /** When locked the window cannot be dragged or resized. */
-  locked: boolean
-  /** Docked mode pins the panel into the host page's left gutter. */
-  docked: boolean
-  /** Width of the docked panel, kept apart so undocking restores the float. */
+  /** Width of the docked panel. */
   dockWidth: number
   /** Whether the launcher is shrunk to the GitHub mark rather than the full pill. */
   launcherCompact: boolean
@@ -209,13 +206,7 @@ export const DEFAULT_QUERIES: SavedQuery[] = [
 ]
 
 export const DEFAULT_WINDOW_STATE: WindowState = {
-  x: -1,
-  y: 88,
-  width: 420,
-  height: 580,
   collapsed: false,
-  locked: false,
-  docked: false,
   dockWidth: 380,
   launcherCompact: false,
 }

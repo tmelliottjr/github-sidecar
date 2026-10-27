@@ -35,8 +35,8 @@ interface Props {
  * flowing with it.
  *
  * Everything it depends on can move without React hearing about it: the list
- * scrolls, the page scrolls under a docked panel, and a window drag writes its
- * transform straight to the DOM. Rather than model each of those, every source
+ * scrolls, the page scrolls under the panel, and resizing the panel writes its
+ * width straight to the DOM. Rather than model each of those, every source
  * of movement schedules the same measure-and-place on the next frame.
  */
 export function CurrentRowMarker({ row, viewportRef }: Props) {
@@ -90,7 +90,7 @@ export function CurrentRowMarker({ row, viewportRef }: Props) {
     place()
 
     // Capturing, because a scroll event does not bubble: this is what hears
-    // the list scrolling as well as the page under a docked panel.
+    // the list scrolling as well as the page under the panel.
     window.addEventListener('scroll', schedule, true)
     window.addEventListener('resize', schedule)
 
@@ -99,8 +99,8 @@ export function CurrentRowMarker({ row, viewportRef }: Props) {
     const viewport = viewportRef.current
     if (viewport) observer.observe(viewport)
 
-    // A drag or a resize writes the panel's geometry straight to its style
-    // attribute, frame by frame, without a render for either to be seen in.
+    // A resize writes the panel width straight to its style attribute, frame
+    // by frame, without a render to be seen in.
     const panel = row.closest('[role="complementary"]')
     const panelMoves = panel ? new MutationObserver(schedule) : null
     if (panel) {

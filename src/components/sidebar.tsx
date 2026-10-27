@@ -11,7 +11,6 @@ import {
 } from '@primer/octicons-react'
 
 import { DockedPanel, clampDockWidth } from '@/components/docked-panel'
-import { FloatingWindow } from '@/components/floating-window'
 import { ItemList } from '@/components/item-list'
 import { Launcher } from '@/components/launcher'
 import { Morph, captureOrigin, type MorphOrigin } from '@/components/morph'
@@ -123,6 +122,10 @@ export function Sidebar() {
     [setSettings],
   )
 
+  const isVisible = isOpen ?? false
+  const isCollapsed = windowState?.collapsed ?? false
+  const showsLauncher = !isVisible || isCollapsed
+
   // The toolbar button shows and hides the panel in the tab it was clicked on.
   useEffect(() => {
     const listener = (message: { type?: string }) => {
@@ -156,25 +159,14 @@ export function Sidebar() {
   )
 
   const hasToken = Boolean(settings?.token)
-  const isVisible = isOpen ?? false
-  const isDocked = windowState?.docked ?? false
-  const isCollapsed = windowState?.collapsed ?? false
-  // Collapsing means two different things. Floating, it hides the list behind
-  // the header. Docked, it swaps the panel for the launcher, which keeps
-  // reporting the count, so results have to go on loading.
-  const showsLauncher = !isVisible || (isDocked && isCollapsed)
   const dockWidth = windowState?.dockWidth ?? 0
 
-  // Measuring the host page is only worth doing while the docked panel is on
-  // screen. The launcher floats over the page and takes no room from it.
+  // Measuring the host page is only worth doing while the panel is on screen.
+  // The launcher sits over the page and takes no room from it.
   const dockTop = useDockLayout({
-    enabled: isDocked && !showsLauncher,
+    enabled: !showsLauncher,
     width: dockWidth,
   })
-
-  const toggleDock = useCallback(() => {
-    setWindowState((current) => ({ ...current, docked: !current.docked }))
-  }, [setWindowState])
 
   const setDockWidth = useCallback(
     (width: number) => {
@@ -187,8 +179,9 @@ export function Sidebar() {
     query: activeQuery?.query ?? null,
     pollIntervalMs: settings?.pollIntervalMs ?? 0,
     // A hidden tab asks for nothing at all; it hydrates from the worker's
-    // cache the moment the user switches to it.
-    enabled: hasToken && isVisible && !(isCollapsed && !isDocked) && !editing && isTabVisible,
+    // cache the moment the user switches to it. A collapsed panel goes on
+    // loading, since the launcher standing in for it shows the count.
+    enabled: hasToken && isVisible && !editing && isTabVisible,
   })
 
   // The worker answers from its cache straight away and only then goes to the
@@ -513,17 +506,17 @@ export function Sidebar() {
       <>
         {shell}
         <Launcher
-          side={isDocked ? 'left' : 'right'}
+          side="left"
           title={activeQuery?.name ?? 'GitHub Sidecar'}
           count={search.data ? totalCount : null}
           compact={windowState.launcherCompact}
           onCompactChange={(launcherCompact) => patchWindow({ launcherCompact })}
           onOpen={() => {
             beginMorph('panel')
-            // A docked launcher can stand for a hidden panel, a collapsed one,
-            // or both, and one click has to clear both or it just redraws itself.
+            // The launcher can stand for a hidden panel, a collapsed one, or
+            // both, and one click has to clear both or it just redraws itself.
             setOpen(true)
-            if (isDocked && isCollapsed) patchWindow({ collapsed: false })
+            if (isCollapsed) patchWindow({ collapsed: false })
           }}
         />
       </>
@@ -543,10 +536,8 @@ export function Sidebar() {
           ? 'loading'
           : `${items.length === 0 ? 'empty' : 'list'}:${activeQuery?.id ?? ''}`
 
-  const renderHeader = (onPointerDown: (event: React.PointerEvent) => void) => (
+  const header = (
     <SidebarHeader
-      onPointerDown={onPointerDown}
-      windowState={windowState}
       queries={savedQueries}
       activeQuery={activeQuery}
       isFetching={search.isFetching}
@@ -559,12 +550,10 @@ export function Sidebar() {
       canInspect={developer?.enabled ?? false}
       onMarkAllSeen={markAllSeen}
       onRefresh={refetch}
-      onPatchWindow={(patch) => {
-        // Collapsing a dock swaps the panel for the launcher.
-        if (isDocked && patch.collapsed) beginMorph('launcher')
-        patchWindow(patch)
+      onCollapse={() => {
+        beginMorph('launcher')
+        patchWindow({ collapsed: true })
       }}
-      onToggleDock={toggleDock}
       onHide={() => {
         beginMorph('launcher')
         setOpen(false)
@@ -759,37 +748,20 @@ export function Sidebar() {
     </div>
   )
 
-  if (isDocked) {
-    return (
-      <>
-        {shell}
-        <DockedPanel
-          width={clampDockWidth(windowState.dockWidth)}
-          top={dockTop}
-          onWidthChange={setDockWidth}
-          header={renderHeader(noop)}
-        >
-          {body}
-        </DockedPanel>
-      </>
-    )
-  }
-
   return (
     <>
       {shell}
-      <FloatingWindow
-        state={windowState}
-        onStateChange={patchWindow}
-        header={({ onPointerDown }) => renderHeader(onPointerDown)}
+      <DockedPanel
+        width={clampDockWidth(windowState.dockWidth)}
+        top={dockTop}
+        onWidthChange={setDockWidth}
+        header={header}
       >
         {body}
-      </FloatingWindow>
+      </DockedPanel>
     </>
   )
 }
-
-function noop() {}
 
 /** The icon, heading, text, and actions that stand in for the list when it has nothing to show. */
 function StatePanel({

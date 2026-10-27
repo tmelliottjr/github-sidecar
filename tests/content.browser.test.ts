@@ -46,10 +46,7 @@ const store = {
     activeQueryId: 'seeded',
   },
   savedQueries: [{ id: 'seeded', name: 'Needs my review', query: 'is:open is:pr' }],
-  windowState: {
-    x: 120, y: 60, width: 420, height: 520,
-    collapsed: false, locked: false,
-  },
+  windowState: { collapsed: false, dockWidth: 420 },
 };
 const items = Array.from({ length: 40 }, (_, index) => ({
   id: 'item_' + index,
@@ -560,124 +557,8 @@ describe('content script', { concurrency: false, skip }, () => {
     assert.match(String(openMessage.url), /github\.com/)
   })
 
-  it('collapses to the header without unmounting', async () => {
-    const height = await page.evaluate(async () => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const button = shadow.querySelector('[aria-label="Collapse"]') as HTMLButtonElement
-      button.click()
-      await new Promise((resolve) => setTimeout(resolve, 400))
-      const panel = shadow.querySelector('[role="complementary"]') as HTMLElement
-      return panel.getBoundingClientRect().height
-    })
-
-    assert.equal(height, 44)
-  })
-
   it('reports no console errors', () => {
     assert.deepEqual(consoleErrors, [])
-  })
-})
-
-describe('window geometry', { concurrency: false, skip }, () => {
-  let dragBrowser: Browser
-  let dragPage: Page
-
-  before(async () => {
-    dragBrowser = await puppeteer.launch({ executablePath, headless: true })
-    dragPage = await dragBrowser.newPage()
-    await dragPage.setViewport({ width: 1280, height: 800 })
-    await dragPage.setContent(
-      '<!doctype html><html data-color-mode="light"><body></body></html>',
-    )
-    await dragPage.evaluate(CHROME_STUB)
-
-    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
-    await dragPage.evaluate(bundle)
-    await dragPage.waitForSelector('#github-sidecar-root')
-  })
-
-  after(async () => {
-    await dragBrowser?.close()
-  })
-
-  /** Centre of the bare strip in the header that is reserved for dragging. */
-  const dragRegionCentre = () =>
-    dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const region = shadow.querySelector('[data-drag-region]') as HTMLElement
-      const box = region.getBoundingClientRect()
-      return { x: box.x + box.width / 2, y: box.y + box.height / 2, width: box.width }
-    })
-
-  const panelBox = () =>
-    dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const panel = shadow.querySelector('[role="complementary"]') as HTMLElement
-      const box = panel.getBoundingClientRect()
-      return { x: box.x, y: box.y, width: box.width, height: box.height }
-    })
-
-  it('exposes a usable drag region in the header', async () => {
-    const region = await dragRegionCentre()
-    assert.ok(region.width > 40, `drag region too narrow: ${region.width}px`)
-  })
-
-  it('moves the window when the header is dragged', async () => {
-    const start = await panelBox()
-    const handle = await dragRegionCentre()
-
-    await dragPage.mouse.move(handle.x, handle.y)
-    await dragPage.mouse.down()
-    await dragPage.mouse.move(handle.x - 60, handle.y + 90, { steps: 10 })
-    await dragPage.mouse.up()
-
-    const moved = await panelBox()
-    assert.equal(Math.round(moved.x - start.x), -60)
-    assert.equal(Math.round(moved.y - start.y), 90)
-    // Size must be untouched by a move.
-    assert.equal(moved.width, start.width)
-  })
-
-  it('persists the new position to storage', async () => {
-    const stored = await dragPage.evaluate(async () => {
-      const result = await chrome.storage.local.get('windowState')
-      return result.windowState as { x: number; y: number }
-    })
-    const box = await panelBox()
-
-    assert.equal(Math.round(stored.x), Math.round(box.x))
-    assert.equal(Math.round(stored.y), Math.round(box.y))
-  })
-
-  it('ignores drags once the position is locked', async () => {
-    await dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const lock = shadow.querySelector('[aria-label="Lock position"]') as HTMLButtonElement
-      lock.click()
-    })
-    await dragPage.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
-      return Boolean(shadow?.querySelector('[aria-label="Unlock position"]'))
-    })
-
-    const start = await panelBox()
-    const handle = await dragRegionCentre()
-
-    await dragPage.mouse.move(handle.x, handle.y)
-    await dragPage.mouse.down()
-    await dragPage.mouse.move(handle.x - 120, handle.y + 40, { steps: 6 })
-    await dragPage.mouse.up()
-
-    const moved = await panelBox()
-    assert.deepEqual({ x: moved.x, y: moved.y }, { x: start.x, y: start.y })
-  })
-
-  it('hides resize handles while locked', async () => {
-    const handles = await dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      return shadow.querySelectorAll('[class*="cursor-nwse-resize"]').length
-    })
-    assert.equal(handles, 0)
   })
 })
 
@@ -703,7 +584,7 @@ const GITHUB_PAGE = `<!doctype html><html data-color-mode="light"><body style="m
 </main></div>
 </body></html>`
 
-describe('docked mode', { concurrency: false, skip }, () => {
+describe('docked into the page', { concurrency: false, skip }, () => {
   let dockBrowser: Browser
   let dockPage: Page
 
@@ -783,7 +664,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
       }
     })
 
-  const clickDock = async (label: string) => {
+  const clickControl = async (label: string) => {
     await dockPage.evaluate((selector) => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       ;(shadow.querySelector(selector) as HTMLButtonElement).click()
@@ -792,13 +673,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
     await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
   }
 
-  it('starts floating, leaving the page untouched', async () => {
-    assert.equal((await panel()).docked, false)
-    assert.equal((await host()).bodyPadding, 0)
-  })
-
-  it('docks into the page gutter, floating below the header and nav', async () => {
-    await clickDock('Dock to the page')
+  it('sits in the page gutter, below the header and nav', async () => {
     const box = await panel()
 
     assert.equal(box.docked, true)
@@ -920,7 +795,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
 
     assert.ok((await host()).bodyPadding > 0, 'expected the open panel to need the page moved')
 
-    await clickDock('Collapse')
+    await clickControl('Collapse')
     const pill = await launcher()
 
     assert.ok(pill, 'expected the launcher once collapsed')
@@ -929,6 +804,12 @@ describe('docked mode', { concurrency: false, skip }, () => {
     assert.equal(pill.x, DOCK_INSET)
     assert.equal(pill.bottom, 900 - DOCK_INSET)
     assert.equal((await host()).bodyPadding, 0)
+    assert.equal(
+      await dockPage.evaluate(() =>
+        Boolean(document.getElementById('github-sidecar-dock-style')),
+      ),
+      false,
+    )
   })
 
   it('keeps taking results while collapsed', async () => {
@@ -1019,7 +900,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
   it('opens again from the launcher, scrolled past the sticky header', async () => {
     await dockPage.evaluate(() => window.scrollTo(0, 800))
     await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
-    await clickDock('Open GitHub Sidecar')
+    await clickControl('Open GitHub Sidecar')
 
     const box = await panel()
     assert.equal(box.docked, true)
@@ -1031,22 +912,6 @@ describe('docked mode', { concurrency: false, skip }, () => {
     assert.ok(hostPage.bodyPadding > 0, 'expected the page to be pushed across')
     assert.equal(hostPage.chromeLeft, 0)
     assert.equal(hostPage.chromeWidth, NARROW)
-  })
-
-  it('gives the page its space back when undocked', async () => {
-    await dockPage.evaluate(() => window.scrollTo(0, 0))
-    await dockPage.setViewport({ width: WIDE, height: 900 })
-    await clickDock('Float the window')
-
-    const box = await panel()
-    assert.equal(box.docked, false)
-    assert.equal((await host()).bodyPadding, 0)
-    assert.equal(
-      await dockPage.evaluate(() =>
-        Boolean(document.getElementById('github-sidecar-dock-style')),
-      ),
-      false,
-    )
   })
 })
 
@@ -1084,12 +949,6 @@ describe('docked on a page from the newer frontend', { concurrency: false, skip 
     await newerPage.setViewport({ width: NARROW, height: 900 })
     await newerPage.setContent(NEWER_GITHUB_PAGE)
     await newerPage.evaluate(CHROME_STUB)
-    await newerPage.evaluate(async () => {
-      const stored = await chrome.storage.local.get('windowState')
-      await chrome.storage.local.set({
-        windowState: { ...stored.windowState, docked: true, dockWidth: 380 },
-      })
-    })
 
     const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
     await newerPage.evaluate(bundle)
@@ -2224,7 +2083,7 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
       return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidecar"]'))
     })
 
-  it('starts closed, showing only the launcher in the bottom-right corner', async () => {
+  it('starts closed, showing only the launcher in the bottom-left corner', async () => {
     await quietPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
 
     assert.equal(await launcher(), true)
@@ -2234,15 +2093,15 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
       const box = shadow.querySelector('[data-launcher]')!.getBoundingClientRect()
       return {
         panel: Boolean(shadow.querySelector('[role="complementary"]')),
-        right: box.right,
+        left: box.left,
         bottom: box.bottom,
         text: shadow.querySelector('[data-launcher]')!.textContent,
         chip: Boolean(shadow.querySelector('[data-launcher-chip]')),
       }
     })
     assert.equal(layout.panel, false)
-    assert.equal(layout.right, 1280 - 20)
-    assert.equal(layout.bottom, 800 - 20)
+    assert.equal(layout.left, DOCK_INSET)
+    assert.equal(layout.bottom, 800 - DOCK_INSET)
     // Nothing has loaded in a closed tab, so there is no count to show yet.
     assert.match(layout.text ?? '', /Needs my review/)
     assert.equal(layout.chip, false)
@@ -2277,7 +2136,7 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
   })
 })
 
-describe('a docked tab that was never asked', { concurrency: false, skip }, () => {
+describe('a github.com tab that was never asked', { concurrency: false, skip }, () => {
   let closedBrowser: Browser
   let closedPage: Page
 
@@ -2287,13 +2146,8 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
     await closedPage.setViewport({ width: 1280, height: 800 })
     await closedPage.setContent(GITHUB_PAGE)
     await closedPage.evaluate(CHROME_STUB)
-    // A fresh tab, for someone who left the panel docked in the last one.
-    await closedPage.evaluate(async () => {
+    await closedPage.evaluate(() => {
       ;(window as unknown as { __tabOpen: boolean }).__tabOpen = false
-      const stored = await chrome.storage.local.get('windowState')
-      await chrome.storage.local.set({
-        windowState: { ...stored.windowState, docked: true, collapsed: false },
-      })
     })
 
     const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
@@ -2310,10 +2164,7 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
     closedPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
-      const node = shadow.querySelector('[data-launcher]') as HTMLElement | null
-      if (!node) return null
-      const box = node.getBoundingClientRect()
-      return { x: box.x, bottom: box.bottom }
+      return Boolean(shadow.querySelector('[data-launcher]'))
     })
 
   const clickLauncher = async () => {
@@ -2332,34 +2183,14 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
       return Boolean(shadow.querySelector('[data-docked]'))
     })
 
-  it('shows the launcher in the bottom-left corner rather than nothing at all', async () => {
-    const box = await pill()
-
-    assert.ok(box, 'expected a docked tab to leave its launcher on screen')
-    assert.equal(box.x, DOCK_INSET)
-    assert.equal(box.bottom, 800 - DOCK_INSET)
-    assert.equal(await panelShowing(), false)
-  })
-
   it('leaves the page where it is until the panel opens', async () => {
+    assert.equal(await pill(), true)
+    assert.equal(await panelShowing(), false)
     const layout = await closedPage.evaluate(() => ({
       bodyPadding: parseFloat(getComputedStyle(document.body).paddingLeft),
       reserved: Boolean(document.getElementById('github-sidecar-dock-style')),
     }))
     assert.deepEqual(layout, { bodyPadding: 0, reserved: false })
-  })
-
-  it('still asks GitHub for nothing until it is opened', async () => {
-    const sent = await closedPage.evaluate(
-      () =>
-        (window as unknown as { __sentMessages: Array<{ type?: string }> })
-          .__sentMessages,
-    )
-    assert.deepEqual(
-      sent.filter((message) => message.type === 'search'),
-      [],
-      'a launcher is not an open panel; it must not cost a request',
-    )
   })
 
   /**
@@ -2448,7 +2279,7 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
     await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
     assert.ok(await pill(), 'expected collapsing to leave the launcher')
 
-    // The toolbar button hides the panel in this tab, so a collapsed dock can
+    // The toolbar button hides the panel in this tab, so a collapsed panel can
     // also be a hidden one. Both reasons for the launcher are now set at once,
     // and one click has to clear both or opening would just redraw it.
     await closedPage.evaluate(() => {
@@ -2982,26 +2813,27 @@ describe('the page this tab is on', { concurrency: false, skip }, () => {
     })
   })
 
-  it('follows the panel as the window is dragged', async () => {
+  it('follows the panel edge as the panel is resized', async () => {
     const start = (await markerGeometry())!
 
+    // Low on the edge, clear of the marker that sits over it level with the row.
     const handle = await onPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const region = shadow.querySelector('[data-drag-region]') as HTMLElement
-      const box = region.getBoundingClientRect()
-      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+      const edge = shadow.querySelector('[role="complementary"] > .cursor-ew-resize') as HTMLElement
+      const box = edge.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.bottom - 20 }
     })
 
     await onPage.mouse.move(handle.x, handle.y)
     await onPage.mouse.down()
-    await onPage.mouse.move(handle.x - 70, handle.y - 30, { steps: 8 })
+    await onPage.mouse.move(handle.x + 60, handle.y, { steps: 8 })
     await onPage.mouse.up()
 
     await onPage.waitForFunction(
       (left: number) => {
         const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
         const marker = shadow.querySelector('[data-current-marker]') as HTMLElement
-        return Math.abs(marker.getBoundingClientRect().left - (left - 70)) < 2
+        return Math.abs(marker.getBoundingClientRect().left - (left + 60)) < 2
       },
       {},
       start.left,

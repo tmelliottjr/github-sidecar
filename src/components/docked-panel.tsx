@@ -22,12 +22,12 @@ interface Props {
 }
 
 /**
- * The panel in docked mode: a card floating in the page's gutter, inset from
- * the left edge, the bottom of the viewport, and github.com's header above it.
- * Its top edge is remeasured as the page scrolls, so it stays below whatever
- * chrome github.com currently has at the top.
- * Only the inner edge resizes, and like the floating window the new width is
- * written straight to the DOM during the drag and committed on release.
+ * The panel: a card in the page gutter, inset from the left edge, the bottom
+ * of the viewport, and github.com's header above it. Its top edge is
+ * remeasured as the page scrolls, so it stays below whatever chrome
+ * github.com currently has at the top.
+ * Only the inner edge resizes. The new width is written straight to the DOM
+ * during the drag and committed on release, so a drag never re-renders the list.
  */
 export function DockedPanel({ width, top, onWidthChange, header, children }: Props) {
   const nodeRef = useRef<HTMLDivElement | null>(null)
