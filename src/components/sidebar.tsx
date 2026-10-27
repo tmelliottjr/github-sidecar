@@ -101,7 +101,7 @@ export function Sidebar() {
       if (!(from instanceof HTMLElement)) return
       setMorph({
         id: Date.now(),
-        origin: captureOrigin(from, to === 'panel'),
+        origin: captureOrigin(from),
         target: to === 'panel' ? PANEL_SELECTOR : LAUNCHER_SELECTOR,
       })
     },
@@ -506,7 +506,6 @@ export function Sidebar() {
       <>
         {shell}
         <Launcher
-          side="left"
           title={activeQuery?.name ?? 'GitHub Sidecar'}
           count={search.data ? totalCount : null}
           compact={windowState.launcherCompact}

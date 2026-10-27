@@ -28,20 +28,21 @@ dropped on `tabs.onRemoved`; otherwise the next tab to take that id would
 inherit a panel nobody opened.
 
 Out of the way is not the same as gone, though, so a tab that has not been
-asked still shows a launcher: a pill with the GitHub mark, the query name, the
-result count once there is one, and an ↗ to open it. It sits in the
-bottom-left corner, under where the panel goes. It costs no request, since a
-launcher is not an open panel, and it floats over the page without moving it.
-Nobody has to go to the browser's extensions menu to find a panel that is meant
-to be part of the page.
+asked still shows a launcher: a vertical tab on the left edge of the window,
+halfway down. It holds the GitHub mark, the result count once there is one, the
+query name reading from the bottom up, and a › to open it. Its border curves
+into the window edge, so it looks attached to the side. It costs no request,
+since a launcher is not an open panel, and it sits over the page without moving
+it. Nobody has to go to the browser's extensions menu to find a panel that is
+meant to be part of the page.
 
-Opening grows the pill into the panel, and hiding or collapsing shrinks the
-panel back into the pill. Both are skipped when the system asks for reduced
-motion.
+Opening grows the tab into the panel, and hiding or collapsing folds the panel
+back into the tab. The contents move with the shape as they fade out. Both are
+skipped when the system asks for reduced motion.
 
-Hovering the launcher shows a ✕ on its corner that shrinks it to the GitHub
-mark, with the count as a bubble. Hovering the mark shows a › beside it that
-grows the launcher back. Which of the two shows is shared
+Hovering the launcher shows a fold button on its corner that shrinks it to the
+GitHub mark, with the count as a bubble. Hovering the mark shows an unfold
+button beside it that grows the launcher back. Which of the two shows is shared
 across tabs, like the rest of the panel state.
 
 Opening a panel for the first time does not mean going to the network. The
@@ -794,9 +795,9 @@ neither, and no notification to play a sound alongside.
 | Action                | How                                             |
 | --------------------- | ----------------------------------------------- |
 | Resize                | Drag the panel's inner edge                      |
-| Collapse / expand     | Panel button in the header (hover the header to show it), then click the launcher |
-| Show / hide this tab  | The launcher, the ✕ button, or the toolbar icon  |
-| Shrink the launcher   | Hover it, then ✕ on its corner; hover the mark and click › to grow it back |
+| Collapse / expand     | Panel button in the header (hover the header to show it), then click the launcher tab |
+| Show / hide this tab  | The launcher tab, the ✕ button, or the toolbar icon |
+| Shrink the launcher   | Hover it, then the fold button on its corner; hover the mark and click unfold to grow it back |
 | Switch queries        | Click the query name in the header               |
 | Edit queries          | Query menu → **Manage queries**                  |
 | Open an item          | Click a row (⌘/Ctrl-click for a tab)             |

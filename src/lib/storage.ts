@@ -30,7 +30,7 @@ export interface WindowState {
   collapsed: boolean
   /** Width of the docked panel. */
   dockWidth: number
-  /** Whether the launcher is shrunk to the GitHub mark rather than the full pill. */
+  /** Whether the launcher is shrunk to the GitHub mark rather than the full tab. */
   launcherCompact: boolean
 }
 

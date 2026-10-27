@@ -1,22 +1,13 @@
 import { useId, useRef } from 'react'
-import {
-  ArrowUpRightIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  MarkGithubIcon,
-  XIcon,
-} from '@primer/octicons-react'
+import { ChevronRightIcon, FoldIcon, MarkGithubIcon, UnfoldIcon } from '@primer/octicons-react'
 
 import { Hint } from '@/components/ui/tooltip'
-import { DOCK_INSET } from '@/content/page-layout'
 import { cn } from '@/lib/utils'
 
-/** Matches the corner the floating launcher has always used. */
-const FLOAT_INSET = 20
+/** Radius of the concave corners where the tab meets the edge of the viewport. */
+const FILLET = 12
 
 interface Props {
-  /** Corner the launcher sits in: the side the panel opens on. */
-  side: 'left' | 'right'
   /** Name of the active query. */
   title: string
   /** Total matches, or `null` while nothing has loaded yet. */
@@ -30,14 +21,14 @@ interface Props {
 }
 
 /**
- * Stands in for the panel while it is hidden or collapsed: a capsule in the
- * corner with the GitHub mark, the query name, the result count, and an open
- * arrow. Shrunk, it shows the GitHub mark with the count as a bubble.
+ * Stands in for the panel while it is hidden or collapsed: a tab on the left
+ * edge of the viewport, centered vertically, with the GitHub mark, the result
+ * count, the query name read from the bottom up, and an open chevron. Shrunk,
+ * it shows the GitHub mark with the count as a bubble.
  */
-export function Launcher({ side, title, count, compact, onOpen, onCompactChange }: Props) {
+export function Launcher({ title, count, compact, onOpen, onCompactChange }: Props) {
   const detailId = useId()
   const openRef = useRef<HTMLButtonElement>(null)
-  const inset = side === 'left' ? DOCK_INSET : FLOAT_INSET
   const detail =
     count === null
       ? title
@@ -50,29 +41,23 @@ export function Launcher({ side, title, count, compact, onOpen, onCompactChange 
     openRef.current?.focus()
   }
 
-  // Grid tracks animate between 0fr and 1fr, which a width transition cannot
-  // do without knowing the label width ahead of time.
+  // Grid tracks animate between 0fr and 1fr, which a height transition cannot
+  // do without knowing the label length ahead of time.
   const fold = cn(
-    'grid transition-[grid-template-columns,opacity] duration-300 ease-stack',
+    'grid transition-[grid-template-rows,opacity] duration-300 ease-stack',
     'motion-reduce:transition-none',
-    compact ? 'grid-cols-[0fr] opacity-0' : 'grid-cols-[1fr] opacity-100',
+    compact ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100',
   )
 
   return (
     <div
       data-launcher=""
       className={cn(
-        'group/launcher fixed z-[2147483646] flex items-center gap-1.5 animate-launcher-in',
-        side === 'right' && 'flex-row-reverse',
+        'group/launcher fixed left-0 top-1/2 z-[2147483646] flex -translate-y-1/2 items-center gap-1.5',
+        'animate-launcher-in',
       )}
-      style={side === 'left' ? { left: inset, bottom: inset } : { right: inset, bottom: inset }}
     >
-      <div
-        className={cn(
-          'relative transition-transform duration-200 ease-stack group-hover/launcher:-translate-y-0.5',
-          'motion-reduce:transition-none motion-reduce:group-hover/launcher:translate-y-0',
-        )}
-      >
+      <div className="relative shadow-tab">
         <button
           ref={openRef}
           type="button"
@@ -81,11 +66,21 @@ export function Launcher({ side, title, count, compact, onOpen, onCompactChange 
           aria-describedby={detailId}
           data-launcher-capsule=""
           className={cn(
-            'group/open flex h-11 items-center rounded-full border border-border bg-background p-[5px]',
-            'text-foreground shadow-launcher outline-none',
+            'group/open relative flex flex-col items-center rounded-r-[22px] bg-background',
+            'py-1.5 pl-1.5 pr-1.5 text-foreground outline-none',
+            // The border starts where the fillets end, so it never has to be
+            // painted over where the tab joins the edge.
+            "before:pointer-events-none before:absolute before:inset-y-0 before:right-0 before:left-[12px] before:content-['']",
+            'before:rounded-r-[22px] before:border before:border-l-0 before:border-border',
+            // Grows out from the edge on hover, the way a tab is pulled.
+            'transition-[padding] duration-200 ease-stack group-hover/launcher:pr-2.5',
+            'motion-reduce:transition-none',
             'focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2',
           )}
         >
+          <Fillet className="bottom-full" />
+          <Fillet className="top-full -scale-y-100" />
+
           <span id={detailId} className="sr-only">
             {detail}
           </span>
@@ -93,21 +88,24 @@ export function Launcher({ side, title, count, compact, onOpen, onCompactChange 
           <Mark count={compact ? count : null} />
 
           <span className={fold} inert={compact}>
-            <span className="min-w-0 overflow-hidden">
-              <span className="flex items-center gap-2 whitespace-nowrap pl-2.5 pr-2">
-                <span className="max-w-52 truncate text-[13px] font-semibold">{title}</span>
-                {count !== null && (
-                  <span
-                    data-launcher-chip=""
-                    className="rounded-full bg-muted px-2 text-[12px] font-semibold leading-5 tabular-nums text-muted-foreground"
-                  >
-                    {count.toLocaleString()}
-                  </span>
-                )}
-                <ArrowUpRightIcon
+            <span className="min-h-0 overflow-hidden">
+              <span className="flex flex-col items-center gap-2.5 pb-1 pt-3">
+                {/* Turned to read from the bottom up, with the tops of the letters toward the edge. */}
+                <span className="flex rotate-180 items-center gap-2 [writing-mode:vertical-rl]">
+                  <span className="max-h-52 truncate text-[13px] font-semibold">{title}</span>
+                  {count !== null && (
+                    <span
+                      data-launcher-chip=""
+                      className="rounded-full bg-muted py-2 text-[12px] font-semibold leading-5 tabular-nums text-muted-foreground"
+                    >
+                      {count.toLocaleString()}
+                    </span>
+                  )}
+                </span>
+                <ChevronRightIcon
                   className={cn(
-                    'ml-1 size-4 text-muted-foreground transition-[color,translate] duration-200 ease-stack',
-                    'group-hover/open:translate-x-px group-hover/open:-translate-y-px group-hover/open:text-foreground',
+                    'size-4 text-muted-foreground transition-[color,translate] duration-200 ease-stack',
+                    'group-hover/open:translate-x-0.5 group-hover/open:text-foreground',
                     'motion-reduce:transition-none',
                   )}
                 />
@@ -117,26 +115,26 @@ export function Launcher({ side, title, count, compact, onOpen, onCompactChange 
         </button>
 
         {!compact && (
-          <Hint label="Shrink to the GitHub mark" side="top">
+          <Hint label="Shrink to the GitHub mark" side="right">
             <button
               type="button"
               onClick={() => setCompact(true)}
               aria-label="Shrink launcher"
               className={cn(
-                'absolute -left-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full outline-none',
+                'absolute -right-2 -top-2 flex size-5 items-center justify-center rounded-full outline-none',
                 'border border-border bg-background text-muted-foreground shadow-sm hover:text-foreground',
                 'opacity-0 transition-opacity group-hover/launcher:opacity-100 focus-visible:opacity-100',
                 'focus-visible:ring-2 focus-visible:ring-ring/60',
               )}
             >
-              <XIcon className="size-3" />
+              <FoldIcon className="size-3" />
             </button>
           </Hint>
         )}
       </div>
 
       {compact && (
-        <Hint label="Show the query and count" side="top">
+        <Hint label="Show the query and count" side="right">
           <button
             type="button"
             onClick={() => setCompact(false)}
@@ -148,15 +146,39 @@ export function Launcher({ side, title, count, compact, onOpen, onCompactChange 
               'focus-visible:ring-2 focus-visible:ring-ring/60',
             )}
           >
-            {side === 'left' ? (
-              <ChevronRightIcon className="size-3.5" />
-            ) : (
-              <ChevronLeftIcon className="size-3.5" />
-            )}
+            <UnfoldIcon className="size-3.5" />
           </button>
         </Hint>
       )}
     </div>
+  )
+}
+
+/**
+ * The quarter circle from the viewport edge to the tab border, centered on the
+ * 1px stroke at each end: half a pixel in from the edge, and half a pixel below
+ * the top of the tab, which sits at `y = FILLET`.
+ */
+const ARC_RADIUS = FILLET - 0.5
+const ARC_TO = `A${ARC_RADIUS} ${ARC_RADIUS} 0 0 0 ${FILLET} ${FILLET + 0.5}`
+
+/**
+ * A concave corner joining the tab to the edge of the viewport, drawn above
+ * the tab and flipped for below it. The arc carries on the tab border, which
+ * starts at `x = FILLET`.
+ */
+function Fillet({ className }: { className: string }) {
+  return (
+    <svg
+      aria-hidden
+      width={FILLET}
+      height={FILLET}
+      viewBox={`0 0 ${FILLET} ${FILLET}`}
+      className={cn('pointer-events-none absolute left-0 overflow-visible', className)}
+    >
+      <path d={`M0 1H0.5${ARC_TO}V${FILLET + 1}H0Z`} className="fill-background" />
+      <path d={`M0.5 1${ARC_TO}`} className="fill-none stroke-border" />
+    </svg>
   )
 }
 

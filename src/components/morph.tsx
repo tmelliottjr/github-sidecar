@@ -5,8 +5,8 @@ const EASE = 'cubic-bezier(0.16, 1, 0.3, 1)'
 const DURATION = 420
 /** The target fades in over the end of the morph, once the shell has nearly arrived. */
 const REVEAL = 160
-/** A copy of what was showing fades out over the start. */
-const FADE_OUT = 120
+/** A copy of what was showing fades out over the start, riding inside the shell. */
+const FADE_OUT = 150
 
 /** Where a morph starts: the box of an element that is about to unmount. */
 export interface MorphOrigin {
@@ -14,31 +14,45 @@ export interface MorphOrigin {
   top: number
   width: number
   height: number
-  radius: number
+  /** A `border-radius` value with all four corners, since a tab rounds only its outer side. */
+  radius: string
   /** A copy of the element, faded out as the shell starts to move. */
-  copy: HTMLElement | null
+  copy: HTMLElement
+  /**
+   * Scroll offsets for the scrolled elements in the copy. A clone starts
+   * scrolled to the top, and offsets only apply once it is in the document.
+   */
+  scrolls: Array<{ node: Element; top: number; left: number }>
 }
 
 /**
- * Reads where a morph starts from an element that is about to unmount.
- *
- * With `keepCopy`, a clone of the element is kept to fade out in place. The
- * clone loses its ids, roles, and `aria-*` and `data-*` attributes, so nothing
- * that looks the original up by them can find the copy instead.
+ * Reads where a morph starts from an element that is about to unmount, and
+ * keeps a clone of it to fade out inside the shell. The clone loses its ids,
+ * roles, and `aria-*` and `data-*` attributes, so nothing that looks the
+ * original up by them can find the copy instead.
  */
-export function captureOrigin(element: HTMLElement, keepCopy: boolean): MorphOrigin {
+export function captureOrigin(element: HTMLElement): MorphOrigin {
   const rect = element.getBoundingClientRect()
-  let copy: HTMLElement | null = null
+  const copy = element.cloneNode(true) as HTMLElement
+  const originals = [element, ...element.querySelectorAll('*')]
+  const nodes = [copy, ...copy.querySelectorAll('*')]
+  const scrolls = originals.flatMap((original, index) =>
+    original.scrollTop || original.scrollLeft
+      ? [{ node: nodes[index], top: original.scrollTop, left: original.scrollLeft }]
+      : [],
+  )
 
-  if (keepCopy) {
-    copy = element.cloneNode(true) as HTMLElement
-    for (const node of [copy, ...copy.querySelectorAll('*')]) {
-      // A snapshot, since removing from the live attribute list skips entries.
-      for (const name of Array.from(node.attributes, (attribute) => attribute.name)) {
-        if (name === 'id' || name === 'role' || /^(aria|data)-/.test(name)) {
-          node.removeAttribute(name)
-        }
+  for (const node of nodes) {
+    // A snapshot, since removing from the live attribute list skips entries.
+    for (const name of Array.from(node.attributes, (attribute) => attribute.name)) {
+      if (name === 'id' || name === 'role' || /^(aria|data)-/.test(name)) {
+        node.removeAttribute(name)
       }
+    }
+    // A clone replays CSS entrances from the start, which would fade the
+    // copied rows in from nothing while the copy fades out.
+    if (node instanceof HTMLElement || node instanceof SVGElement) {
+      node.style.animation = 'none'
     }
   }
 
@@ -49,12 +63,21 @@ export function captureOrigin(element: HTMLElement, keepCopy: boolean): MorphOri
     height: rect.height,
     radius: radiusOf(element, rect),
     copy,
+    scrolls,
   }
 }
 
-function radiusOf(element: Element, rect: DOMRect): number {
-  const radius = parseFloat(getComputedStyle(element).borderTopLeftRadius) || 0
-  return Math.min(radius, rect.width / 2, rect.height / 2)
+function radiusOf(element: Element, rect: DOMRect): string {
+  const style = getComputedStyle(element)
+  const limit = Math.min(rect.width, rect.height) / 2
+  return [
+    style.borderTopLeftRadius,
+    style.borderTopRightRadius,
+    style.borderBottomRightRadius,
+    style.borderBottomLeftRadius,
+  ]
+    .map((corner) => `${Math.min(parseFloat(corner) || 0, limit)}px`)
+    .join(' ')
 }
 
 /** Jumps entrances still running on the target, or on anything around it, to their end. */
@@ -115,26 +138,33 @@ export function Morph({ origin, target, onDone }: Props) {
     reveal.pause()
     animations.push(reveal)
 
+    // Pinned to the top-left corner of the shell, so the shell clips it while
+    // it moves rather than leaving it to fade where it was.
     const copy = origin.copy
-    if (copy) {
-      copy.inert = true
-      Object.assign(copy.style, {
-        position: 'fixed',
-        left: `${origin.left}px`,
-        top: `${origin.top}px`,
-        width: `${origin.width}px`,
-        height: `${origin.height}px`,
-        margin: '0',
-      })
-      shell.append(copy)
-      animations.push(
-        copy.animate([{ opacity: 1 }, { opacity: 0 }], {
-          duration: FADE_OUT,
-          easing: 'ease-out',
-          fill: 'forwards',
-        }),
-      )
+    const border = parseFloat(getComputedStyle(shell).borderTopWidth) || 0
+    copy.inert = true
+    Object.assign(copy.style, {
+      position: 'absolute',
+      left: `${-border}px`,
+      top: `${-border}px`,
+      right: 'auto',
+      bottom: 'auto',
+      width: `${origin.width}px`,
+      height: `${origin.height}px`,
+      margin: '0',
+    })
+    shell.append(copy)
+    for (const { node, top, left } of origin.scrolls) {
+      node.scrollTop = top
+      node.scrollLeft = left
     }
+    animations.push(
+      copy.animate([{ opacity: 1 }, { opacity: 0 }], {
+        duration: FADE_OUT,
+        easing: 'ease-out',
+        fill: 'forwards',
+      }),
+    )
 
     const start = () => {
       settle(end, root as Document | ShadowRoot, animations)
@@ -146,14 +176,14 @@ export function Morph({ origin, target, onDone }: Props) {
             top: `${origin.top}px`,
             width: `${origin.width}px`,
             height: `${origin.height}px`,
-            borderRadius: `${origin.radius}px`,
+            borderRadius: origin.radius,
           },
           {
             left: `${box.left}px`,
             top: `${box.top}px`,
             width: `${box.width}px`,
             height: `${box.height}px`,
-            borderRadius: `${radiusOf(end, box)}px`,
+            borderRadius: radiusOf(end, box),
           },
         ],
         { duration: DURATION, easing: EASE, fill: 'forwards' },
@@ -174,7 +204,7 @@ export function Morph({ origin, target, onDone }: Props) {
     return () => {
       cancelAnimationFrame(frame)
       for (const animation of animations) animation.cancel()
-      copy?.remove()
+      copy.remove()
     }
   }, [origin, target])
 

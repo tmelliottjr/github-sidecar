@@ -769,18 +769,18 @@ describe('docked into the page', { concurrency: false, skip }, () => {
     )
   })
 
-  /** The launcher in the corner, measured once it settles, or null when it is not showing. */
+  /** The launcher tab, measured once it settles, or null when it is not showing. */
   const launcher = () =>
     dockPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
       const node = shadow.querySelector('[data-launcher]') as HTMLElement | null
       if (!node) return null
-      const box = node.firstElementChild!.getBoundingClientRect()
+      const box = shadow.querySelector('[data-launcher-capsule]')!.getBoundingClientRect()
       return {
         x: box.x,
-        bottom: box.bottom,
-        width: box.width,
+        middle: box.top + box.height / 2,
+        height: box.height,
         text: node.textContent ?? '',
         chip: shadow.querySelector('[data-launcher-chip]')?.textContent ?? null,
         bubble: shadow.querySelector('[data-launcher-count]')?.textContent ?? null,
@@ -800,9 +800,9 @@ describe('docked into the page', { concurrency: false, skip }, () => {
 
     assert.ok(pill, 'expected the launcher once collapsed')
     assert.equal(pill.panelGone, true)
-    // Bottom-left, lined up with where the panel was.
-    assert.equal(pill.x, DOCK_INSET)
-    assert.equal(pill.bottom, 900 - DOCK_INSET)
+    // Against the left edge, halfway down the viewport.
+    assert.equal(pill.x, 0)
+    assert.equal(Math.round(pill.middle), 450)
     assert.equal((await host()).bodyPadding, 0)
     assert.equal(
       await dockPage.evaluate(() =>
@@ -874,7 +874,7 @@ describe('docked into the page', { concurrency: false, skip }, () => {
     await pressOn('Shrink launcher')
     const mark = (await launcher())!
 
-    assert.ok(mark.width < 64, `expected just the mark, saw ${mark.width}px`)
+    assert.ok(mark.height < 64, `expected just the mark, saw ${mark.height}px`)
     assert.equal(mark.bubble, '7')
     const stored = await dockPage.evaluate(async () => {
       const { windowState } = await chrome.storage.local.get('windowState')
@@ -888,11 +888,12 @@ describe('docked into the page', { concurrency: false, skip }, () => {
     assert.equal(await description(), 'Needs my review, 7 results')
   })
 
-  it('grows back into the full pill, keeping focus', async () => {
+  it('grows back into the full tab, keeping focus', async () => {
     await pressOn('Expand launcher')
     const pill = (await launcher())!
 
-    assert.ok(pill.width > 200, `expected the full pill, saw ${pill.width}px`)
+    assert.ok(pill.height > 120, `expected the full tab, saw ${pill.height}px`)
+    assert.equal(Math.round(pill.middle), 450, 'expected the tab to grow from its middle')
     assert.equal(pill.bubble, null)
     assert.equal(await focused(), 'Open GitHub Sidecar')
   })
@@ -2083,25 +2084,25 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
       return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidecar"]'))
     })
 
-  it('starts closed, showing only the launcher in the bottom-left corner', async () => {
+  it('starts closed, showing only the launcher on the left edge', async () => {
     await quietPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
 
     assert.equal(await launcher(), true)
     const layout = await quietPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
-      const box = shadow.querySelector('[data-launcher]')!.getBoundingClientRect()
+      const box = shadow.querySelector('[data-launcher-capsule]')!.getBoundingClientRect()
       return {
         panel: Boolean(shadow.querySelector('[role="complementary"]')),
         left: box.left,
-        bottom: box.bottom,
+        middle: box.top + box.height / 2,
         text: shadow.querySelector('[data-launcher]')!.textContent,
         chip: Boolean(shadow.querySelector('[data-launcher-chip]')),
       }
     })
     assert.equal(layout.panel, false)
-    assert.equal(layout.left, DOCK_INSET)
-    assert.equal(layout.bottom, 800 - DOCK_INSET)
+    assert.equal(layout.left, 0)
+    assert.equal(Math.round(layout.middle), 400)
     // Nothing has loaded in a closed tab, so there is no count to show yet.
     assert.match(layout.text ?? '', /Needs my review/)
     assert.equal(layout.chip, false)
@@ -2221,11 +2222,23 @@ describe('a github.com tab that was never asked', { concurrency: false, skip }, 
           ['left', 'top', 'width', 'height'].map((key) =>
             Math.round(parseFloat(String(frame?.[key]))),
           )
+        const copy = shell?.firstElementChild
         return {
           start,
           end: box(toSelector),
           shellFrom: at(keyframes[0]),
           shellTo: at(keyframes[keyframes.length - 1]),
+          radiusFrom: String(keyframes[0]?.borderRadius),
+          copyScroll: copy
+            ? Math.max(0, ...[...copy.querySelectorAll('*')].map((node) => node.scrollTop))
+            : null,
+          // CSS entrances on the copy, which would fade copied rows in from nothing.
+          copyEntrances: copy
+            ? copy
+                .getAnimations({ subtree: true })
+                .filter((animation) => animation instanceof CSSAnimation)
+                .map((animation) => (animation as CSSAnimation).animationName)
+            : null,
           targetOpacity: getComputedStyle(shadow.querySelector(toSelector)!).opacity,
         }
       },
@@ -2256,6 +2269,8 @@ describe('a github.com tab that was never asked', { concurrency: false, skip }, 
     )
 
     assert.deepEqual(morph.shellFrom, morph.start)
+    // Square where the tab meets the edge, round on the outside.
+    assert.equal(morph.radiusFrom, '0px 22px 22px 0px')
     // A tab that was never opened has not measured the page yet, so this is
     // also where a stale dock position would show.
     assert.deepEqual(morph.shellTo, morph.end)
@@ -2296,10 +2311,21 @@ describe('a github.com tab that was never asked', { concurrency: false, skip }, 
 
   it('shrinks the panel back into the pill when hidden', async () => {
     await settledOpacity('[role="complementary"]')
+    const scrolled = await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const list = shadow.querySelector('[data-index]')!.closest('.overflow-y-auto')!
+      list.scrollTop = 600
+      // Lets the list render the rows it has scrolled to.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      return list.scrollTop
+    })
+    assert.ok(scrolled > 0, 'expected the list to scroll')
     const morph = await morphOn('Hide sidebar', '[role="complementary"]', '[data-launcher-capsule]')
 
     assert.deepEqual(morph.shellFrom, morph.start)
     assert.deepEqual(morph.shellTo, morph.end)
+    assert.deepEqual(morph.copyEntrances, [], 'expected the copied panel to keep its rows showing')
+    assert.equal(morph.copyScroll, scrolled, 'expected the copied list where the list was scrolled')
     assert.equal(morph.targetOpacity, '0', 'expected the pill hidden until the shell arrives')
     assert.equal(await settledOpacity('[data-launcher-capsule]'), '1')
   })
