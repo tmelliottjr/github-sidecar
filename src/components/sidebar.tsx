@@ -126,17 +126,30 @@ export function Sidebar() {
   const isCollapsed = windowState?.collapsed ?? false
   const showsLauncher = !isVisible || isCollapsed
 
-  // The toolbar button shows and hides the panel in the tab it was clicked on.
+  /**
+   * The launcher can stand for a hidden panel, a collapsed one, or both, and
+   * opening has to clear both or it just redraws the launcher.
+   */
+  const openPanel = useCallback(() => {
+    beginMorph('panel')
+    setOpen(true)
+    if (isCollapsed) patchWindow({ collapsed: false })
+  }, [beginMorph, isCollapsed, patchWindow, setOpen])
+
+  // The toolbar button opens the panel in the tab it was clicked on, or hides it there.
   useEffect(() => {
     const listener = (message: { type?: string }) => {
       if (message?.type !== 'toggle-sidebar') return
-      const next = !(isOpen ?? false)
-      beginMorph(next ? 'panel' : 'launcher')
-      setOpen(next)
+      if (showsLauncher) {
+        openPanel()
+        return
+      }
+      beginMorph('launcher')
+      setOpen(false)
     }
     browser.runtime.onMessage.addListener(listener)
     return () => browser.runtime.onMessage.removeListener(listener)
-  }, [beginMorph, isOpen, setOpen])
+  }, [beginMorph, openPanel, setOpen, showsLauncher])
 
   const activeQuery = useMemo<SavedQuery | null>(() => {
     if (!savedQueries?.length) return null
@@ -510,13 +523,7 @@ export function Sidebar() {
           count={search.data ? totalCount : null}
           compact={windowState.launcherCompact}
           onCompactChange={(launcherCompact) => patchWindow({ launcherCompact })}
-          onOpen={() => {
-            beginMorph('panel')
-            // The launcher can stand for a hidden panel, a collapsed one, or
-            // both, and one click has to clear both or it just redraws itself.
-            setOpen(true)
-            if (isCollapsed) patchWindow({ collapsed: false })
-          }}
+          onOpen={openPanel}
         />
       </>
     )

@@ -112,9 +112,9 @@ Collapsing swaps the panel for the launcher in every browser tab and gives the
 page back whatever room the panel had taken.
 
 The launcher also stands in for a panel that is hidden in this tab, or that has
-never been opened in it. Two states, one launcher, and a click clears both at
-once, so opening always ends with the panel and never with the launcher
-redrawn because the other flag was still set.
+never been opened in it. Two states, one launcher, and a click on it or on the
+toolbar icon clears both at once, so opening always ends with the panel and
+never with the launcher redrawn because the other flag was still set.
 
 Results go on loading while the panel is collapsed, because a count that stops
 updating is decoration, not status. A launcher standing in for a hidden panel

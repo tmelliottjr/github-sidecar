@@ -2286,7 +2286,17 @@ describe('a github.com tab that was never asked', { concurrency: false, skip }, 
     assert.deepEqual(opened, [{ type: 'set-tab-open', open: true }])
   })
 
-  it('takes one click to come back from hidden and collapsed at once', async () => {
+  /** The message the worker sends when the toolbar icon is clicked in this tab. */
+  const clickToolbar = async () => {
+    await closedPage.evaluate(() => {
+      ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
+        type: 'toggle-sidebar',
+      })
+    })
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
+  }
+
+  it('comes back from collapsed with one toolbar click, and hides with the next', async () => {
     await closedPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       ;(shadow.querySelector('[aria-label="Collapse"]') as HTMLButtonElement).click()
@@ -2294,16 +2304,14 @@ describe('a github.com tab that was never asked', { concurrency: false, skip }, 
     await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
     assert.ok(await pill(), 'expected collapsing to leave the launcher')
 
-    // The toolbar button hides the panel in this tab, so a collapsed panel can
-    // also be a hidden one. Both reasons for the launcher are now set at once,
-    // and one click has to clear both or opening would just redraw it.
-    await closedPage.evaluate(() => {
-      ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
-        type: 'toggle-sidebar',
-      })
-    })
-    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
-    assert.ok(await pill(), 'expected the launcher to survive being hidden')
+    // Collapsed is shared across tabs and open is per tab, so opening has to
+    // clear both or the toolbar would only redraw the launcher.
+    await clickToolbar()
+    assert.equal(await panelShowing(), true)
+
+    await clickToolbar()
+    assert.equal(await panelShowing(), false)
+    assert.ok(await pill(), 'expected hiding to leave the launcher')
 
     await clickLauncher()
     assert.equal(await panelShowing(), true)
