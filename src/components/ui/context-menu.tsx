@@ -4,6 +4,7 @@ import { ChevronRightIcon } from '@primer/octicons-react'
 
 import { cn } from '@/lib/utils'
 import { usePortalContainer } from './portal-container'
+import { SubHoverContext, composeMousePointer, useSubmenuHover } from './submenu-hover'
 
 const ContextMenu = ({
   modal = false,
@@ -16,84 +17,15 @@ const ContextMenu = ({
 
 const ContextMenuTrigger = ContextMenuPrimitive.Trigger
 
-type SubHover = {
-  /** Cancel a pending close (pointer re-entered the trigger or submenu). */
-  keepOpen: () => void
-  /** Close the submenu shortly, unless the pointer comes back first. */
-  closeSoon: () => void
-}
-
-const SubHoverContext = React.createContext<SubHover | null>(null)
-
-/**
- * How long to wait after the pointer leaves a submenu before closing it. Long
- * enough to cross the small gap toward an adjacent submenu (Radix's safe
- * triangle), short enough that leaving to empty space feels responsive.
- */
-const SUB_CLOSE_DELAY_MS = 250
-
-/** Run the caller's pointer handler, then the hover-intent one (mouse only). */
-function composeMousePointer(
-  original: ((event: React.PointerEvent<HTMLDivElement>) => void) | undefined,
-  next: (() => void) | undefined,
-) {
-  return (event: React.PointerEvent<HTMLDivElement>) => {
-    original?.(event)
-    if (event.pointerType === 'mouse') next?.()
-  }
-}
-
-/**
- * Radix closes a submenu only when a sibling item steals focus, on Escape, or
- * via the keyboard — never when the pointer just leaves it for empty space
- * (e.g. the underlying github.com page), which leaves it looking stuck. We make
- * the Sub controlled and close it a beat after the pointer leaves, cancelling
- * that timer whenever the pointer re-enters the trigger or the submenu content
- * so open-on-hover and safe-triangle traversal still work.
- */
 function ContextMenuSub({
   children,
   onOpenChange,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Sub>) {
-  const [open, setOpen] = React.useState(false)
-  const closeTimer = React.useRef<number | null>(null)
-
-  const keepOpen = React.useCallback(() => {
-    if (closeTimer.current !== null) {
-      window.clearTimeout(closeTimer.current)
-      closeTimer.current = null
-    }
-  }, [])
-
-  const handleOpenChange = React.useCallback(
-    (next: boolean) => {
-      keepOpen()
-      setOpen(next)
-      onOpenChange?.(next)
-    },
-    [keepOpen, onOpenChange],
-  )
-
-  const hover = React.useMemo<SubHover>(
-    () => ({
-      keepOpen,
-      closeSoon: () => {
-        keepOpen()
-        closeTimer.current = window.setTimeout(() => {
-          closeTimer.current = null
-          handleOpenChange(false)
-        }, SUB_CLOSE_DELAY_MS)
-      },
-    }),
-    [keepOpen, handleOpenChange],
-  )
-
-  React.useEffect(() => keepOpen, [keepOpen])
-
+  const sub = useSubmenuHover(onOpenChange)
   return (
-    <SubHoverContext.Provider value={hover}>
-      <ContextMenuPrimitive.Sub {...props} open={open} onOpenChange={handleOpenChange}>
+    <SubHoverContext.Provider value={sub.hover}>
+      <ContextMenuPrimitive.Sub {...props} open={sub.open} onOpenChange={sub.onOpenChange}>
         {children}
       </ContextMenuPrimitive.Sub>
     </SubHoverContext.Provider>
