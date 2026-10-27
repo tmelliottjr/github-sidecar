@@ -197,13 +197,17 @@ export function CheckIndicator({
         aria-expanded={isOpen}
         aria-label={isOpen ? 'Hide the failing checks' : 'Show the failing checks'}
         className={cn(
-          'flex h-full shrink-0 cursor-pointer items-center gap-1 px-1.5 text-[11px] font-semibold text-closed',
-          'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
-          // The page color rather than a red tint, which would take the count below 4.5:1.
-          isOpen ? 'bg-background ring-1 ring-inset ring-closed/50' : 'hover:bg-background',
+          'flex h-full shrink-0 cursor-pointer items-center gap-1 rounded-full px-1.5 text-[11px] font-semibold',
+          // The pill-colored ring insets the fill, so the pill keeps its outline
+          // when the fill matches the row behind it.
+          'ring-2 ring-inset ring-[color:var(--row-chip,var(--color-muted))]',
+          'transition-colors focus-visible:outline-none focus-visible:ring-ring',
+          // Open matches an open `StackBadge`. Red text on that fill is under
+          // 4.5:1, so only the icon stays red; icons need 3:1.
+          isOpen ? 'bg-foreground/10 text-foreground' : 'text-closed hover:bg-foreground/5',
         )}
       >
-        <Icon className="size-3.5" aria-hidden />
+        <Icon className="size-3.5 text-closed" aria-hidden />
         <span className="tabular-nums">{count}</span>
         <span className="sr-only">{said}</span>
       </button>

@@ -7,10 +7,12 @@ import { cn } from '@/lib/utils'
 /**
  * How tall the list is allowed to get before it scrolls. Six rows is enough
  * for the usual handful and still leaves the row it belongs to on screen,
- * which is the point of a drawer rather than a page.
+ * which is the point of a drawer rather than a page. Half of a seventh row
+ * shows below them, so a longer list reads as one that scrolls.
  */
-const MAX_VISIBLE = 6
-const ROW_HEIGHT = 26
+const MAX_VISIBLE = 6.5
+/** Matches the rows in `StackSection`, which shares this drawer. */
+const ROW_HEIGHT = 28
 
 interface Props {
   checks: readonly FailingCheck[]
@@ -78,7 +80,7 @@ function CheckRow({
   // followed, and saying so quietly beats a control that does nothing.
   if (!check.url) {
     return (
-      <span className="flex h-[26px] w-full items-center gap-2 rounded-lg px-1.5 text-muted-foreground">
+      <span className="flex h-7 w-full items-center gap-2 rounded-lg px-1.5 text-muted-foreground">
         {name}
       </span>
     )
@@ -89,7 +91,7 @@ function CheckRow({
       type="button"
       onClick={(event) => onOpen(check.url as string, event)}
       className={cn(
-        'group/check flex h-[26px] w-full items-center gap-2 rounded-lg px-1.5 text-left text-foreground transition-colors',
+        'group/check flex h-7 w-full items-center gap-2 rounded-lg px-1.5 text-left text-foreground transition-colors',
         'hover:bg-background focus-visible:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
       )}
     >
