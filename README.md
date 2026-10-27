@@ -41,17 +41,12 @@ Opening grows the tab into the panel, and hiding or collapsing folds the panel
 back into the tab. The contents move with the shape as they fade out. Both are
 skipped when the system asks for reduced motion.
 
-Hovering the launcher shows a fold button on its corner that shrinks it to the
-GitHub mark, with the count as a bubble. Hovering the mark shows an unfold
-button beside it that grows the launcher back. Which of the two shows is shared
-across tabs, like the rest of the panel state.
-
 Opening a panel for the first time does not mean going to the network. The
 request goes to the worker like any other, which answers from its shared
 IndexedDB cache and only refreshes if what it has has aged out.
 
-Everything else about the panel (width, collapsed, and the launcher size)
-stays shared, because those are preferences rather than per-tab facts.
+Everything else about the panel (its width and whether it is collapsed) stays
+shared, because those are preferences rather than per-tab facts.
 
 </details>
 
@@ -798,7 +793,6 @@ neither, and no notification to play a sound alongside.
 | Resize                | Drag the panel's inner edge                      |
 | Collapse / expand     | Panel button in the header (hover the header to show it), then click the launcher tab |
 | Show / hide this tab  | The launcher tab, the ✕ button, or the toolbar icon |
-| Shrink the launcher   | Hover it, then the fold button on its corner; hover the mark and click unfold to grow it back |
 | Switch queries        | Click the query name in the header               |
 | Edit queries          | Query menu → **Manage queries**                  |
 | Open an item          | Click a row (⌘/Ctrl-click for a tab)             |

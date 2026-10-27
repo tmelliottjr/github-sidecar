@@ -782,7 +782,6 @@ describe('docked into the page', { concurrency: false, skip }, () => {
         middle: box.top + box.height / 2,
         height: box.height,
         chip: shadow.querySelector('[data-launcher-chip]')?.textContent ?? null,
-        bubble: shadow.querySelector('[data-launcher-count]')?.textContent ?? null,
         panelGone: !shadow.querySelector('[data-docked]'),
       }
     })
@@ -844,62 +843,13 @@ describe('docked into the page', { concurrency: false, skip }, () => {
     assert.equal((await launcher())!.chip, '7')
   })
 
-  /** Activates a launcher control from the keyboard, the way focus handling matters. */
-  const pressOn = async (label: string) => {
-    await dockPage.evaluate((selector) => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      ;(shadow.querySelector(selector) as HTMLElement).focus()
-    }, `[aria-label="${label}"]`)
-    await dockPage.keyboard.press('Enter')
-    await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
-  }
-
-  const focused = () =>
-    dockPage.evaluate(
-      () =>
-        document
-          .getElementById('github-sidecar-root')!
-          .shadowRoot!.activeElement?.getAttribute('aria-label') ?? null,
-    )
-
-  /** What a screen reader hears after the open button name, or null if it is hidden. */
-  const description = () =>
-    dockPage.evaluate(() => {
+  it('announces the query name with the count', async () => {
+    const description = await dockPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const open = shadow.querySelector('[aria-label="Open GitHub Sidecar"]')!
-      const target = shadow.getElementById(open.getAttribute('aria-describedby')!)
-      return target && !target.closest('[inert]') ? target.textContent : null
+      return shadow.getElementById(open.getAttribute('aria-describedby')!)?.textContent
     })
-
-  it('shrinks to the GitHub mark, keeps the count, and remembers it', async () => {
-    const full = (await launcher())!
-    assert.equal(full.bubble, null, 'the full launcher already shows the count')
-
-    await pressOn('Shrink launcher')
-    const mark = (await launcher())!
-
-    assert.ok(mark.height < 64, `expected just the mark, saw ${mark.height}px`)
-    assert.equal(mark.bubble, '7')
-    const stored = await dockPage.evaluate(async () => {
-      const { windowState } = await chrome.storage.local.get('windowState')
-      return (windowState as { launcherCompact?: boolean }).launcherCompact
-    })
-    assert.equal(stored, true)
-  })
-
-  it('keeps focus and the spoken count once shrunk', async () => {
-    assert.equal(await focused(), 'Open GitHub Sidecar')
-    assert.equal(await description(), 'Needs my review, 7 results')
-  })
-
-  it('grows back into the full tab, keeping focus', async () => {
-    await pressOn('Expand launcher')
-    const pill = (await launcher())!
-
-    assert.ok(pill.height > 80, `expected the full tab, saw ${pill.height}px`)
-    assert.equal(Math.round(pill.middle), 450, 'expected the tab to grow from its middle')
-    assert.equal(pill.bubble, null)
-    assert.equal(await focused(), 'Open GitHub Sidecar')
+    assert.equal(description, 'Needs my review, 7 results')
   })
 
   it('opens again from the launcher, scrolled past the sticky header', async () => {

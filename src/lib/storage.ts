@@ -21,17 +21,15 @@ export interface SavedQuery {
  * deliberately not part of this: that is per tab, and lives in the worker's
  * session storage instead. See `useTabOpen`.
  *
- * Older storage also holds the floating window fields `x`, `y`, `width`,
- * `height`, `locked`, and `docked`. Nothing reads them, but `width` is taken,
- * so `dockWidth` cannot be renamed to it.
+ * Older storage also holds `x`, `y`, `width`, `height`, `locked`, `docked`,
+ * and `launcherCompact` from earlier layouts. Nothing reads them, but `width`
+ * is taken, so `dockWidth` cannot be renamed to it.
  */
 export interface WindowState {
   /** Whether every tab shows the launcher in place of the panel. */
   collapsed: boolean
   /** Width of the docked panel. */
   dockWidth: number
-  /** Whether the launcher is shrunk to the GitHub mark rather than the full tab. */
-  launcherCompact: boolean
 }
 
 /**
@@ -208,7 +206,6 @@ export const DEFAULT_QUERIES: SavedQuery[] = [
 export const DEFAULT_WINDOW_STATE: WindowState = {
   collapsed: false,
   dockWidth: 380,
-  launcherCompact: false,
 }
 
 export const DEFAULTS: StorageShape = {

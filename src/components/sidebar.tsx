@@ -521,8 +521,6 @@ export function Sidebar() {
         <Launcher
           title={activeQuery?.name ?? 'GitHub Sidecar'}
           count={search.data ? totalCount : null}
-          compact={windowState.launcherCompact}
-          onCompactChange={(launcherCompact) => patchWindow({ launcherCompact })}
           onOpen={openPanel}
         />
       </>
