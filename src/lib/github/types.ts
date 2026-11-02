@@ -114,8 +114,6 @@ export interface StackedRow {
   /** Pull request node id. */
   id: string
   stack: StackMembership
-  /** When the page holding the row was read. */
-  fetchedAt: number
 }
 
 /**

@@ -18,12 +18,10 @@ export interface StacksRequest {
 }
 
 /**
- * Whether a cached stack agrees with a row in it: the same size, and the same
- * pull request at the row position. Only a row read after the stack can
- * prove the stack wrong.
+ * Whether a cached stack agrees with a loaded row in it: the same size, and
+ * the same pull request at the row position.
  */
 function agrees(stack: Stack, row: StackedRow): boolean {
-  if (row.fetchedAt <= stack.fetchedAt) return true
   if (row.stack.size !== stack.size) return false
   return stack.layers.some((layer) => layer.position === row.stack.position && layer.id === row.id)
 }

@@ -26,7 +26,6 @@ function row(overrides: Partial<StackedRow> = {}, membership: Partial<StackedRow
   return {
     id: 'PR_2',
     stack: { id: 'STACK_1', number: 7, size: 2, baseRefName: 'main', position: 2, ...membership },
-    fetchedAt: 500,
     ...overrides,
   }
 }
@@ -122,29 +121,14 @@ describe('stack service', () => {
     assert.deepEqual(calls, [['STACK_1']])
   })
 
-  it('reads a stack again when a row read after it disagrees with it', async () => {
-    const later = 2000
+  it('reads a stack again when a loaded row disagrees with it', async () => {
     const resized = createHarness({ seed: [stack()] })
-    await resized.service.stacks({
-      rows: [row({ fetchedAt: later }, { size: 3 })],
-      freshMs: FRESH_MS,
-    })
+    await resized.service.stacks({ rows: [row({}, { size: 3 })], freshMs: FRESH_MS })
     assert.deepEqual(resized.calls, [['STACK_1']])
 
     const moved = createHarness({ seed: [stack()] })
-    await moved.service.stacks({
-      rows: [row({ id: 'PR_9', fetchedAt: later })],
-      freshMs: FRESH_MS,
-    })
+    await moved.service.stacks({ rows: [row({ id: 'PR_9' })], freshMs: FRESH_MS })
     assert.deepEqual(moved.calls, [['STACK_1']])
-  })
-
-  it('trusts a stack read after the row that disagrees with it', async () => {
-    const { service, calls } = createHarness({ seed: [stack()] })
-
-    await service.stacks({ rows: [row({ fetchedAt: 500 }, { size: 3 })], freshMs: FRESH_MS })
-
-    assert.deepEqual(calls, [])
   })
 
   it('shares one read between requests for the same stack', async () => {
