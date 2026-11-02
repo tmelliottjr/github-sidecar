@@ -792,7 +792,7 @@ neither, and no notification to play a sound alongside.
 | --------------------- | ----------------------------------------------- |
 | Resize                | Drag the panel's inner edge                      |
 | Collapse / expand     | Panel button in the header (hover the header to show it), then click the launcher tab |
-| Show / hide this tab  | The launcher tab, the ✕ button, or the toolbar icon |
+| Show / hide this tab  | The launcher tab, the ✕ button, the toolbar icon, or Alt+Shift+G (⌥⇧G on a Mac; change it in the browser's extension shortcut settings) |
 | Switch queries        | Click the query name in the header               |
 | Edit queries          | Query menu → **Manage queries**                  |
 | Open an item          | Click a row (⌘/Ctrl-click for a tab)             |

@@ -128,6 +128,11 @@ export async function manifestFor(
       default_title: 'Toggle GitHub Sidecar',
       default_icon: ICONS,
     },
+    commands: {
+      // github.com binds Alt+Shift+A, C, N, P and R, and browsers bind most
+      // Ctrl/Cmd+Shift letters. Alt is Option on a Mac, so no `mac` key is needed.
+      _execute_action: { suggested_key: { default: 'Alt+Shift+G' } },
+    },
     options_ui: {
       page: 'options.html',
       open_in_tab: true,
