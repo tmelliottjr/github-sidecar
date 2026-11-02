@@ -8,6 +8,7 @@ import {
   type QueryObserverResult,
 } from '@tanstack/react-query'
 
+import { agrees } from '@/lib/github/stacks'
 import type { LayerReview, Stack, StackedRow } from '@/lib/github/types'
 import type { StackView } from '@/lib/list-view'
 import { sendMessage } from '@/lib/messages'
@@ -88,14 +89,19 @@ function requestStack(id: string, rows: readonly StackedRow[]): Promise<Stack> {
 export function useLoadStack() {
   const queryClient = useQueryClient()
   return useCallback(
-    (id: string, rows: readonly StackedRow[]) =>
-      queryClient.fetchQuery({
-        queryKey: stackKey(id),
-        queryFn: async () =>
-          newerStack(queryClient.getQueryData<Stack>(stackKey(id)), await requestStack(id, rows)),
-        staleTime: 0,
-        retry: false,
-      }),
+    async (id: string, rows: readonly StackedRow[]) => {
+      const load = () =>
+        queryClient.fetchQuery({
+          queryKey: stackKey(id),
+          queryFn: async () =>
+            newerStack(queryClient.getQueryData<Stack>(stackKey(id)), await requestStack(id, rows)),
+          staleTime: 0,
+          retry: false,
+        })
+      const stack = await load()
+      // A read already running is shared, and it checked the rows it was given, not these.
+      return rows.every((row) => agrees(stack, row)) ? stack : load()
+    },
     [queryClient],
   )
 }

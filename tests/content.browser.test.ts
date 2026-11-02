@@ -2011,6 +2011,37 @@ describe('stacks folded into one row', { concurrency: false, skip }, () => {
     assert.equal(await button.evaluate((node) => node.getAttribute('aria-expanded')), 'false')
   })
 
+  it('asks again when the stack it gets back disagrees with the rows', async () => {
+    const stacksSent = () =>
+      stackPage.evaluate(
+        () =>
+          (window as unknown as { __sentMessages: Array<{ type: string }> }).__sentMessages.filter(
+            (message) => message.type === 'stacks',
+          ).length,
+      )
+    const setSize = (size: number) =>
+      stackPage.evaluate((value) => {
+        const scope = window as unknown as { __stacks: Array<{ id: string; size: number }> }
+        scope.__stacks.find((stack) => stack.id === 'STACK_9')!.size = value
+      }, size)
+
+    await setSize(5)
+    const sentBefore = await stacksSent()
+    await (await stackButton()).evaluate((node) => {
+      node.blur()
+      node.focus()
+    })
+    await stackPage.waitForFunction(
+      (count) =>
+        (window as unknown as { __sentMessages: Array<{ type: string }> }).__sentMessages.filter(
+          (message) => message.type === 'stacks',
+        ).length >= count,
+      {},
+      sentBefore + 2,
+    )
+    await setSize(4)
+  })
+
   it('copies every layer of the stack from its menu, base first', async () => {
     await stackPage.evaluate(() => {
       const scope = window as unknown as { __copied: string[]; ClipboardItem: unknown }

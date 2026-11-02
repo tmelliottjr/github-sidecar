@@ -214,13 +214,13 @@ function ItemRowImpl({
   )
   const copyItemTitle = useCallback(() => copy(copyText(item.title)), [copy, item.title])
   const copyItemMarkdown = useCallback(() => copy(copyText(itemMarkdown(item))), [copy, item])
+  // Loads first even when a copy is cached, so a read in flight decides what is copied.
   const copyStack = useCallback(
     (format: (whole: Stack) => string) => {
       if (!stackId) return
-      const ready = whole.stack ? Promise.resolve(whole.stack) : onLoadStack(stackId)
-      copy(ready.then((loaded) => copyText(format(loaded))))
+      copy(onLoadStack(stackId).then((loaded) => copyText(format(loaded))))
     },
-    [copy, onLoadStack, stackId, whole.stack],
+    [copy, onLoadStack, stackId],
   )
   const copyStackLinks = useCallback(() => copyStack(stackUrls), [copyStack])
   const copyStackMarkdown = useCallback(() => copyStack(stackMarkdown), [copyStack])

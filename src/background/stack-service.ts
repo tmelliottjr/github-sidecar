@@ -6,6 +6,7 @@ import type {
   StacksAnswer,
   StacksUpdate,
 } from '@/lib/messages'
+import { agrees } from '../lib/github/stacks.ts'
 import type { KeyedStore, LayerReviewStore, StackStore } from './cache'
 
 type Stamped = { id: string; fetchedAt: number }
@@ -104,15 +105,6 @@ export interface StacksRequest {
   /** The loaded rows in the stacks wanted. */
   rows: readonly StackedRow[]
   freshMs: number
-}
-
-/**
- * Whether a cached stack agrees with a loaded row in it: the same size, and
- * the same pull request at the row position.
- */
-function agrees(stack: Stack, row: StackedRow): boolean {
-  if (row.stack.size !== stack.size) return false
-  return stack.layers.some((layer) => layer.position === row.stack.position && layer.id === row.id)
 }
 
 export function createStackService({

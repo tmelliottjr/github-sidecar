@@ -26,7 +26,6 @@ import {
 } from '@/components/ui/context-menu'
 import { ClampedTitle } from '@/components/ui/clamped-title'
 import { Hint } from '@/components/ui/tooltip'
-import { useStack } from '@/hooks/use-stacks'
 import { copyText } from '@/lib/clipboard'
 import type { CheckState, ReviewDecision, SearchItem, Stack } from '@/lib/github/types'
 import { stackMarkdown, stackUrls } from '@/lib/links'
@@ -168,7 +167,6 @@ function StackRowImpl({
   const { id, lead, layers } = stack
   const membership = lead.stack
   const size = membership?.size ?? layers.length
-  const whole = useStack(id)
   const marks = sumMarks(layers, showMergeState)
   const awaitingMarks = layers.some((layer) => layer.enrichment === 'pending')
   const updatedAt = layers.reduce(
@@ -184,16 +182,16 @@ function StackRowImpl({
   }, [id, onLoadStack])
   const toggle = useCallback(() => onToggle(id), [id, onToggle])
 
+  // Loads first even when a copy is cached, so a read in flight decides what is copied.
   const copyStack = useCallback(
     (format: (loaded: Stack) => string) => {
-      const ready = whole.stack ? Promise.resolve(whole.stack) : onLoadStack(id)
-      void ready
+      void onLoadStack(id)
         .then((loaded) => copyText(format(loaded)))
         .catch((error: unknown) =>
           console.warn('[github-sidecar] could not copy to the clipboard', error),
         )
     },
-    [id, onLoadStack, whole.stack],
+    [id, onLoadStack],
   )
 
   const label = `Stack #${membership?.number ?? ''} · ${layers.length} of ${size} layers in this list, onto ${membership?.baseRefName ?? 'the base branch'}`

@@ -542,6 +542,35 @@ describe('expandStacks', () => {
     ])
   })
 
+  it('drops a layer an older copy puts where a loaded row now sits', () => {
+    const moved = {
+      ...whole,
+      layers: whole.layers.map((entry) => (entry.id === 'l3' ? { ...entry, id: 'l9' } : entry)),
+    }
+    const views = new Map([['S', { stack: moved, isLoading: false, isFailed: false }]])
+
+    assert.deepEqual(labelled(expandStacks(built, expanded, views)), [
+      'stack',
+      'layer l4',
+      'item l3',
+      'layer l2',
+      'item l1.',
+    ])
+  })
+
+  it('leaves out a layer that shows in another row', () => {
+    const views = new Map([['S', { stack: whole, isLoading: false, isFailed: false }]])
+    const elsewhere: ListRow = { type: 'item', key: 'l4', groupKey: null, item: item({ id: 'l4' }), nesting: null }
+
+    assert.deepEqual(labelled(expandStacks([...built, elsewhere], expanded, views)), [
+      'stack',
+      'item l3',
+      'layer l2',
+      'item l1.',
+      'item l4',
+    ])
+  })
+
   it('leaves the rows alone when no stack is expanded', () => {
     assert.equal(expandStacks(built, new Set(), new Map()), built)
   })

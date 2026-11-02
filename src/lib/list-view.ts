@@ -582,13 +582,25 @@ export function buildRows(
  * `item` rows and the rest are compact `layer` rows. Until the whole stack
  * loads only the loaded layers show, followed by a loading or failure row.
  */
-function stackRows(row: Extract<ListRow, { type: 'stack' }>, view: StackView | undefined): ListRow[] {
+function stackRows(
+  row: Extract<ListRow, { type: 'stack' }>,
+  view: StackView | undefined,
+  shown: ReadonlySet<string>,
+): ListRow[] {
   const loaded = new Map(row.stack.layers.map((item) => [item.id, item]))
+  const taken = new Set(row.stack.layers.map((item) => item.stack?.position))
   const layers: Array<{ position: number; item: SearchItem } | { position: number; layer: StackLayer }> = []
   for (const layer of view?.stack?.layers ?? []) {
     const item = loaded.get(layer.id)
-    layers.push(item ? { position: layer.position, item } : { position: layer.position, layer })
-    loaded.delete(layer.id)
+    if (item) {
+      layers.push({ position: layer.position, item })
+      loaded.delete(layer.id)
+      continue
+    }
+    // An older copy of the stack can list a pull request at a position a loaded
+    // row now holds, or one that shows in another row; neither shows twice.
+    if (taken.has(layer.position) || shown.has(layer.id)) continue
+    layers.push({ position: layer.position, layer })
   }
   // Loaded layers a stale copy of the stack does not list still show, at the
   // position their own row reports.
@@ -640,9 +652,18 @@ export function expandStacks(
   views: ReadonlyMap<string, StackView>,
 ): ListRow[] {
   if (expanded.size === 0) return rows
+  const shown = new Set(
+    rows.flatMap((row) =>
+      row.type === 'item'
+        ? [row.item.id]
+        : row.type === 'stack'
+          ? row.stack.layers.map((layer) => layer.id)
+          : [],
+    ),
+  )
   return rows.flatMap((row) =>
     row.type === 'stack' && expanded.has(row.stack.id)
-      ? [row, ...stackRows(row, views.get(row.stack.id))]
+      ? [row, ...stackRows(row, views.get(row.stack.id), shown)]
       : [row],
   )
 }
