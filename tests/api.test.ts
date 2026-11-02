@@ -588,6 +588,35 @@ describe('stacked pull requests', () => {
     assert.ok(sent[3].includes('stackEntry'))
   })
 
+  it('retries a timed-out search even after another search dropped the preview', async () => {
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { query: string; variables: { q: string } }
+      if (!body.query.includes('stackEntry')) {
+        return new Response(JSON.stringify(searchPayload([pullRequestNode])), { status: 200 })
+      }
+      if (body.variables.q === 'slow') {
+        await gate
+        return new Response('<html>504</html>', { status: 504 })
+      }
+      return new Response(
+        JSON.stringify({
+          errors: [{ message: "Field 'stackEntry' doesn't exist on type 'PullRequest'" }],
+        }),
+        { status: 200 },
+      )
+    }) as unknown as typeof fetch
+
+    const slow = searchIssues('token', { q: 'slow', first: 30 })
+    await searchIssues('token', { q: 'rejected', first: 30 })
+    release()
+
+    assert.equal((await slow).items.length, 1)
+  })
+
   it('reports a timeout when the search without membership times out too', async () => {
     stubFetch('<html>502 Bad Gateway</html>' as unknown as object, { status: 502 })
 

@@ -1024,21 +1024,32 @@ function isTimeout(error: unknown): boolean {
   return error instanceof GitHubApiError && (error.status === 502 || error.status === 504)
 }
 
+/**
+ * Asks for stack membership with the rows unless this host or this query
+ * cannot take it. Reads which query failed from the error itself, since
+ * `previewFieldsSupported` can change while the request is out.
+ */
 async function postSearch(
   token: string,
   variables: { q: string; first: number; after: string | null },
   call: { operation: ApiOperation; detail: string },
 ): Promise<GraphQLResponse> {
-  if (searchesWithoutMembership.has(variables.q)) {
-    return post<GraphQLResponse>(token, { query: searchQuery(false), variables }, call)
+  const withoutMembership = () =>
+    post<GraphQLResponse>(token, { query: searchQuery(false), variables }, call)
+
+  if (!previewFieldsSupported || searchesWithoutMembership.has(variables.q)) {
+    return withoutMembership()
   }
   try {
-    return await postWithPreviewFallback<GraphQLResponse>(token, searchQuery, variables, call)
+    return await post<GraphQLResponse>(token, { query: searchQuery(true), variables }, call)
   } catch (error) {
-    // Once the preview is dropped, the request that timed out had no membership to drop.
-    if (!isTimeout(error) || !previewFieldsSupported) throw error
+    if (isUnknownPreviewField(error)) {
+      previewFieldsSupported = false
+      return withoutMembership()
+    }
+    if (!isTimeout(error)) throw error
     searchesWithoutMembership.add(variables.q)
-    return post<GraphQLResponse>(token, { query: searchQuery(false), variables }, call)
+    return withoutMembership()
   }
 }
 

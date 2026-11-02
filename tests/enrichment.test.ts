@@ -182,6 +182,44 @@ describe('carryEnrichment', () => {
     assert.equal(carried.items[0].checkState, 'FAILURE')
   })
 
+  it('keeps stack membership from the fresh page and carries only the layers', () => {
+    const layers = [
+      {
+        id: 'PR_1',
+        number: 34,
+        title: 'Fix the thing',
+        url: 'https://github.com/acme/app/pull/34',
+        repository: 'acme/app',
+        state: 'open' as const,
+        reviewDecision: null,
+        position: 1,
+      },
+    ]
+    const stacked = page([
+      applyEnrichment(
+        item(),
+        enrichment({
+          stack: { id: 'S_1', number: 1, size: 2, baseRefName: 'main', position: 1, entries: layers },
+        }),
+      ),
+    ])
+
+    const moved = carryEnrichment(
+      page([
+        item({
+          stack: { id: 'S_1', number: 1, size: 3, baseRefName: 'main', position: 2, entries: [] },
+        }),
+      ]),
+      stacked,
+    )
+    assert.equal(moved.items[0].stack?.position, 2)
+    assert.equal(moved.items[0].stack?.size, 3)
+    assert.deepEqual(moved.items[0].stack?.entries, layers)
+
+    const left = carryEnrichment(page([item({ stack: null })]), stacked)
+    assert.equal(left.items[0].stack, null)
+  })
+
   it('leaves the fresh page as it is when there is nothing to carry from', () => {
     const fresh = page([item()])
     assert.equal(carryEnrichment(fresh, undefined), fresh)
