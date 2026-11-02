@@ -1,4 +1,4 @@
-import { LinkExternalIcon, XCircleFillIcon } from '@primer/octicons-react'
+import { LinkExternalIcon, XCircleFillIcon, XIcon } from '@primer/octicons-react'
 
 import { Drawer } from '@/components/drawer'
 import type { FailingCheck } from '@/lib/github/types'
@@ -11,8 +11,8 @@ import { cn } from '@/lib/utils'
  * shows below them, so a longer list reads as one that scrolls.
  */
 const MAX_VISIBLE = 6.5
-/** Matches the rows in `StackSection`, which shares this drawer. */
-const ROW_HEIGHT = 28
+/** A 28px row plus the 2px gap after it, as in `StackSection`. */
+const ROW_PITCH = 30
 
 interface Props {
   checks: readonly FailingCheck[]
@@ -38,13 +38,15 @@ export function ChecksSection({ checks, total, read, onOpen, onCollapse }: Props
 
   return (
     <Drawer
+      icon={<XCircleFillIcon className="size-3.5 shrink-0 text-closed" aria-hidden />}
       caption={`${checks.length} failing ${checks.length === 1 ? 'check' : 'checks'}`}
+      meta={total === null ? undefined : `of ${total}`}
       closeLabel="Hide the failing checks"
       onClose={onCollapse}
     >
       <ul
-        className="scrollbar-slim flex flex-col overflow-y-auto overscroll-contain px-1 pb-1"
-        style={{ maxHeight: MAX_VISIBLE * ROW_HEIGHT }}
+        className="scrollbar-slim flex flex-col gap-0.5 overflow-y-auto overscroll-contain"
+        style={{ maxHeight: MAX_VISIBLE * ROW_PITCH }}
       >
         {checks.map((check) => (
           <li key={`${check.name}:${check.url ?? ''}`}>
@@ -53,7 +55,7 @@ export function ChecksSection({ checks, total, read, onOpen, onCollapse }: Props
         ))}
 
         {unread > 0 && (
-          <li className="py-1 pl-1.5 text-[11px] text-muted-foreground">
+          <li className="py-1 pl-8 text-[11px] text-muted-foreground">
             and {unread} more {unread === 1 ? 'check' : 'checks'} not read
           </li>
         )}
@@ -71,7 +73,10 @@ function CheckRow({
 }) {
   const name = (
     <>
-      <XCircleFillIcon className="size-3.5 shrink-0 text-closed" aria-hidden />
+      {/* As wide as a stack step, so the marks in both drawers line up. */}
+      <span className="flex size-[18px] shrink-0 items-center justify-center">
+        <XIcon className="size-3.5 text-closed" aria-hidden />
+      </span>
       <span className="truncate text-[12px]">{check.name}</span>
     </>
   )
@@ -92,7 +97,7 @@ function CheckRow({
       onClick={(event) => onOpen(check.url as string, event)}
       className={cn(
         'group/check flex h-7 w-full items-center gap-2 rounded-lg px-1.5 text-left text-foreground transition-colors',
-        'hover:bg-background focus-visible:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+        'hover:bg-muted focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
       )}
     >
       {name}

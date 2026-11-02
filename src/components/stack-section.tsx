@@ -56,29 +56,41 @@ interface Props {
 }
 
 /**
- * The rest of the stack, listed base-first so it reads bottom-up the way the
- * branches are built. The row it was expanded from stays in the list rather
- * than being filtered out, because a stack is only legible as a whole.
+ * The whole stack, listed top layer first so layer 1 sits at the bottom, the
+ * way the branches are built. The row it was expanded from stays in the list
+ * rather than being filtered out, because a stack is only legible as a whole.
  */
 export function StackSection({ stack, currentId, onOpen, onCollapse }: Props) {
   const hidden = stack.size - stack.entries.length
+  const layers = stack.entries.toReversed()
 
   return (
     <Drawer
-      caption={
+      icon={<StackIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+      caption={`Stack #${stack.number}`}
+      meta={
         <>
-          <StackIcon className="size-3 shrink-0" aria-hidden />
-          <span className="truncate">
-            Stack #{stack.number} <span className="font-normal">· onto {stack.baseRefName}</span>
-          </span>
+          {stack.size} {stack.size === 1 ? 'layer' : 'layers'} onto{' '}
+          <code className="rounded-md bg-muted px-1 py-px font-mono text-[10.5px] text-foreground">
+            {stack.baseRefName}
+          </code>
         </>
       }
       closeLabel="Hide the stack"
       onClose={onCollapse}
     >
-      <ul className="flex flex-col px-1 pb-1">
-        {stack.entries.map((entry) => (
-          <li key={entry.id}>
+      <ul className="flex flex-col gap-0.5">
+        {layers.map((entry, index) => (
+          <li
+            key={entry.id}
+            className={cn(
+              'relative isolate',
+              // Joins this step to the next, under the row fills and focus rings:
+              // 28px rows, 18px steps, 2px apart.
+              index < layers.length - 1 &&
+                "after:absolute after:-z-10 after:left-[14px] after:top-[25px] after:h-2 after:w-0.5 after:rounded-full after:bg-border after:content-['']",
+            )}
+          >
             <StackRow
               entry={entry}
               isCurrent={entry.id === currentId}
@@ -88,7 +100,7 @@ export function StackSection({ stack, currentId, onOpen, onCollapse }: Props) {
         ))}
 
         {hidden > 0 && (
-          <li className="py-1 pl-6 text-[11px] text-muted-foreground">
+          <li className="py-1 pl-8 text-[11px] text-muted-foreground">
             and {hidden} more {hidden === 1 ? 'layer' : 'layers'}
           </li>
         )}
@@ -113,15 +125,15 @@ function StackRow({
       aria-current={isCurrent || undefined}
       className={cn(
         'flex h-7 w-full items-center gap-2 rounded-lg px-1.5 text-left transition-colors',
-        'hover:bg-background focus-visible:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
-        // The row this stack was opened from, marked in place rather than with a pointer.
-        isCurrent && 'bg-background shadow-[0_0_0_1px_var(--color-border)]',
+        'hover:bg-muted focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
       )}
     >
       <span
         className={cn(
-          'w-3 shrink-0 text-[10px] font-bold tabular-nums',
-          isCurrent ? 'text-foreground' : 'text-muted-foreground',
+          'flex size-[18px] shrink-0 items-center justify-center rounded-full text-[10px] font-bold tabular-nums',
+          isCurrent
+            ? 'bg-foreground text-background'
+            : 'text-muted-foreground ring-1 ring-inset ring-border',
         )}
       >
         {entry.position}
@@ -134,7 +146,7 @@ function StackRow({
           isCurrent && 'font-semibold',
         )}
       >
-        <span className="text-muted-foreground tabular-nums">#{entry.number}</span>{' '}
+        <span className="font-normal text-muted-foreground tabular-nums">#{entry.number}</span>{' '}
         {entry.title}
       </ClampedTitle>
       <span className="ml-auto flex shrink-0 items-center">

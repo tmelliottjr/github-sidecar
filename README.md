@@ -616,11 +616,12 @@ gives this pull request's position, and `PullRequest.stack` gives the stack's
 number, size, base branch, and entries. Nothing is inferred from branch names.
 
 A stacked row carries a `layer/size` badge, and that badge is the control: it
-slides open a list of the whole stack, read from the base branch up. The row it
-was expanded from stays in that list and is outlined instead of being filtered
-out, because a stack is only legible as a whole. The chevron in the slide-out's
-caption shuts it again, since by then the badge that opened it may be several
-layers up the panel. Expansion is
+slides open a list of the whole stack, top layer first so layer 1 sits at the
+bottom, and lifts the row into a card that holds it. The row it was expanded
+from stays in that list with its step number filled in, instead of being
+filtered out, because a stack is only legible as a whole. The chevron in the
+slide-out's caption shuts it again, since by then the badge that opened it may
+be several layers up the panel. Expansion is
 deliberately not on the row itself: clicking a row still means "open this pull
 request".
 

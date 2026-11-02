@@ -338,6 +338,8 @@ export function ItemList({
               className={cn(
                 'absolute left-0 top-0 w-full px-1.5',
                 row?.type !== 'header' && 'pb-0.5',
+                // Each wrapper is its own stacking context, so the next row would cut off a lifted shadow.
+                'has-[[data-lifted]]:z-[1]',
               )}
               style={{ transform: `translateY(${virtualRow.start}px)` }}
             >

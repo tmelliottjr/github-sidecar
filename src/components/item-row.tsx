@@ -225,6 +225,9 @@ function ItemRowImpl({
   const hasStatus =
     Boolean(item.checkState) || drawsMergeState(mergeState) || Boolean(item.reviewDecision)
 
+  // An open id can outlive the checks it listed, so the lift follows what is drawn.
+  const isLifted = (isChecksOpen && failing.length > 0) || (isStackOpen && Boolean(stack))
+
   const hasMarks =
     awaitingMarks ||
     Boolean(stack) ||
@@ -242,7 +245,11 @@ function ItemRowImpl({
           data-pinned={isPinned || undefined}
           data-current={isCurrent || undefined}
           data-row-hidden={isHidden || undefined}
-          className="group/row flex flex-col"
+          data-lifted={isLifted || undefined}
+          className={cn(
+            'group/row flex flex-col rounded-xl transition-[margin,box-shadow] duration-300 ease-stack motion-reduce:transition-none',
+            isLifted && 'my-1.5 bg-background shadow-lift',
+          )}
         >
           {/*
            * Hover and focus are carried by the row's own wrapper rather than

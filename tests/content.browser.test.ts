@@ -1184,7 +1184,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     assert.equal(expanders, 0)
   })
 
-  it('expands to the rest of the stack, base branch first', async () => {
+  it('expands to the rest of the stack, top layer first', async () => {
     await menuPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const toggle = shadow.querySelector(
@@ -1213,8 +1213,8 @@ describe('row context menu', { concurrency: false, skip }, () => {
     })
 
     assert.equal(layers.length, 3)
-    assert.match(layers[0]!, /#101 Groundwork for the feature/)
-    assert.match(layers[2]!, /#103 The last layer/)
+    assert.match(layers[0]!, /#103 The last layer/)
+    assert.match(layers[2]!, /#101 Groundwork for the feature/)
     // The stack says where it lands, not just what is in it.
     assert.match(await stackRow(), /onto main/)
 
@@ -3259,6 +3259,38 @@ describe('changes, reminders, hidden rows, and filtering', { concurrency: false,
       const drawer = shadow.querySelector('[data-checks="closed"]') as HTMLElement | null
       return Boolean(drawer) && drawer!.getBoundingClientRect().height === 0
     })
+  })
+
+  it('lifts a row into a card only while a drawer lists something', async () => {
+    const settlesTo = (expected: boolean) =>
+      panel.waitForFunction((want) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const row = shadow.querySelector('[data-index="1"] [data-item-body]')!.parentElement!
+        return (getComputedStyle(row).boxShadow !== 'none') === want
+      }, {}, expected)
+
+    await settlesTo(false)
+
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[data-index="1"] [aria-label="Show the failing checks"]') as HTMLElement).click()
+    })
+    await settlesTo(true)
+
+    // The checks go green while the drawer is still open, so nothing is listed.
+    const failing = await panel.evaluate(
+      () => (window as unknown as { __items: Array<Record<string, unknown>> }).__items[1]!.failingChecks,
+    )
+    await changeItem(1, { failingChecks: [] })
+    await settlesTo(false)
+
+    await changeItem(1, { failingChecks: failing })
+    await settlesTo(true)
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[data-index="1"] [aria-label="Hide the failing checks"]') as HTMLElement).click()
+    })
+    await settlesTo(false)
   })
 
   it('says why a red row cannot name a check, rather than looking arbitrary', async () => {

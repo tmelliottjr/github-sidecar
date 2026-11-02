@@ -191,15 +191,24 @@
 .gh-sidebar-root {
   --tab-shadow: drop-shadow(1px 0 1px oklch(0 0 0 / 0.06))
     drop-shadow(6px 0 16px oklch(0 0 0 / 0.12));
+  --lift-shadow: 0 0 0 1px oklch(0 0 0 / 0.08),
+    0 2px 4px -1px oklch(0 0 0 / 0.06), 0 10px 24px -8px oklch(0 0 0 / 0.16);
 }
 
 .gh-sidebar-root.dark {
   --tab-shadow: drop-shadow(1px 0 1px oklch(0 0 0 / 0.35))
     drop-shadow(6px 0 18px oklch(0 0 0 / 0.5));
+  --lift-shadow: 0 0 0 1px oklch(1 0 0 / 0.09),
+    0 2px 4px -1px oklch(0 0 0 / 0.4), 0 12px 28px -8px oklch(0 0 0 / 0.7);
 }
 
 @utility shadow-tab {
   filter: var(--tab-shadow);
+}
+
+/* A row raised into a card while one of its drawers is open. */
+@utility shadow-lift {
+  box-shadow: var(--lift-shadow);
 }
 
 /*
