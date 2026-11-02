@@ -75,6 +75,24 @@ function toggled(current: ReadonlySet<string>, id: string): ReadonlySet<string> 
   return next
 }
 
+/**
+ * What makes a top-level row the same row across renders, whichever group it
+ * sits in. A layer joining a stack keeps the stack row the same row. Rows
+ * inside an expanded stack have none: they appear because the reader opened it.
+ */
+function identityOf(row: ListRow): string | null {
+  if (row.type === 'item' && row.nesting === null) return row.item.id
+  if (row.type === 'stack') return `stack:${row.stack.id}`
+  return null
+}
+
+/** The position in the list of the row holding `target`, if it is in one. */
+function rowIndexOf(target: EventTarget | null): number | null {
+  if (!(target instanceof Element)) return null
+  const index = target.closest('[data-index]')?.getAttribute('data-index')
+  return index == null ? null : Number(index)
+}
+
 /** Keys typed into a field are the field's, whatever they would otherwise do. */
 function isTyping(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
@@ -190,14 +208,18 @@ export function ItemList({
     if (!previous) return NO_IDS
     const fresh = new Set<string>()
     for (const row of visibleRows) {
-      if (row.type === 'item' && !previous.has(row.item.id)) fresh.add(row.item.id)
+      const identity = identityOf(row)
+      if (identity && !previous.has(identity)) fresh.add(identity)
     }
     return fresh
   }, [visibleRows])
 
   useEffect(() => {
     const ids = new Set<string>()
-    for (const row of visibleRows) if (row.type === 'item') ids.add(row.item.id)
+    for (const row of visibleRows) {
+      const identity = identityOf(row)
+      if (identity) ids.add(identity)
+    }
     seenIds.current = ids
   }, [visibleRows])
 
@@ -248,26 +270,33 @@ export function ItemList({
     return () => cancelAnimationFrame(frame)
   }, [activeIndex])
 
-  const move = useCallback(
-    (delta: number) => {
-      if (itemIndices.length === 0) return
-      setActiveIndex((current) => {
-        // Movement is measured in item rows, then mapped back to the row's
-        // real position so the header sitting above it is scrolled into view
-        // and the focus lands on the item, never on a section title.
-        const ordinal = current === null ? -1 : itemIndices.indexOf(current)
-        const nextOrdinal =
-          ordinal < 0
-            ? delta > 0
-              ? 0
-              : itemIndices.length - 1
-            : Math.min(Math.max(ordinal + delta, 0), itemIndices.length - 1)
-        const nextIndex = itemIndices[nextOrdinal]
-        virtualizer.scrollToIndex(nextIndex, { align: 'auto' })
-        return nextIndex
-      })
+  // Focuses a mounted row at once, since moving to the index already active changes no state.
+  const focusRow = useCallback(
+    (index: number) => {
+      virtualizer.scrollToIndex(index, { align: 'auto' })
+      setActiveIndex(index)
+      const row = scrollRef.current?.querySelector(`[data-index="${index}"] button`)
+      if (row instanceof HTMLElement) row.focus()
     },
-    [itemIndices, virtualizer],
+    [virtualizer],
+  )
+
+  const move = useCallback(
+    (delta: number, from: number | null) => {
+      if (itemIndices.length === 0) return
+      // Movement is measured in item rows, then mapped back to the row's
+      // real position so the header sitting above it is scrolled into view
+      // and the focus lands on the item, never on a section title.
+      const ordinal = from === null ? -1 : itemIndices.indexOf(from)
+      const nextOrdinal =
+        ordinal < 0
+          ? delta > 0
+            ? 0
+            : itemIndices.length - 1
+          : Math.min(Math.max(ordinal + delta, 0), itemIndices.length - 1)
+      focusRow(itemIndices[nextOrdinal])
+    },
+    [focusRow, itemIndices],
   )
 
   const onKeyDown = useCallback(
@@ -276,8 +305,37 @@ export function ItemList({
       // their own arrows and type-ahead must not move or act on rows.
       if (!event.currentTarget.contains(event.target as Node)) return
       if (!features.keyboard || isTyping(event.target)) return
-      const activeRow = activeIndex === null ? null : visibleRows[activeIndex]
+      // The focused row wins over the last one moved to, since a click or Tab can move focus too.
+      const focusedIndex = rowIndexOf(event.target)
+      const currentIndex =
+        focusedIndex !== null && itemIndices.includes(focusedIndex) ? focusedIndex : activeIndex
+      const activeRow = currentIndex === null ? null : visibleRows[currentIndex]
       const active = activeRow?.type === 'item' ? activeRow.item : null
+
+      // Arrows open, close, and climb stacks, following the WAI-ARIA tree view pattern.
+      if (event.key === 'ArrowRight' && activeRow?.type === 'stack' && currentIndex !== null) {
+        event.preventDefault()
+        if (!expandedStacks.has(activeRow.stack.id)) toggleStackRow(activeRow.stack.id)
+        else focusRow(currentIndex + 1)
+        return
+      }
+      if (event.key === 'ArrowLeft' && activeRow && currentIndex !== null) {
+        if (activeRow.type === 'stack' && expandedStacks.has(activeRow.stack.id)) {
+          event.preventDefault()
+          toggleStackRow(activeRow.stack.id)
+          return
+        }
+        const nesting = 'nesting' in activeRow ? activeRow.nesting : null
+        if (nesting) {
+          event.preventDefault()
+          const parent = visibleRows.findLastIndex(
+            (row, index) =>
+              index < currentIndex && row.type === 'stack' && row.stack.id === nesting.stackId,
+          )
+          if (parent >= 0) focusRow(parent)
+          return
+        }
+      }
 
       if (event.key === 'o' && activeRow?.type === 'layer') {
         event.preventDefault()
@@ -289,12 +347,12 @@ export function ItemList({
         case 'j':
         case 'ArrowDown':
           event.preventDefault()
-          move(1)
+          move(1, currentIndex)
           return
         case 'k':
         case 'ArrowUp':
           event.preventDefault()
-          move(-1)
+          move(-1, currentIndex)
           return
         case 'o':
           if (!active) return
@@ -322,7 +380,7 @@ export function ItemList({
           return
         }
         case 'Escape':
-          if (activeIndex === null) return
+          if (currentIndex === null) return
           event.preventDefault()
           setActiveIndex(null)
           scrollRef.current?.focus()
@@ -330,10 +388,14 @@ export function ItemList({
     },
     [
       activeIndex,
+      expandedStacks,
       features.hide,
       features.keyboard,
       features.reminders,
+      focusRow,
       hiddenIds,
+      itemIndices,
+      toggleStackRow,
       visibleRows,
       move,
       onHide,
@@ -376,6 +438,12 @@ export function ItemList({
             const isCurrent = item?.id === currentId
             const nesting = row && 'nesting' in row ? row.nesting : null
             const isExpandedStack = row?.type === 'stack' && expandedStacks.has(row.stack.id)
+            // A collapsed stack stands for the page when one of its layers is the page.
+            const isCurrentStack =
+              row?.type === 'stack' &&
+              !isExpandedStack &&
+              row.stack.layers.some((layer) => layer.id === currentId)
+            const identity = row ? identityOf(row) : null
 
             const itemRow = item && (
               <ItemRow
@@ -419,7 +487,7 @@ export function ItemList({
               <div
                 key={virtualRow.key}
                 data-index={virtualRow.index}
-                ref={isCurrent ? measureCurrent : virtualizer.measureElement}
+                ref={isCurrent || isCurrentStack ? measureCurrent : virtualizer.measureElement}
                 // The gap below each row is inside the measured box, so the
                 // virtualizer spaces the tiles without knowing about it. The
                 // rows of an expanded stack sit flush so they read as one card.
@@ -446,22 +514,25 @@ export function ItemList({
                     onToggle={() => onToggleGroup(row.groupKey)}
                   />
                 ) : row?.type === 'stack' ? (
-                  <StackRow
-                    stack={row.stack}
-                    isExpanded={isExpandedStack}
-                    hasChanges={
-                      features.changes &&
-                      row.stack.layers.some((layer) => {
-                        const seen = memory[layer.id]?.seen
-                        return seen !== undefined && changesSince(seen, layer).length > 0
-                      })
-                    }
-                    showFailingChecks={features.failingChecks}
-                    showMergeState={features.mergeState}
-                    onToggle={toggleStackRow}
-                    onLoadStack={onLoadStack}
-                    onOpen={onOpen}
-                  />
+                  <div className={cn(identity && entering.has(identity) && 'animate-row-in')}>
+                    <StackRow
+                      stack={row.stack}
+                      isExpanded={isExpandedStack}
+                      isCurrent={isCurrentStack}
+                      hasChanges={
+                        features.changes &&
+                        row.stack.layers.some((layer) => {
+                          const seen = memory[layer.id]?.seen
+                          return seen !== undefined && changesSince(seen, layer).length > 0
+                        })
+                      }
+                      showFailingChecks={features.failingChecks}
+                      showMergeState={features.mergeState}
+                      onToggle={toggleStackRow}
+                      onLoadStack={onLoadStack}
+                      onOpen={onOpen}
+                    />
+                  </div>
                 ) : row && nesting ? (
                   <StackRail nesting={nesting} isLoaded={row.type === 'item'}>
                     {row.type === 'item' ? (
@@ -485,7 +556,7 @@ export function ItemList({
                    * transform is what places the row in the virtual list, and an
                    * animation of the same property would fight it.
                    */
-                  <div className={cn(item && entering.has(item.id) && 'animate-row-in')}>
+                  <div className={cn(identity && entering.has(identity) && 'animate-row-in')}>
                     {itemRow || (
                       <div className="flex items-center justify-center gap-2 py-4 text-[12px] text-muted-foreground">
                         <SyncIcon className="size-3.5 animate-spin" />

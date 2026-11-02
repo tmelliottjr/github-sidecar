@@ -632,7 +632,11 @@ every layer top first, so layer 1 sits at the bottom. Loaded layers are full
 rows and the rest are one-line rows, each on a numbered step. While the stack
 loads, the loaded layers show with a loading row, and a failed load keeps them
 with a retry. Expansion is forgotten when the panel closes or the query
-changes.
+changes. The arrow keys follow the
+[tree view pattern](https://www.w3.org/WAI/ARIA/apg/patterns/treeview/): →
+opens a stack row and then steps into its layers, and ← steps back out to the
+stack row and then closes it. When the page is one of the layers of a closed
+stack, the stack row carries the wash and the marker, and it stays closed.
 
 A stack with only one layer in the list stays a plain row with a `layer/size`
 badge. That badge slides open the whole stack under the row, and the chevron
@@ -824,8 +828,9 @@ neither, and no notification to play a sound alongside.
 | Refresh one row       | Right-click it → **Refresh this item**           |
 | Use a row's quick actions | Hover the row, or move to it with `j`/`k` and press Tab |
 | Pin a row to the top  | The pin in its quick actions, or right-click → **Pin item** (again to unpin) |
-| Open a stack          | Click its stack row or press Enter on it, or right-click → **Show the stack** |
-| Shut a stack          | The stack row again                              |
+| Open a stack          | Click its stack row, or press Enter or → on it, or right-click → **Show the stack** |
+| Step into its layers  | → again, then `j` and `k`; ← goes back to the stack row |
+| Shut a stack          | The stack row again, or ← on it                  |
 | See a one-layer stack | The `layer/size` badge on the row; the chevron in the slide-out shuts it |
 | Copy a link           | The link button in a row's quick actions, or right-click → **Copy** → **Link** (rich text, titled; the URL as plain text) |
 | Copy it as Markdown   | **Copy** → **Link as Markdown**                  |
@@ -845,7 +850,7 @@ neither, and no notification to play a sound alongside.
 | Reorder them          | The sort control in the filter bar               |
 | Group them            | The grouping control in the filter bar (remembered per query) |
 | Move through the list | `j` and `k`, then Enter or `o` to open, `p` to pin |
-| Spot the page you are on | Its row is washed, and a rule on the panel's outer edge points out at it |
+| Spot the page you are on | Its row is washed, and a rule on the panel's outer edge points out at it; a closed stack stands in for its layers |
 | Hear about it            | Settings → **Notifications** → **Desktop notifications** |
 | Hear about only one kind | The same section: **Reminders you set** / **Rows that changed** |
 | Change what one sounds like | The **Sound** row under that kind; **Silent** to mute it |

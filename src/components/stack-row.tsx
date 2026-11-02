@@ -137,6 +137,8 @@ function CombinedMarks({ marks, showFailingChecks }: { marks: Marks; showFailing
 interface Props {
   stack: FoldedStack
   isExpanded: boolean
+  /** Whether a collapsed stack holds the page the tab is showing. */
+  isCurrent: boolean
   /** Whether any loaded layer changed since the reader last looked. */
   hasChanges: boolean
   showFailingChecks: boolean
@@ -155,6 +157,7 @@ interface Props {
 function StackRowImpl({
   stack,
   isExpanded,
+  isCurrent,
   hasChanges,
   showFailingChecks,
   showMergeState,
@@ -200,18 +203,23 @@ function StackRowImpl({
       <ContextMenuTrigger asChild>
         <div
           data-stack-row=""
+          data-current={isCurrent || undefined}
           data-lifted={isExpanded || undefined}
           className={cn('group/row rounded-xl', isExpanded && CARD_TOP)}
         >
           <button
             type="button"
+            data-item-body=""
             onClick={toggle}
             onPointerEnter={loadStack}
             onFocus={loadStack}
             aria-expanded={isExpanded}
+            aria-current={isCurrent || undefined}
             className={cn(
               'group/body flex w-full flex-col rounded-xl bg-[color:var(--row-surface)] text-left transition-colors',
               SURFACES,
+              isCurrent &&
+                '[--row-surface:color-mix(in_oklab,var(--color-ring)_8%,var(--color-background))]',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70',
             )}
           >

@@ -1747,14 +1747,18 @@ describe('row context menu', { concurrency: false, skip }, () => {
 })
 
 describe('stacks folded into one row', { concurrency: false, skip }, () => {
+  let server: Server
   let stackBrowser: Browser
   let stackPage: Page
 
   before(async () => {
+    let origin: string
+    ;({ server, origin } = await serveBlankPages())
     stackBrowser = await puppeteer.launch({ executablePath, headless: true })
     stackPage = await stackBrowser.newPage()
     await stackPage.setViewport({ width: 1280, height: 800 })
-    await stackPage.setContent('<!doctype html><html data-color-mode="light"><body></body></html>')
+    // The tab is on layer 3 of stack 9, acme/app#7.
+    await stackPage.goto(`${origin}/acme/app/pull/7`)
     await stackPage.evaluate(CHROME_STUB)
     // Layers 1 and 3 of stack 9 are on the first page and layer 2 on the
     // second; layer 4 is in no page at all.
@@ -1823,6 +1827,7 @@ describe('stacks folded into one row', { concurrency: false, skip }, () => {
 
   after(async () => {
     await stackBrowser?.close()
+    await new Promise((resolve) => server.close(resolve))
   })
 
   const listText = () =>
@@ -1864,6 +1869,32 @@ describe('stacks folded into one row', { concurrency: false, skip }, () => {
     assert.match(footer!, /20 of 400/)
   })
 
+  /** Where focus is: a stack row, a layer by position, or something else. */
+  const focused = () =>
+    stackPage.evaluate(() => {
+      const active = document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement
+      const layer = active?.closest('[data-stack-layer]')
+      if (layer) return `layer ${layer.getAttribute('data-stack-layer')}`
+      return active?.closest('[data-stack-row]') ? 'stack' : 'elsewhere'
+    })
+
+  it('marks the stack row while the page is one of its layers', async () => {
+    await stackPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const marker = shadow.querySelector('[data-current-marker]')
+      return (
+        Boolean(shadow.querySelector('[data-index="2"] [data-stack-row][data-current]')) &&
+        marker !== null &&
+        getComputedStyle(marker).visibility === 'visible'
+      )
+    })
+
+    const marked = await stackPage.evaluate(() =>
+      [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[data-current]')].length,
+    )
+    assert.equal(marked, 1)
+  })
+
   it('expands top layer first, with full rows for loaded layers and a compact row for the rest', async () => {
     const button = await stackButton()
     await button.click()
@@ -1883,6 +1914,21 @@ describe('stacks folded into one row', { concurrency: false, skip }, () => {
       ],
     )
     assert.match(layers[0].text, /#904 Fourth layer/)
+
+    // Open, the stack is no longer the page: its layer 3 is.
+    await stackPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-stack-layer="3"] [data-current]'),
+      ),
+    )
+    assert.equal(
+      await stackPage.evaluate(() =>
+        Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-stack-row][data-current]')),
+      ),
+      false,
+    )
 
     const request = await stackPage.evaluate(() =>
       (window as unknown as { __sentMessages: Array<Record<string, unknown>> }).__sentMessages.findLast(
@@ -1906,6 +1952,37 @@ describe('stacks folded into one row', { concurrency: false, skip }, () => {
       () => document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[data-stack-layer]').length === 0,
     )
 
+    assert.equal(await button.evaluate((node) => node.getAttribute('aria-expanded')), 'false')
+  })
+
+  it('opens with ArrowRight, steps in and back out, and closes with ArrowLeft', async () => {
+    const button = await stackButton()
+    await button.focus()
+    const layerCount = () =>
+      stackPage.evaluate(
+        () => document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[data-stack-layer]').length,
+      )
+
+    await stackPage.keyboard.press('ArrowRight')
+    await stackPage.waitForFunction(
+      () => document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[data-stack-layer]').length === 4,
+    )
+    assert.equal(await focused(), 'stack')
+
+    await stackPage.keyboard.press('ArrowRight')
+    assert.equal(await focused(), 'layer 4')
+
+    await stackPage.keyboard.press('j')
+    assert.equal(await focused(), 'layer 3')
+
+    await stackPage.keyboard.press('ArrowLeft')
+    assert.equal(await focused(), 'stack')
+
+    await stackPage.keyboard.press('ArrowLeft')
+    await stackPage.waitForFunction(
+      () => document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[data-stack-layer]').length === 0,
+    )
+    assert.equal(await layerCount(), 0)
     assert.equal(await button.evaluate((node) => node.getAttribute('aria-expanded')), 'false')
   })
 
