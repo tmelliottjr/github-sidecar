@@ -77,7 +77,7 @@ const MARKS_INDENT = 'pl-12'
  * inside can match them: label discs ring themselves in the surface, and the
  * gray chips swap to the page color whenever the row itself turns gray.
  */
-const SURFACES = cn(
+export const SURFACES = cn(
   '[--row-surface:var(--color-background)] [--row-chip:var(--color-muted)]',
   'hover:[--row-surface:var(--color-accent)] hover:[--row-chip:var(--color-background)]',
   'has-[:focus-visible]:[--row-surface:var(--color-accent)] has-[:focus-visible]:[--row-chip:var(--color-background)]',
@@ -89,6 +89,8 @@ interface Props {
   isPinned: boolean
   /** Whether this row is the page the tab is showing. */
   isCurrent: boolean
+  /** Whether the row is a layer inside an expanded stack, which already shows the stack. */
+  isNested: boolean
   isStackOpen: boolean
   /** What has changed since the reader last looked; empty when it is off. */
   changes: readonly ChangeKind[]
@@ -127,6 +129,7 @@ function ItemRowImpl({
   item,
   isPinned,
   isCurrent,
+  isNested,
   isStackOpen,
   changes,
   seen,
@@ -157,8 +160,8 @@ function ItemRowImpl({
   // hundreds of rows never builds toolbars nobody reaches.
   const [hasQuickActions, setHasQuickActions] = useState(false)
   const showQuickActions = useCallback(() => setHasQuickActions(true), [])
-  const stack = item.stack
-  const stackId = stack?.id ?? null
+  const stack = isNested ? null : item.stack
+  const stackId = item.stack?.id ?? null
   const whole = useStack(stackId)
 
   // The drawer shows the failure; the log keeps the cause.

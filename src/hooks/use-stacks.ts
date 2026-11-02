@@ -1,7 +1,15 @@
 import { useCallback } from 'react'
-import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  queryOptions,
+  skipToken,
+  useQueries,
+  useQuery,
+  useQueryClient,
+  type QueryObserverResult,
+} from '@tanstack/react-query'
 
 import type { Stack, StackedRow } from '@/lib/github/types'
+import type { StackView } from '@/lib/list-view'
 import { sendMessage } from '@/lib/messages'
 
 const STACK_KEY = ['stack'] as const
@@ -71,16 +79,32 @@ export function useLoadStack() {
   )
 }
 
+function viewOf(query: Pick<QueryObserverResult<Stack>, 'data' | 'fetchStatus' | 'status'>): StackView {
+  return {
+    stack: query.data,
+    isLoading: query.fetchStatus === 'fetching',
+    isFailed: query.status === 'error',
+  }
+}
+
 /** The stack the panel holds for `id`. Never starts a read; see `useLoadStack`. */
-export function useStack(id: string | null) {
+export function useStack(id: string | null): StackView {
   const query = useQuery<Stack>({
     queryKey: stackKey(id ?? ''),
     queryFn: skipToken,
     enabled: id !== null,
   })
-  return {
-    stack: id === null ? undefined : query.data,
-    isLoading: query.fetchStatus === 'fetching',
-    isFailed: query.status === 'error',
-  }
+  return id === null ? { stack: undefined, isLoading: false, isFailed: false } : viewOf(query)
+}
+
+/** The stacks the panel holds for `ids`, by id. Never starts a read. */
+export function useStackViews(ids: readonly string[]): ReadonlyMap<string, StackView> {
+  return useQueries({
+    queries: ids.map((id) => queryOptions<Stack>({ queryKey: stackKey(id), queryFn: skipToken })),
+    combine: useCallback(
+      (results: Array<QueryObserverResult<Stack>>) =>
+        new Map(results.map((result, index) => [ids[index], viewOf(result)])),
+      [ids],
+    ),
+  })
 }

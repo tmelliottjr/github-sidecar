@@ -164,10 +164,13 @@ export function StackFailed({ onRetry }: { onRetry: () => void }) {
 export function StackLayerRow({
   layer,
   isCurrent,
+  showPosition = true,
   onOpen,
 }: {
   layer: StackLayer
   isCurrent: boolean
+  /** Whether to number the layer, where nothing beside the row does. */
+  showPosition?: boolean
   onOpen: (url: string, event: React.MouseEvent) => void
 }) {
   const review = useContext(LayerReviews).get(layer.id) ?? null
@@ -182,16 +185,18 @@ export function StackLayerRow({
         'hover:bg-muted focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
       )}
     >
-      <span
-        className={cn(
-          'flex size-[18px] shrink-0 items-center justify-center rounded-full text-[10px] font-bold tabular-nums',
-          isCurrent
-            ? 'bg-foreground text-background'
-            : 'text-muted-foreground ring-1 ring-inset ring-border',
-        )}
-      >
-        {layer.position}
-      </span>
+      {showPosition && (
+        <span
+          className={cn(
+            'flex size-[18px] shrink-0 items-center justify-center rounded-full text-[10px] font-bold tabular-nums',
+            isCurrent
+              ? 'bg-foreground text-background'
+              : 'text-muted-foreground ring-1 ring-inset ring-border',
+          )}
+        >
+          {layer.position}
+        </span>
+      )}
       <StateIcon item={{ kind: 'pull-request', state: layer.state, stateReason: null }} />
       <ClampedTitle
         title={layer.title}

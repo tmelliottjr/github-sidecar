@@ -448,6 +448,27 @@ describe('foldStacks', () => {
   })
 })
 
+describe('buildRows with stacks', () => {
+  it('keys a stack row by its stack when ungrouped', () => {
+    const built = buildRows([], [layer('l1', 1), layer('l2', 2)], 'none')
+
+    assert.deepEqual(built.map((row) => row.key), ['stack:S'])
+  })
+
+  it('puts a stack under the group of its lead layer, counting every pull request in it', () => {
+    const built = buildRows(
+      [],
+      [layer('l2', 2, { state: 'draft' }), layer('l1', 1), item({ id: 'a', state: 'draft' })],
+      'status',
+    )
+
+    assert.deepEqual(
+      built.map((row) => (row.type === 'header' ? `#${row.label}(${row.count})` : row.key)),
+      ['#Open(2)', 'status:open:stack:S', '#Draft(1)', 'status:draft:a'],
+    )
+  })
+})
+
 describe('expandStacks', () => {
   const whole: Stack = {
     id: 'S',

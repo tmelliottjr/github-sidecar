@@ -607,7 +607,7 @@ the browser and the system.
 </details>
 
 <details>
-<summary><strong>Stacked pull requests</strong> — a <code>layer/size</code> badge and the whole chain from its own chevron.</summary>
+<summary><strong>Stacked pull requests</strong> — one row per stack, which opens into every layer.</summary>
 
 #### Stacked pull requests
 
@@ -616,15 +616,31 @@ one below it. GitHub exposes membership directly: `PullRequest.stackEntry`
 gives this pull request's position, and `PullRequest.stack` gives the stack's
 number, size, base branch, and entries. Nothing is inferred from branch names.
 
-A stacked row carries a `layer/size` badge, and that badge is the control: it
-slides open a list of the whole stack, top layer first so layer 1 sits at the
-bottom, and lifts the row into a card that holds it. The row it was expanded
-from stays in that list with its step number filled in, instead of being
-filtered out, because a stack is only legible as a whole. The chevron in the
-slide-out's caption shuts it again, since by then the badge that opened it may
-be several layers up the panel. Expansion is
-deliberately not on the row itself: clicking a row still means "open this pull
-request".
+When two or more layers of a stack are in the list, they fold into one stack
+row:
+
+- It sits where its first layer would, even when other layers come from later
+  pages or from Pinned. No layer also shows on its own, in any section.
+- The lead layer, the loaded one closest to the base branch, gives the title
+  and decides the group.
+- Its marks sum the loaded layers: failing checks, review decisions, and any
+  conflict, plus the change dot when any layer changed.
+- It pins when any loaded layer is pinned, at the place of the earliest pin.
+
+Clicking a stack row, or pressing Enter on it, opens it into a card that lists
+every layer top first, so layer 1 sits at the bottom. Loaded layers are full
+rows and the rest are one-line rows, each on a numbered step. While the stack
+loads, the loaded layers show with a loading row, and a failed load keeps them
+with a retry. Expansion is forgotten when the panel closes or the query
+changes.
+
+A stack with only one layer in the list stays a plain row with a `layer/size`
+badge. That badge slides open the whole stack under the row, and the chevron
+in the slide-out caption shuts it again.
+
+The footer and the launcher count pull requests, so folding never changes
+them. When the list drops its oldest page after ten, a stack moves to the slot
+of its next loaded layer.
 
 `stack` and `stackEntry` are a public preview. A host that has not been given
 the fields rejects the whole query rather than returning null, which would take
@@ -808,8 +824,9 @@ neither, and no notification to play a sound alongside.
 | Refresh one row       | Right-click it → **Refresh this item**           |
 | Use a row's quick actions | Hover the row, or move to it with `j`/`k` and press Tab |
 | Pin a row to the top  | The pin in its quick actions, or right-click → **Pin item** (again to unpin) |
-| See a stack           | The `layer/size` badge on a stacked row, or right-click → **Show the stack** |
-| Shut a stack          | The chevron in the slide-out's caption, or the badge again      |
+| Open a stack          | Click its stack row or press Enter on it, or right-click → **Show the stack** |
+| Shut a stack          | The stack row again                              |
+| See a one-layer stack | The `layer/size` badge on the row; the chevron in the slide-out shuts it |
 | Copy a link           | The link button in a row's quick actions, or right-click → **Copy** → **Link** (rich text, titled; the URL as plain text) |
 | Copy it as Markdown   | **Copy** → **Link as Markdown**                  |
 | Copy a title          | **Copy** → **Title**                             |

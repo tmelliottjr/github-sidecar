@@ -72,6 +72,7 @@ export interface Nesting {
   stackId: string
   /** The layer position. Null for the loading and failure rows. */
   position: number | null
+  isFirst: boolean
   isLast: boolean
 }
 
@@ -509,43 +510,67 @@ export function foldStacks(
   return folded
 }
 
+function leadOf(entry: ListEntry): SearchItem {
+  return entry.type === 'item' ? entry.item : entry.stack.lead
+}
+
+function entryKey(entry: ListEntry): string {
+  return entry.type === 'item' ? entry.item.id : `stack:${entry.stack.id}`
+}
+
+function entryRow(entry: ListEntry, key: string, groupKey: string | null): ListRow {
+  return entry.type === 'item'
+    ? { type: 'item', key, groupKey, item: entry.item, nesting: null }
+    : { type: 'stack', key, groupKey, stack: entry.stack }
+}
+
+/** How many pull requests and issues the entries stand for. */
+function countOf(entries: ListEntry[]): number {
+  return entries.reduce(
+    (total, entry) => total + (entry.type === 'item' ? 1 : entry.stack.layers.length),
+    0,
+  )
+}
+
 /**
  * Flattens the pinned and unpinned rows into the single list of headers and
- * items the scroller draws.
+ * rows the scroller draws, after folding stacks with `foldStacks`.
  *
  * Without a grouping the rows pass straight through, pinned ones first and
  * headerless, exactly as an ungrouped list has always looked. With one, the
  * pinned rows keep their place at the top under a `Pinned` header of their
  * own, and the rest fall into their sections below — a pinned row is never
- * also drawn among them.
+ * also drawn among them. A stack joins the section of its lead layer, and a
+ * header counts the pull requests and issues under it.
  */
 export function buildRows(
   pinned: SearchItem[],
   rest: SearchItem[],
   groupBy: GroupBy,
 ): ListRow[] {
+  const folded = foldStacks(pinned, rest)
   if (groupBy === 'none') {
-    return [...pinned, ...rest].map((item) => ({ type: 'item', key: item.id, groupKey: null, item, nesting: null }))
+    return [...folded.pinned, ...folded.rest].map((entry) => entryRow(entry, entryKey(entry), null))
   }
 
   const rows: ListRow[] = []
 
-  if (pinned.length > 0) {
-    rows.push({ type: 'header', key: 'header:pinned', groupKey: 'pinned', label: 'Pinned', avatarUrl: null, count: pinned.length })
-    for (const item of pinned) rows.push({ type: 'item', key: `pinned:${item.id}`, groupKey: 'pinned', item, nesting: null })
+  if (folded.pinned.length > 0) {
+    rows.push({ type: 'header', key: 'header:pinned', groupKey: 'pinned', label: 'Pinned', avatarUrl: null, count: countOf(folded.pinned) })
+    for (const entry of folded.pinned) rows.push(entryRow(entry, `pinned:${entryKey(entry)}`, 'pinned'))
   }
 
-  for (const group of groupItems(rest, groupBy)) {
+  for (const group of groupEntries(folded.rest, groupBy, leadOf)) {
     rows.push({
       type: 'header',
       key: `header:${group.key}`,
       groupKey: group.key,
       label: group.label,
       avatarUrl: group.avatarUrl,
-      count: group.items.length,
+      count: countOf(group.items),
     })
-    for (const item of group.items) {
-      rows.push({ type: 'item', key: `${group.key}:${item.id}`, groupKey: group.key, item, nesting: null })
+    for (const entry of group.items) {
+      rows.push(entryRow(entry, `${group.key}:${entryKey(entry)}`, group.key))
     }
   }
 
@@ -575,6 +600,7 @@ function stackRows(row: Extract<ListRow, { type: 'stack' }>, view: StackView | u
   const nesting = (position: number | null, index: number): Nesting => ({
     stackId: row.stack.id,
     position,
+    isFirst: index === 0,
     isLast: index === count - 1,
   })
 
