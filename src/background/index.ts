@@ -2,6 +2,8 @@ import {
   GitHubApiError,
   enrichItems,
   fetchItem,
+  fetchLayerReviews,
+  fetchStacks,
   fetchViewer,
   observeApiCalls,
   searchIssues,
@@ -29,8 +31,9 @@ import { readStorage, writeStorage, type SoundSettings } from '@/lib/storage'
 import { browser, can, browserName } from '@/lib/browser'
 import { clearApiLog, readApiLog, recordApiCall } from './api-log'
 import { playNotificationSound } from './audio'
-import { indexedDbStore } from './cache'
+import { indexedDbLayerReviewStore, indexedDbStackStore, indexedDbStore } from './cache'
 import { createSearchService, freshnessWindow, MAX_CACHE_AGE_MS } from './search-service'
+import { createLayerReviewService, createStackService } from './stack-service'
 import { startDevReload } from './dev-reload'
 
 const POPUP_WIDTH = 1100
@@ -411,6 +414,27 @@ const searchService = createSearchService({
   onError: (error) => console.warn('[github-sidecar] revalidation failed', error),
 })
 
+const stackService = createStackService({
+  store: indexedDbStackStore,
+  fetchStacks: async (ids) => fetchStacks(await requireToken(), ids),
+  broadcast: (update) => void broadcastToGitHubTabs(update),
+  onError: (error) => console.warn('[github-sidecar] could not read stacks', error),
+})
+
+const layerReviewService = createLayerReviewService({
+  store: indexedDbLayerReviewStore,
+  fetchReviews: async (ids) => fetchLayerReviews(await requireToken(), ids),
+  broadcast: (update) => void broadcastToGitHubTabs(update),
+  onError: (error) => console.warn('[github-sidecar] could not read layer reviews', error),
+})
+
+/** Drops cached pages, stacks, and layer reviews older than a day. */
+function pruneCaches(): void {
+  void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+  void indexedDbStackStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+  void indexedDbLayerReviewStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+}
+
 async function openItem(url: string, target: 'window' | 'tab'): Promise<void> {
   if (target === 'tab') {
     await browser.tabs.create({ url, active: true })
@@ -466,6 +490,20 @@ async function handle(
       await broadcastToGitHubTabs({ type: 'item-updated', item })
       scheduleAttention()
       return item
+    }
+    case 'stacks': {
+      const { pollIntervalMs } = await readStorage('settings')
+      return stackService.stacks({
+        rows: message.rows,
+        freshMs: freshnessWindow(pollIntervalMs),
+      })
+    }
+    case 'layer-reviews': {
+      const { pollIntervalMs } = await readStorage('settings')
+      return layerReviewService.reviews({
+        ids: message.ids,
+        freshMs: freshnessWindow(pollIntervalMs),
+      })
     }
     case 'lookup-items': {
       // Best-effort: rows the cache has dropped simply do not come back, and
@@ -579,14 +617,14 @@ browser.tabs.onRemoved.addListener((tabId) => {
 })
 
 browser.runtime.onInstalled.addListener(async ({ reason }) => {
-  void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+  pruneCaches()
   if (reason !== 'install') return
   const { token } = await readStorage('settings')
   if (!token) await browser.runtime.openOptionsPage()
 })
 
 browser.runtime.onStartup.addListener(() => {
-  void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+  pruneCaches()
   scheduleAttention()
 })
 

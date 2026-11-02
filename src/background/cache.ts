@@ -1,4 +1,4 @@
-import type { SearchItem, SearchPage } from '@/lib/github/types'
+import type { LayerReview, SearchItem, SearchPage, Stack } from '@/lib/github/types'
 
 /**
  * Persistent search cache.
@@ -10,17 +10,23 @@ import type { SearchItem, SearchPage } from '@/lib/github/types'
  */
 const DB_NAME = 'github-sidecar'
 /**
- * Bumped whenever a cached row gains a field the panel then reads.
+ * Bumped whenever a cached row gains a field the panel then reads, and whenever
+ * a store is added, since `onupgradeneeded` is the only place stores are made.
  *
  * A cache holds a *shape* as well as a value, and a row written before a field
  * existed is not a hit for a panel that expects it — it is a row that will
  * crash the list. Dropping the store on upgrade costs one refetch and is the
  * only version of this that cannot be got wrong.
  */
-const DB_VERSION = 3
+const DB_VERSION = 7
 const STORE = 'search-pages'
 const QUERY_INDEX = 'query'
 const UPDATED_INDEX = 'updatedAt'
+/** Whole stacks, keyed by stack id, so every tab shares them. */
+const STACK_STORE = 'stacks'
+/** Review decisions of stack layers that are not loaded rows, keyed by pull request id. */
+const LAYER_REVIEW_STORE = 'layer-reviews'
+const FETCHED_INDEX = 'fetchedAt'
 
 export interface CacheEntry {
   /** Built by the search service; see cacheKey there. */
@@ -50,6 +56,21 @@ export interface CacheStore {
   /** Looks rows up by node id, wherever they happen to be cached. */
   findItems(ids: readonly string[]): Promise<SearchItem[]>
 }
+
+/** Records stamped with the time the request that read them started. */
+export interface KeyedStore<T extends { id: string; fetchedAt: number }> {
+  /** The cached records among `ids`, skipping any it does not hold. */
+  read(ids: readonly string[]): Promise<T[]>
+  /**
+   * Writes each record unless the stored copy has a newer `fetchedAt`, all in
+   * one transaction. Returns the copy each id holds afterwards.
+   */
+  write(records: readonly T[]): Promise<T[]>
+  prune(maxAgeMs: number): Promise<void>
+}
+
+export type StackStore = KeyedStore<Stack>
+export type LayerReviewStore = KeyedStore<LayerReview>
 
 /** Swaps a refreshed row into a page, or returns null if it is not in it. */
 export function replaceItem(page: SearchPage, item: SearchItem): SearchPage | null {
@@ -82,6 +103,12 @@ function openDatabase(): Promise<IDBDatabase> {
       const store = database.createObjectStore(STORE, { keyPath: 'key' })
       store.createIndex(QUERY_INDEX, 'query', { unique: false })
       store.createIndex(UPDATED_INDEX, 'updatedAt', { unique: false })
+
+      for (const name of [STACK_STORE, LAYER_REVIEW_STORE]) {
+        if (database.objectStoreNames.contains(name)) database.deleteObjectStore(name)
+        const records = database.createObjectStore(name, { keyPath: 'id' })
+        records.createIndex(FETCHED_INDEX, 'fetchedAt', { unique: false })
+      }
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error)
@@ -97,10 +124,11 @@ function openDatabase(): Promise<IDBDatabase> {
 async function withStore<T>(
   mode: IDBTransactionMode,
   run: (store: IDBObjectStore) => Promise<T>,
+  name = STORE,
 ): Promise<T> {
   const database = await openDatabase()
-  const transaction = database.transaction(STORE, mode)
-  const result = await run(transaction.objectStore(STORE))
+  const transaction = database.transaction(name, mode)
+  const result = await run(transaction.objectStore(name))
 
   await new Promise<void>((resolve, reject) => {
     transaction.oncomplete = () => resolve()
@@ -201,3 +229,61 @@ export const indexedDbStore: CacheStore = {
     })
   },
 }
+
+function keyedStore<T extends { id: string; fetchedAt: number }>(name: string): KeyedStore<T> {
+  return {
+    async read(ids) {
+      return withStore(
+        'readonly',
+        async (store) => {
+          const found: Array<T | undefined> = await Promise.all(
+            ids.map((id) => promisify<T | undefined>(store.get(id))),
+          )
+          return found.filter((record): record is T => record !== undefined)
+        },
+        name,
+      )
+    },
+
+    // Read and written in one transaction, so a slower, older read landing
+    // between the two cannot replace a newer record.
+    async write(records) {
+      return withStore(
+        'readwrite',
+        async (store) => {
+          const stored: Array<T | undefined> = await Promise.all(
+            records.map((record) => promisify<T | undefined>(store.get(record.id))),
+          )
+          const kept = records.map((record, index) => {
+            const current = stored[index]
+            return current && current.fetchedAt >= record.fetchedAt ? current : record
+          })
+          await Promise.all(
+            kept
+              .filter((record, index) => record === records[index])
+              .map((record) => promisify(store.put(record))),
+          )
+          return kept
+        },
+        name,
+      )
+    },
+
+    async prune(maxAgeMs) {
+      await withStore(
+        'readwrite',
+        async (store) => {
+          const cutoff = Date.now() - maxAgeMs
+          const keys = await promisify(
+            store.index(FETCHED_INDEX).getAllKeys(IDBKeyRange.upperBound(cutoff)),
+          )
+          await Promise.all(keys.map((key) => promisify(store.delete(key))))
+        },
+        name,
+      )
+    },
+  }
+}
+
+export const indexedDbStackStore: StackStore = keyedStore<Stack>(STACK_STORE)
+export const indexedDbLayerReviewStore: LayerReviewStore = keyedStore<LayerReview>(LAYER_REVIEW_STORE)

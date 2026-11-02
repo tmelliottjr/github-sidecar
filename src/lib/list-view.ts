@@ -1,4 +1,4 @@
-import type { ItemState, SearchItem } from './github/types'
+import type { ItemState, SearchItem, Stack, StackLayer } from './github/types'
 
 /**
  * How the rows already loaded are ordered. Deliberately not a GitHub `sort:`
@@ -45,19 +45,48 @@ const STATUS_LABELS: Record<ItemState, string> = {
 }
 
 /** A section of the list: a header, and the rows that sit under it. */
-export interface ItemGroup {
+export interface ItemGroup<T = SearchItem> {
   /** Identifies the group within the list; stable across renders. */
   key: string
   label: string
   /** An assignee's avatar, when the group stands for one; null otherwise. */
   avatarUrl: string | null
-  items: SearchItem[]
+  items: T[]
+}
+
+/** A stack with two or more layers in the list, drawn as one row. */
+export interface FoldedStack {
+  /** `PullRequestStack` node id. */
+  id: string
+  /** The loaded layer closest to the base branch, which merges next. Gives the title and the group. */
+  lead: SearchItem
+  /** Loaded layers, from the base branch up. */
+  layers: SearchItem[]
+}
+
+/** One row before grouping: a pull request or issue, or a stack standing for its loaded layers. */
+export type ListEntry = { type: 'item'; item: SearchItem } | { type: 'stack'; stack: FoldedStack }
+
+/** Where a row sits inside an expanded stack. */
+export interface Nesting {
+  stackId: string
+  /** The layer position. Null for the loading and failure rows. */
+  position: number | null
+  isFirst: boolean
+  isLast: boolean
+}
+
+/** What the panel holds for one stack. */
+export interface StackView {
+  stack: Stack | undefined
+  isLoading: boolean
+  isFailed: boolean
 }
 
 /**
- * One row the list draws: either a section header, or one of the items under
- * it. A grouped list is flattened to these so a single virtual scroller can
- * carry the headers and their rows together.
+ * One row the list draws: a section header, a pull request or issue, or a
+ * stack. An expanded stack is followed by one row per layer. A grouped list is
+ * flattened to these so a single virtual scroller can carry them together.
  */
 export type ListRow =
   | {
@@ -77,6 +106,19 @@ export type ListRow =
       /** The group the row sits under, or null when the list is ungrouped. */
       groupKey: string | null
       item: SearchItem
+      /** Set when the row is a layer inside an expanded stack. */
+      nesting: Nesting | null
+    }
+  | { type: 'stack'; key: string; groupKey: string | null; stack: FoldedStack }
+  /** A layer of an expanded stack that is not one of the loaded rows. */
+  | { type: 'layer'; key: string; groupKey: string | null; layer: StackLayer; nesting: Nesting }
+  /** Stands in for the layers of an expanded stack while it loads, or after it failed to. */
+  | {
+      type: 'stack-status'
+      key: string
+      groupKey: string | null
+      status: 'loading' | 'failed'
+      nesting: Nesting
     }
 
 /**
@@ -329,24 +371,34 @@ export function sortItems(items: SearchItem[], order: SortOrder): SearchItem[] {
  * `Unassigned` section, drawn last.
  */
 export function groupItems(items: SearchItem[], groupBy: GroupBy): ItemGroup[] {
+  return groupEntries(items, groupBy, (item) => item)
+}
+
+/** Groups any kind of entry by the row `itemOf` picks for it. */
+function groupEntries<T>(
+  entries: T[],
+  groupBy: GroupBy,
+  itemOf: (entry: T) => SearchItem,
+): Array<ItemGroup<T>> {
   switch (groupBy) {
     case 'status':
-      return groupByStatus(items)
+      return groupByStatus(entries, itemOf)
     case 'assignee':
-      return groupByAssignee(items)
+      return groupByAssignee(entries, itemOf)
     case 'repository':
-      return groupByRepository(items)
+      return groupByRepository(entries, itemOf)
     default:
       return []
   }
 }
 
-function groupByStatus(items: SearchItem[]): ItemGroup[] {
-  const buckets = new Map<ItemState, SearchItem[]>()
-  for (const item of items) {
-    const bucket = buckets.get(item.state)
-    if (bucket) bucket.push(item)
-    else buckets.set(item.state, [item])
+function groupByStatus<T>(entries: T[], itemOf: (entry: T) => SearchItem): Array<ItemGroup<T>> {
+  const buckets = new Map<ItemState, T[]>()
+  for (const entry of entries) {
+    const { state } = itemOf(entry)
+    const bucket = buckets.get(state)
+    if (bucket) bucket.push(entry)
+    else buckets.set(state, [entry])
   }
 
   return STATUS_ORDER.filter((state) => buckets.has(state)).map((state) => ({
@@ -357,12 +409,16 @@ function groupByStatus(items: SearchItem[]): ItemGroup[] {
   }))
 }
 
-function groupByRepository(items: SearchItem[]): ItemGroup[] {
-  const buckets = new Map<string, SearchItem[]>()
-  for (const item of items) {
-    const bucket = buckets.get(item.repository)
-    if (bucket) bucket.push(item)
-    else buckets.set(item.repository, [item])
+function groupByRepository<T>(
+  entries: T[],
+  itemOf: (entry: T) => SearchItem,
+): Array<ItemGroup<T>> {
+  const buckets = new Map<string, T[]>()
+  for (const entry of entries) {
+    const { repository } = itemOf(entry)
+    const bucket = buckets.get(repository)
+    if (bucket) bucket.push(entry)
+    else buckets.set(repository, [entry])
   }
 
   return [...buckets.keys()].toSorted((a, b) => a.localeCompare(b)).map((repository) => ({
@@ -373,25 +429,26 @@ function groupByRepository(items: SearchItem[]): ItemGroup[] {
   }))
 }
 
-function groupByAssignee(items: SearchItem[]): ItemGroup[] {
-  const buckets = new Map<string, SearchItem[]>()
+function groupByAssignee<T>(entries: T[], itemOf: (entry: T) => SearchItem): Array<ItemGroup<T>> {
+  const buckets = new Map<string, T[]>()
   const avatars = new Map<string, string | null>()
-  const unassigned: SearchItem[] = []
+  const unassigned: T[] = []
 
-  for (const item of items) {
-    if (item.assignees.length === 0) {
-      unassigned.push(item)
+  for (const entry of entries) {
+    const { assignees } = itemOf(entry)
+    if (assignees.length === 0) {
+      unassigned.push(entry)
       continue
     }
-    for (const assignee of item.assignees) {
+    for (const assignee of assignees) {
       const bucket = buckets.get(assignee.login)
-      if (bucket) bucket.push(item)
-      else buckets.set(assignee.login, [item])
+      if (bucket) bucket.push(entry)
+      else buckets.set(assignee.login, [entry])
       if (!avatars.has(assignee.login)) avatars.set(assignee.login, assignee.avatarUrl)
     }
   }
 
-  const groups: ItemGroup[] = [...buckets.keys()]
+  const groups: Array<ItemGroup<T>> = [...buckets.keys()]
     .toSorted((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
     .map((login) => ({
       key: `assignee:${login}`,
@@ -410,46 +467,205 @@ function groupByAssignee(items: SearchItem[]): ItemGroup[] {
 }
 
 /**
+ * Folds every stack with two or more loaded layers into one entry, in the
+ * slot of its first layer in list order. A stack with one loaded layer stays a
+ * plain row.
+ *
+ * Folds pinned and unpinned rows together, so a layer from a later page or
+ * from Pinned joins the same stack and never shows on its own. A stack lands
+ * in `pinned` when any loaded layer is pinned, at its earliest pin, since
+ * every pinned row comes first.
+ */
+export function foldStacks(
+  pinned: SearchItem[],
+  rest: SearchItem[],
+): { pinned: ListEntry[]; rest: ListEntry[] } {
+  const all = [...pinned, ...rest]
+  const loaded = new Map<string, Map<string, SearchItem>>()
+  for (const item of all) {
+    if (!item.stack) continue
+    const layers = loaded.get(item.stack.id) ?? new Map<string, SearchItem>()
+    if (!layers.has(item.id)) layers.set(item.id, item)
+    loaded.set(item.stack.id, layers)
+  }
+
+  const folded: { pinned: ListEntry[]; rest: ListEntry[] } = { pinned: [], rest: [] }
+  const placed = new Set<string>()
+  all.forEach((item, index) => {
+    const target = index < pinned.length ? folded.pinned : folded.rest
+    const stackId = item.stack?.id
+    const layers = stackId ? loaded.get(stackId) : undefined
+    if (!stackId || !layers || layers.size < 2) {
+      target.push({ type: 'item', item })
+      return
+    }
+    if (placed.has(stackId)) return
+    placed.add(stackId)
+
+    const ordered = [...layers.values()].toSorted(
+      (a, b) => (a.stack?.position ?? 0) - (b.stack?.position ?? 0),
+    )
+    target.push({ type: 'stack', stack: { id: stackId, lead: ordered[0], layers: ordered } })
+  })
+  return folded
+}
+
+function leadOf(entry: ListEntry): SearchItem {
+  return entry.type === 'item' ? entry.item : entry.stack.lead
+}
+
+function entryKey(entry: ListEntry): string {
+  return entry.type === 'item' ? entry.item.id : `stack:${entry.stack.id}`
+}
+
+function entryRow(entry: ListEntry, key: string, groupKey: string | null): ListRow {
+  return entry.type === 'item'
+    ? { type: 'item', key, groupKey, item: entry.item, nesting: null }
+    : { type: 'stack', key, groupKey, stack: entry.stack }
+}
+
+/** How many pull requests and issues the entries stand for. */
+function countOf(entries: ListEntry[]): number {
+  return entries.reduce(
+    (total, entry) => total + (entry.type === 'item' ? 1 : entry.stack.layers.length),
+    0,
+  )
+}
+
+/**
  * Flattens the pinned and unpinned rows into the single list of headers and
- * items the scroller draws.
+ * rows the scroller draws, after folding stacks with `foldStacks`.
  *
  * Without a grouping the rows pass straight through, pinned ones first and
  * headerless, exactly as an ungrouped list has always looked. With one, the
  * pinned rows keep their place at the top under a `Pinned` header of their
  * own, and the rest fall into their sections below — a pinned row is never
- * also drawn among them.
+ * also drawn among them. A stack joins the section of its lead layer, and a
+ * header counts the pull requests and issues under it.
  */
 export function buildRows(
   pinned: SearchItem[],
   rest: SearchItem[],
   groupBy: GroupBy,
 ): ListRow[] {
+  const folded = foldStacks(pinned, rest)
   if (groupBy === 'none') {
-    return [...pinned, ...rest].map((item) => ({ type: 'item', key: item.id, groupKey: null, item }))
+    return [...folded.pinned, ...folded.rest].map((entry) => entryRow(entry, entryKey(entry), null))
   }
 
   const rows: ListRow[] = []
 
-  if (pinned.length > 0) {
-    rows.push({ type: 'header', key: 'header:pinned', groupKey: 'pinned', label: 'Pinned', avatarUrl: null, count: pinned.length })
-    for (const item of pinned) rows.push({ type: 'item', key: `pinned:${item.id}`, groupKey: 'pinned', item })
+  if (folded.pinned.length > 0) {
+    rows.push({ type: 'header', key: 'header:pinned', groupKey: 'pinned', label: 'Pinned', avatarUrl: null, count: countOf(folded.pinned) })
+    for (const entry of folded.pinned) rows.push(entryRow(entry, `pinned:${entryKey(entry)}`, 'pinned'))
   }
 
-  for (const group of groupItems(rest, groupBy)) {
+  for (const group of groupEntries(folded.rest, groupBy, leadOf)) {
     rows.push({
       type: 'header',
       key: `header:${group.key}`,
       groupKey: group.key,
       label: group.label,
       avatarUrl: group.avatarUrl,
-      count: group.items.length,
+      count: countOf(group.items),
     })
-    for (const item of group.items) {
-      rows.push({ type: 'item', key: `${group.key}:${item.id}`, groupKey: group.key, item })
+    for (const entry of group.items) {
+      rows.push(entryRow(entry, `${group.key}:${entryKey(entry)}`, group.key))
     }
   }
 
   return rows
+}
+
+/**
+ * The rows of one expanded stack, top layer first. Loaded layers are full
+ * `item` rows and the rest are compact `layer` rows. Until the whole stack
+ * loads only the loaded layers show, followed by a loading or failure row.
+ */
+function stackRows(
+  row: Extract<ListRow, { type: 'stack' }>,
+  view: StackView | undefined,
+  shown: ReadonlySet<string>,
+): ListRow[] {
+  const loaded = new Map(row.stack.layers.map((item) => [item.id, item]))
+  const taken = new Set(row.stack.layers.map((item) => item.stack?.position))
+  const layers: Array<{ position: number; item: SearchItem } | { position: number; layer: StackLayer }> = []
+  for (const layer of view?.stack?.layers ?? []) {
+    const item = loaded.get(layer.id)
+    if (item) {
+      layers.push({ position: layer.position, item })
+      loaded.delete(layer.id)
+      continue
+    }
+    // An older copy of the stack can list a pull request at a position a loaded
+    // row now holds, or one that shows in another row; neither shows twice.
+    if (taken.has(layer.position) || shown.has(layer.id)) continue
+    layers.push({ position: layer.position, layer })
+  }
+  // Loaded layers a stale copy of the stack does not list still show, at the
+  // position their own row reports.
+  for (const item of loaded.values()) layers.push({ position: item.stack?.position ?? 0, item })
+  layers.sort((a, b) => b.position - a.position)
+
+  const status = view?.isFailed && !view.isLoading ? 'failed' : view?.stack ? null : 'loading'
+  const count = layers.length + (status ? 1 : 0)
+  const nesting = (position: number | null, index: number): Nesting => ({
+    stackId: row.stack.id,
+    position,
+    isFirst: index === 0,
+    isLast: index === count - 1,
+  })
+
+  const rows: ListRow[] = layers.map((entry, index) =>
+    'item' in entry
+      ? {
+          type: 'item',
+          key: `${row.key}/${entry.item.id}`,
+          groupKey: row.groupKey,
+          item: entry.item,
+          nesting: nesting(entry.position, index),
+        }
+      : {
+          type: 'layer',
+          key: `${row.key}/${entry.layer.id}`,
+          groupKey: row.groupKey,
+          layer: entry.layer,
+          nesting: nesting(entry.position, index),
+        },
+  )
+  if (status) {
+    rows.push({
+      type: 'stack-status',
+      key: `${row.key}/status`,
+      groupKey: row.groupKey,
+      status,
+      nesting: nesting(null, layers.length),
+    })
+  }
+  return rows
+}
+
+/** Puts the rows of each expanded stack right after its stack row. */
+export function expandStacks(
+  rows: ListRow[],
+  expanded: ReadonlySet<string>,
+  views: ReadonlyMap<string, StackView>,
+): ListRow[] {
+  if (expanded.size === 0) return rows
+  const shown = new Set(
+    rows.flatMap((row) =>
+      row.type === 'item'
+        ? [row.item.id]
+        : row.type === 'stack'
+          ? row.stack.layers.map((layer) => layer.id)
+          : [],
+    ),
+  )
+  return rows.flatMap((row) =>
+    row.type === 'stack' && expanded.has(row.stack.id)
+      ? [row, ...stackRows(row, views.get(row.stack.id), shown)]
+      : [row],
+  )
 }
 
 /**

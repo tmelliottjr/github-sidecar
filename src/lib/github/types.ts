@@ -46,39 +46,69 @@ export interface Assignee {
   avatarUrl: string | null
 }
 
-/** One layer of a stack, as much of it as a row needs to list its neighbours. */
-export interface StackEntry {
+/**
+ * Where a pull request sits in its stack: a chain of pull requests where each
+ * one targets the branch of the pull request below it. Read with the search.
+ */
+export interface StackMembership {
+  /** `PullRequestStack` node id. Keys the stack everywhere. */
+  id: string
+  /** Identifies the stack within its repository. */
+  number: number
+  size: number
+  /** The branch the whole stack lands on, usually the default branch. */
+  baseRefName: string
+  /** 1 is the layer closest to the base branch. */
+  position: number
+}
+
+/** One layer of a whole stack. */
+export interface StackLayer {
+  /** Pull request node id. */
   id: string
   number: number
   title: string
   url: string
   repository: string
   state: ItemState
-  reviewDecision: ReviewDecision | null
   /** 1 is the layer closest to the base branch. */
   position: number
 }
 
-/**
- * A pull request's membership of a stack: a chain of pull requests where each
- * one targets the branch of the pull request below it.
- */
-export interface StackInfo {
-  /** Identifies the stack within its repository. */
+/** A whole stack, read by id when the reader goes to open one. */
+export interface Stack {
+  /** `PullRequestStack` node id. */
+  id: string
   number: number
   size: number
-  /** The branch the whole stack lands on, usually the default branch. */
   baseRefName: string
-  /** This pull request's own position, counting from the base branch. */
-  position: number
-  /** Ordered from the base branch up. Can be shorter than `size`. */
-  entries: StackEntry[]
+  /** Every layer the token can read, from the base branch up. */
+  layers: StackLayer[]
+  /** When the request that read it started. A newer read replaces an older one. */
+  fetchedAt: number
+}
+
+/** The review decision of a stack layer that is not one of the loaded rows. */
+export interface LayerReview {
+  /** Pull request node id. */
+  id: string
+  /** Null where the pull request has no review decision. */
+  reviewDecision: ReviewDecision | null
+  /** When the request that read it started. A newer read replaces an older one. */
+  fetchedAt: number
+}
+
+/** A loaded row in a stack, which a cached copy of that stack has to agree with. */
+export interface StackedRow {
+  /** Pull request node id. */
+  id: string
+  stack: StackMembership
 }
 
 /**
  * How far a row has got in the second of the two requests that build it.
  *
- * The costly half of a row — review decision, CI rollup, merge state, stack —
+ * The costly half of a row — review decision, CI rollup, merge state —
  * is asked for separately, so a row exists on screen before those are known.
  * `failed` is kept apart from `ready` because a row that has no red mark and a
  * row whose checks could not be read look identical otherwise, and only one of
@@ -102,7 +132,6 @@ export interface ItemEnrichment {
   checkCount: number | null
   checksRead: number
   mergeState: MergeState | null
-  stack: StackInfo | null
 }
 
 export interface SearchItem {
@@ -142,7 +171,7 @@ export interface SearchItem {
   /** How many of them this query actually read; the rest are unknown. */
   checksRead: number
   /** Null for issues, and for pull requests that are not part of a stack. */
-  stack: StackInfo | null
+  stack: StackMembership | null
   /**
    * Whether the fields above it that come from the second request have
    * arrived. Issues are `ready` on sight: none of those fields apply to them.

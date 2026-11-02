@@ -62,7 +62,6 @@ function enrichment(overrides: Partial<ItemEnrichment> = {}): ItemEnrichment {
     checkCount: 3,
     checksRead: 3,
     mergeState: 'behind',
-    stack: null,
     ...overrides,
   }
 }
@@ -180,6 +179,13 @@ describe('carryEnrichment', () => {
 
     assert.equal(carried.items[0].enrichment, 'failed')
     assert.equal(carried.items[0].checkState, 'FAILURE')
+  })
+
+  it('keeps stack membership from the fresh page', () => {
+    const membership = { id: 'S_1', number: 1, size: 3, baseRefName: 'main', position: 2 }
+    const carried = carryEnrichment(page([item({ stack: membership })]), previous)
+
+    assert.deepEqual(carried.items[0].stack, membership)
   })
 
   it('leaves the fresh page as it is when there is nothing to carry from', () => {

@@ -1,4 +1,4 @@
-import type { SearchItem, StackInfo } from './github/types'
+import type { SearchItem, Stack } from './github/types'
 
 /**
  * Turning rows into text someone else can read.
@@ -53,14 +53,14 @@ export function itemMarkdown(item: SearchItem): string {
  * built in, which is the order anyone reading them will want to review them.
  * The row this was copied from is included: a stack is only legible as a whole.
  */
-export function stackUrls(stack: StackInfo): string {
-  return stack.entries.map((entry) => entry.url).join('\n')
+export function stackUrls(stack: Stack): string {
+  return stack.layers.map((layer) => layer.url).join('\n')
 }
 
-export function stackMarkdown(stack: StackInfo): string {
-  return stack.entries
-    .map((entry) =>
-      markdownLink(`${entry.title}${stackSuffix(entry.position, stack.size)}`, entry.url),
+export function stackMarkdown(stack: Stack): string {
+  return stack.layers
+    .map((layer) =>
+      markdownLink(`${layer.title}${stackSuffix(layer.position, stack.size)}`, layer.url),
     )
     .join('\n')
 }

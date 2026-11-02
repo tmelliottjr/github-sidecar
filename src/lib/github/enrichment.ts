@@ -34,7 +34,6 @@ export function applyEnrichment(item: SearchItem, enrichment: ItemEnrichment): S
     // `mergeable` reached the row with the search and may already have found a
     // conflict; this is the fuller answer and replaces it outright.
     mergeState: enrichment.mergeState,
-    stack: enrichment.stack,
     enrichment: 'ready',
   }
 }
@@ -83,7 +82,6 @@ function costlyHalf(item: SearchItem): ItemEnrichment {
     checkCount: item.checkCount,
     checksRead: item.checksRead,
     mergeState: item.mergeState,
-    stack: item.stack,
   }
 }
 

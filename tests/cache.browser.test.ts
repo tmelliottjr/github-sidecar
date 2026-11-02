@@ -168,4 +168,54 @@ describe('indexedDb cache store', { concurrency: false, skip }, () => {
 
     assert.deepEqual(remaining, { old: false, fresh: true })
   })
+
+  it('keeps the newer copy of a stack, and reads only the stacks it holds', async () => {
+    const result = await page.evaluate(async () => {
+      const { indexedDbStackStore } = (globalThis as never as { CacheModule: any }).CacheModule
+      const stack = (number: number, fetchedAt: number) => ({
+        id: 'STACK_1',
+        number,
+        size: 1,
+        baseRefName: 'main',
+        layers: [],
+        fetchedAt,
+      })
+
+      await indexedDbStackStore.write([stack(2, 200)])
+      const kept = await indexedDbStackStore.write([stack(1, 100)])
+      const read = await indexedDbStackStore.read(['STACK_1', 'missing'])
+      const replaced = await indexedDbStackStore.write([stack(3, 300)])
+
+      return {
+        kept: kept.map((copy: { number: number }) => copy.number),
+        read: read.map((copy: { number: number }) => copy.number),
+        replaced: replaced.map((copy: { number: number }) => copy.number),
+      }
+    })
+
+    assert.deepEqual(result, { kept: [2], read: [2], replaced: [3] })
+  })
+
+  it('prunes only stacks older than the cutoff', async () => {
+    const remaining = await page.evaluate(async () => {
+      const { indexedDbStackStore } = (globalThis as never as { CacheModule: any }).CacheModule
+      const now = Date.now()
+      const stack = (id: string, fetchedAt: number) => ({
+        id,
+        number: 1,
+        size: 1,
+        baseRefName: 'main',
+        layers: [],
+        fetchedAt,
+      })
+
+      await indexedDbStackStore.write([stack('old', now - 60_000), stack('new', now - 1000)])
+      await indexedDbStackStore.prune(10_000)
+
+      const read = await indexedDbStackStore.read(['old', 'new'])
+      return read.map((copy: { id: string }) => copy.id)
+    })
+
+    assert.deepEqual(remaining, ['new'])
+  })
 })

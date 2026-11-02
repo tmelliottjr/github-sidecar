@@ -5,22 +5,17 @@ import type {
   ItemEnrichment,
   ItemState,
   Label,
+  LayerReview,
   MergeState,
   ReviewDecision,
   SearchItem,
   SearchPage,
-  StackEntry,
-  StackInfo,
+  Stack,
+  StackLayer,
+  StackMembership,
 } from './types'
 
 const GITHUB_GRAPHQL_ENDPOINT = 'https://api.github.com/graphql'
-
-/**
- * How many layers of a stack are read per pull request. Stacks deeper than
- * this are rare, and `totalCount` still reports the real size, so the row can
- * say the list is partial rather than quietly lying about it.
- */
-const STACK_ENTRIES = 20
 
 /**
  * Avatars are drawn at 14px, so this is a 2× copy for the sharpest screens.
@@ -60,34 +55,23 @@ let previewFieldsSupported = true
 /** Opts into every preview the query asks for; ordinary JSON either way. */
 const PREVIEW_ACCEPT = 'application/vnd.github.merge-info-preview+json'
 
-const PREVIEW_FIELDS = /* GraphQL */ `
+/**
+ * Where a pull request sits in its stack, read with the search. Measured on
+ * `org:` searches at no cost to a thirty-row page.
+ */
+const STACK_MEMBERSHIP_FIELDS = /* GraphQL */ `
   stackEntry {
     position
   }
   stack {
+    id
     number
     size
     baseRefName
-    entries(first: ${STACK_ENTRIES}) {
-      totalCount
-      nodes {
-        position
-        pullRequest {
-          id
-          number
-          title
-          url
-          state
-          isDraft
-          isInMergeQueue
-          reviewDecision
-          repository {
-            nameWithOwner
-          }
-        }
-      }
-    }
   }
+`
+
+const PREVIEW_FIELDS = /* GraphQL */ `
   mergeStateStatus
 `
 
@@ -140,7 +124,7 @@ const issueFields = /* GraphQL */ `
  * one that knows about conflicts — so the mark that matters most is on screen
  * with the first request rather than the second.
  */
-const PULL_REQUEST_PRIMARY_FIELDS = /* GraphQL */ `
+const pullRequestPrimaryFields = (withPreview: boolean) => /* GraphQL */ `
   id
   number
   title
@@ -178,11 +162,12 @@ const PULL_REQUEST_PRIMARY_FIELDS = /* GraphQL */ `
       avatarUrl(size: ${AVATAR_SIZE})
     }
   }
+  ${withPreview ? STACK_MEMBERSHIP_FIELDS : ''}
 `
 
 /**
  * The half a search cannot afford. Measured against `org:` searches spanning
- * several repositories, these four fields cost roughly four times what every
+ * several repositories, these fields cost roughly four times what every
  * other field on a row costs put together, and `mergeStateStatus` alone is
  * enough to take a thirty-row page past GitHub's ten-second limit — which
  * arrives as a 502 from the proxy in front of it, not as a GraphQL error.
@@ -225,7 +210,7 @@ const itemFields = (withPreview: boolean) => /* GraphQL */ `
   ${issueFields}
 
   fragment PullRequestFields on PullRequest {
-    ${PULL_REQUEST_PRIMARY_FIELDS}
+    ${pullRequestPrimaryFields(withPreview)}
     ${pullRequestCostlyFields(withPreview)}
   }
 `
@@ -248,11 +233,11 @@ const itemFields = (withPreview: boolean) => /* GraphQL */ `
  * except that a space between `repo:`, `org:`, or `user:` qualifiers now means
  * AND where it used to mean OR.
  */
-export const SEARCH_QUERY = /* GraphQL */ `
+export const searchQuery = (withPreview = true) => /* GraphQL */ `
   ${issueFields}
 
   fragment PullRequestPrimaryFields on PullRequest {
-    ${PULL_REQUEST_PRIMARY_FIELDS}
+    ${pullRequestPrimaryFields(withPreview)}
   }
 
   query SidebarSearch($q: String!, $first: Int!, $after: String) {
@@ -270,6 +255,8 @@ export const SEARCH_QUERY = /* GraphQL */ `
     }
   }
 `
+
+export const SEARCH_QUERY = searchQuery()
 
 /**
  * Reads the costly half of rows the search has already listed, by node id.
@@ -314,6 +301,78 @@ export const itemQuery = (withPreview = true) => /* GraphQL */ `
 
 export const ITEM_QUERY = itemQuery()
 
+/** How many layers one request reads. Deeper stacks page through the rest. */
+const STACK_PAGE = 100
+
+/** `reviewDecision` is left out: it makes this request three to five times slower. */
+const STACK_ENTRY_FIELDS = /* GraphQL */ `
+  totalCount
+  pageInfo {
+    hasNextPage
+    endCursor
+  }
+  nodes {
+    position
+    pullRequest {
+      id
+      number
+      title
+      url
+      state
+      isDraft
+      isInMergeQueue
+      repository {
+        nameWithOwner
+      }
+    }
+  }
+`
+
+/** Reads whole stacks by node id. No field looks a stack up by number. */
+export const STACKS_QUERY = /* GraphQL */ `
+  query SidebarStacks($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequestStack {
+        id
+        number
+        size
+        baseRefName
+        entries(first: ${STACK_PAGE}) {
+          ${STACK_ENTRY_FIELDS}
+        }
+      }
+    }
+  }
+`
+
+/** Reads review decisions of stack layers that are not loaded rows, by node id. */
+export const LAYER_REVIEWS_QUERY = /* GraphQL */ `
+  query SidebarLayerReviews($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequest {
+        id
+        reviewDecision
+      }
+    }
+  }
+`
+
+/** Reads the next page of layers of one stack. */
+export const STACK_ENTRIES_QUERY = /* GraphQL */ `
+  query SidebarStackEntries($id: ID!, $after: String!) {
+    node(id: $id) {
+      __typename
+      ... on PullRequestStack {
+        entries(first: ${STACK_PAGE}, after: $after) {
+          ${STACK_ENTRY_FIELDS}
+        }
+      }
+    }
+  }
+`
+
 /**
  * One entry in a commit's check rollup: either a check run from the Checks
  * API or a commit status from the older one. They name themselves and their
@@ -343,7 +402,6 @@ interface StackEntryNode {
     state: string
     isDraft?: boolean
     isInMergeQueue?: boolean
-    reviewDecision?: ReviewDecision | null
     repository: { nameWithOwner: string }
   } | null
 }
@@ -386,12 +444,7 @@ interface GraphQLNode {
     }> | null
   } | null
   stackEntry?: { position: number } | null
-  stack?: {
-    number: number
-    size: number
-    baseRefName: string
-    entries: { totalCount: number; nodes: Array<StackEntryNode | null> | null } | null
-  } | null
+  stack?: { id: string; number: number; size: number; baseRefName: string } | null
 }
 
 export interface GraphQLError {
@@ -404,6 +457,41 @@ interface ItemResponse {
   data?: {
     repository: { issueOrPullRequest: GraphQLNode | null } | null
   } | null
+  errors?: GraphQLError[]
+}
+
+interface StackEntriesNode {
+  pageInfo: { hasNextPage: boolean; endCursor: string | null }
+  nodes: Array<StackEntryNode | null> | null
+}
+
+interface StackNode {
+  __typename: 'PullRequestStack'
+  id: string
+  number: number
+  size: number
+  baseRefName: string
+  entries: StackEntriesNode | null
+}
+
+interface StacksResponse {
+  data?: { nodes: Array<StackNode | Record<string, never> | null> | null } | null
+  errors?: GraphQLError[]
+}
+
+interface LayerReviewsResponse {
+  data?: {
+    nodes: Array<
+      | { __typename: 'PullRequest'; id: string; reviewDecision: ReviewDecision | null }
+      | Record<string, never>
+      | null
+    > | null
+  } | null
+  errors?: GraphQLError[]
+}
+
+interface StackEntriesResponse {
+  data?: { node: Pick<StackNode, '__typename' | 'entries'> | null } | null
   errors?: GraphQLError[]
 }
 
@@ -430,8 +518,6 @@ type EnrichmentNode = Pick<
   | 'mergeStateStatus'
   | 'reviewDecision'
   | 'commits'
-  | 'stack'
-  | 'stackEntry'
 >
 
 interface EnrichResponse {
@@ -501,46 +587,17 @@ function toState(node: GraphQLNode): ItemState {
   return toPullRequestState(node)
 }
 
-/**
- * Flattens a pull request's stack membership. Position comes from the node's
- * own `stackEntry` rather than from its place in `entries`, so a truncated or
- * partially readable stack still reports where this row sits.
- */
-function toStack(node: Pick<GraphQLNode, 'stack' | 'stackEntry'>): StackInfo | null {
-  const stack = node.stack
+/** Flattens where a pull request sits in its stack. */
+function toMembership(node: Pick<GraphQLNode, 'stack' | 'stackEntry'>): StackMembership | null {
+  const { stack } = node
   const position = node.stackEntry?.position
   if (!stack || position === undefined) return null
-
-  const byPosition = new Map<number, StackEntry>()
-  for (const entry of stack.entries?.nodes ?? []) {
-    const pullRequest = entry?.pullRequest
-    if (!pullRequest) continue
-    byPosition.set(entry.position, {
-      id: pullRequest.id,
-      number: pullRequest.number,
-      title: pullRequest.title,
-      url: pullRequest.url,
-      repository: pullRequest.repository.nameWithOwner,
-      state: toPullRequestState(pullRequest),
-      reviewDecision: pullRequest.reviewDecision ?? null,
-      position: entry.position,
-    })
-  }
-
-  // Walked by position rather than by the order the nodes arrived in, so the
-  // list always reads from the base branch up.
-  const entries: StackEntry[] = []
-  for (let layer = 1; layer <= stack.size; layer += 1) {
-    const entry = byPosition.get(layer)
-    if (entry) entries.push(entry)
-  }
-
   return {
+    id: stack.id,
     number: stack.number,
     size: stack.size,
     baseRefName: stack.baseRefName,
     position,
-    entries,
   }
 }
 
@@ -632,7 +689,6 @@ function toEnrichment(node: EnrichmentNode): ItemEnrichment {
     checkCount: rollup?.contexts?.totalCount ?? null,
     checksRead: rollup?.contexts?.nodes?.length ?? 0,
     mergeState: toMergeState(node),
-    stack: toStack(node),
   }
 }
 
@@ -672,7 +728,7 @@ function normalise(node: GraphQLNode, pending: boolean): SearchItem {
     // What was read, not what failed: the query keeps only the red ones, so
     // the failing list alone cannot say how much of the rollup was seen.
     checksRead: rollup?.contexts?.nodes?.length ?? 0,
-    stack: toStack(node),
+    stack: toMembership(node),
     // None of the costly fields exist on an issue, so there is nothing for a
     // second request to add and nothing to keep a space on screen for.
     enrichment: pending && node.__typename === 'PullRequest' ? 'pending' : 'ready',
@@ -801,7 +857,7 @@ export interface GraphQLPayload {
 }
 
 /** Which of the panel's questions a request was asking. */
-export type ApiOperation = 'search' | 'enrich' | 'item'
+export type ApiOperation = 'search' | 'enrich' | 'item' | 'stacks' | 'layer-reviews'
 
 /**
  * One request, as it went.
@@ -984,20 +1040,59 @@ async function postWithPreviewFallback<T extends GraphQLPayload>(
   }
 }
 
-/** Test hook: forgets that a host rejected the preview fields. */
+/**
+ * Searches that timed out while asking for stack membership. The worker asks
+ * them without it from then on, so they lose membership instead of the list.
+ */
+const searchesWithoutMembership = new Set<string>()
+
+/** Test hook: forgets rejected preview fields and searches that timed out. */
 export function resetPreviewSupport(): void {
   previewFieldsSupported = true
+  searchesWithoutMembership.clear()
+}
+
+/** A 502 or 504 is the proxy in front of GraphQL giving up at ten seconds. */
+function isTimeout(error: unknown): boolean {
+  return error instanceof GitHubApiError && (error.status === 502 || error.status === 504)
+}
+
+/**
+ * Asks for stack membership with the rows unless this host or this query
+ * cannot take it. Reads which query failed from the error itself, since
+ * `previewFieldsSupported` can change while the request is out.
+ */
+async function postSearch(
+  token: string,
+  variables: { q: string; first: number; after: string | null },
+  call: { operation: ApiOperation; detail: string },
+): Promise<GraphQLResponse> {
+  const withoutMembership = () =>
+    post<GraphQLResponse>(token, { query: searchQuery(false), variables }, call)
+
+  if (!previewFieldsSupported || searchesWithoutMembership.has(variables.q)) {
+    return withoutMembership()
+  }
+  try {
+    return await post<GraphQLResponse>(token, { query: searchQuery(true), variables }, call)
+  } catch (error) {
+    if (isUnknownPreviewField(error)) {
+      previewFieldsSupported = false
+      return withoutMembership()
+    }
+    if (!isTimeout(error)) throw error
+    searchesWithoutMembership.add(variables.q)
+    return withoutMembership()
+  }
 }
 
 export async function searchIssues(
   token: string,
   { q, first, after }: SearchParams,
 ): Promise<SearchPage> {
-  // No preview fallback: the search no longer asks for a preview field. The
-  // costly half of a row, which is where they all live, is read separately.
-  const body = await post<GraphQLResponse>(
+  const body = await postSearch(
     token,
-    { query: SEARCH_QUERY, variables: { q, first, after: after ?? null } },
+    { q, first, after: after ?? null },
     { operation: 'search', detail: q },
   )
   if (!body.data) {
@@ -1092,10 +1187,174 @@ export async function enrichItems(
   }
 }
 
+export interface LayerReviewsResult {
+  reviews: LayerReview[]
+  /** Pull requests GitHub would not answer for. */
+  failedIds: string[]
+  error: string | null
+}
+
+/**
+ * Reads the review decision of each pull request by node id. Each review
+ * carries the time this call started. Throws only where the request failed.
+ */
+export async function fetchLayerReviews(
+  token: string,
+  ids: readonly string[],
+): Promise<LayerReviewsResult> {
+  if (ids.length === 0) return { reviews: [], failedIds: [], error: null }
+
+  const fetchedAt = Date.now()
+  const body = await post<LayerReviewsResponse>(
+    token,
+    { query: LAYER_REVIEWS_QUERY, variables: { ids: [...ids] } },
+    { operation: 'layer-reviews', detail: `${ids.length} layers` },
+  )
+
+  const reviews: LayerReview[] = []
+  for (const node of body.data?.nodes ?? []) {
+    if (!node || !('__typename' in node) || node.__typename !== 'PullRequest') continue
+    reviews.push({ id: node.id, reviewDecision: node.reviewDecision ?? null, fetchedAt })
+  }
+  const answered = new Set(reviews.map((review) => review.id))
+  const failedIds = ids.filter((id) => !answered.has(id))
+  const errors = body.errors ?? []
+
+  return {
+    reviews,
+    failedIds,
+    error:
+      errors.length > 0
+        ? describeGraphQLErrors(errors)
+        : failedIds.length > 0
+          ? 'GitHub did not answer for every layer.'
+          : null,
+  }
+}
+
 export interface ItemRef {
   /** `owner/name`, exactly as it is stored on a row. */
   repository: string
   number: number
+}
+
+export interface StacksResult {
+  stacks: Stack[]
+  /** Stacks GitHub would not answer for in full. Nothing partial is returned. */
+  failedIds: string[]
+  /** Why, in one line, where anything was left out. */
+  error: string | null
+}
+
+function isStackNode(node: StackNode | Record<string, never> | null): node is StackNode {
+  return node !== null && '__typename' in node && node.__typename === 'PullRequestStack'
+}
+
+function toLayers(entries: ReadonlyArray<StackEntryNode | null>): StackLayer[] {
+  const layers: StackLayer[] = []
+  for (const entry of entries) {
+    const pullRequest = entry?.pullRequest
+    if (!pullRequest) continue
+    layers.push({
+      id: pullRequest.id,
+      number: pullRequest.number,
+      title: pullRequest.title,
+      url: pullRequest.url,
+      repository: pullRequest.repository.nameWithOwner,
+      state: toPullRequestState(pullRequest),
+      position: entry.position,
+    })
+  }
+  return layers.toSorted((a, b) => a.position - b.position)
+}
+
+/** Reads the layers past the first page of one stack, a page at a time. */
+async function readMoreEntries(
+  token: string,
+  id: string,
+  after: string,
+): Promise<Array<StackEntryNode | null>> {
+  const entries: Array<StackEntryNode | null> = []
+  let cursor: string | null = after
+  while (cursor) {
+    // Each page needs the cursor from the one before it.
+    // eslint-disable-next-line no-await-in-loop
+    const body: StackEntriesResponse = await post<StackEntriesResponse>(
+      token,
+      { query: STACK_ENTRIES_QUERY, variables: { id, after: cursor } },
+      { operation: 'stacks', detail: `${id} after ${cursor}` },
+    )
+    const page = body.data?.node?.entries
+    if (!page) throw new GitHubApiError(`GitHub did not return every layer of stack ${id}.`)
+    entries.push(...(page.nodes ?? []))
+    cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null
+  }
+  return entries
+}
+
+/**
+ * Reads whole stacks by node id, every layer of each.
+ *
+ * Throws only where the first request failed. A stack the token cannot read,
+ * or one whose later page of layers fails, comes back in `failedIds`, so a
+ * caller never stores half a stack. Each stack carries the time this call
+ * started, so a slower, older read cannot replace a newer one.
+ */
+export async function fetchStacks(token: string, ids: readonly string[]): Promise<StacksResult> {
+  if (ids.length === 0) return { stacks: [], failedIds: [], error: null }
+
+  const fetchedAt = Date.now()
+  const body = await post<StacksResponse>(
+    token,
+    { query: STACKS_QUERY, variables: { ids: [...ids] } },
+    { operation: 'stacks', detail: `${ids.length} stacks` },
+  )
+
+  const stacks: Stack[] = []
+  const failedIds: string[] = []
+  const errors = body.errors?.length ? [describeGraphQLErrors(body.errors)] : []
+
+  for (const node of body.data?.nodes ?? []) {
+    if (!isStackNode(node)) continue
+    if (!node.entries) {
+      failedIds.push(node.id)
+      continue
+    }
+
+    const entries = [...(node.entries.nodes ?? [])]
+    const { hasNextPage, endCursor } = node.entries.pageInfo
+    if (hasNextPage && endCursor) {
+      try {
+        // One stack at a time: GitHub queues a token's requests either way.
+        // eslint-disable-next-line no-await-in-loop
+        entries.push(...(await readMoreEntries(token, node.id, endCursor)))
+      } catch (error) {
+        failedIds.push(node.id)
+        errors.push(error instanceof Error ? error.message : String(error))
+        continue
+      }
+    }
+
+    stacks.push({
+      id: node.id,
+      number: node.number,
+      size: node.size,
+      baseRefName: node.baseRefName,
+      layers: toLayers(entries),
+      fetchedAt,
+    })
+  }
+
+  // `nodes(ids:)` answers null for a stack this token cannot read.
+  const answered = new Set([...stacks.map((stack) => stack.id), ...failedIds])
+  for (const id of ids) if (!answered.has(id)) failedIds.push(id)
+
+  return {
+    stacks,
+    failedIds,
+    error:
+      errors[0] ?? (failedIds.length > 0 ? 'GitHub did not answer for every stack.' : null),
+  }
 }
 
 /**

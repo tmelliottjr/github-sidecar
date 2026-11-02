@@ -52,6 +52,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Hint } from '@/components/ui/tooltip'
+import { useStack } from '@/hooks/use-stacks'
 import { copyLink, copyText } from '@/lib/clipboard'
 import { itemMarkdown, stackMarkdown, stackUrls } from '@/lib/links'
 import {
@@ -65,7 +66,7 @@ import {
   type ReminderOverrides,
   type ReminderState,
 } from '@/lib/attention'
-import type { SearchItem } from '@/lib/github/types'
+import type { SearchItem, Stack } from '@/lib/github/types'
 import { cn, relativeTime } from '@/lib/utils'
 
 /** Row padding (10px) plus the state disc (28px) and the gap after it (10px). */
@@ -76,7 +77,7 @@ const MARKS_INDENT = 'pl-12'
  * inside can match them: label discs ring themselves in the surface, and the
  * gray chips swap to the page color whenever the row itself turns gray.
  */
-const SURFACES = cn(
+export const SURFACES = cn(
   '[--row-surface:var(--color-background)] [--row-chip:var(--color-muted)]',
   'hover:[--row-surface:var(--color-accent)] hover:[--row-chip:var(--color-background)]',
   'has-[:focus-visible]:[--row-surface:var(--color-accent)] has-[:focus-visible]:[--row-chip:var(--color-background)]',
@@ -88,6 +89,8 @@ interface Props {
   isPinned: boolean
   /** Whether this row is the page the tab is showing. */
   isCurrent: boolean
+  /** Whether the row is a layer inside an expanded stack, which already shows the stack. */
+  isNested: boolean
   isStackOpen: boolean
   /** What has changed since the reader last looked; empty when it is off. */
   changes: readonly ChangeKind[]
@@ -110,6 +113,10 @@ interface Props {
   onRefresh: (item: SearchItem) => Promise<void>
   onTogglePin: (item: SearchItem) => void
   onToggleStack: (item: SearchItem) => void
+  /** Loads the whole stack by id, from the worker cache when it can. */
+  onLoadStack: (id: string) => Promise<Stack>
+  /** Loads the whole stack, then review state for layers that are not loaded rows. */
+  onOpenStack: (id: string) => Promise<void>
   onToggleChecks: (item: SearchItem) => void
   onMarkSeen: (item: SearchItem) => void
   onRemind: (item: SearchItem, choice: ReminderChoice) => void
@@ -124,6 +131,7 @@ function ItemRowImpl({
   item,
   isPinned,
   isCurrent,
+  isNested,
   isStackOpen,
   changes,
   seen,
@@ -141,6 +149,8 @@ function ItemRowImpl({
   onRefresh,
   onTogglePin,
   onToggleStack,
+  onLoadStack,
+  onOpenStack,
   onToggleChecks,
   onMarkSeen,
   onRemind,
@@ -153,7 +163,17 @@ function ItemRowImpl({
   // hundreds of rows never builds toolbars nobody reaches.
   const [hasQuickActions, setHasQuickActions] = useState(false)
   const showQuickActions = useCallback(() => setHasQuickActions(true), [])
-  const stack = item.stack
+  const stack = isNested ? null : item.stack
+  const stackId = item.stack?.id ?? null
+  const whole = useStack(stackId)
+
+  // The drawer shows the failure; the log keeps the cause.
+  const loadStack = useCallback(() => {
+    if (!stackId) return
+    void onLoadStack(stackId).catch((error: unknown) =>
+      console.warn('[github-sidecar] could not load the stack', error),
+    )
+  }, [onLoadStack, stackId])
 
   const refreshItem = useCallback(() => {
     setRefresh({ status: 'loading' })
@@ -168,7 +188,16 @@ function ItemRowImpl({
   }, [item, onRefresh])
 
   const togglePin = useCallback(() => onTogglePin(item), [item, onTogglePin])
-  const toggleStack = useCallback(() => onToggleStack(item), [item, onToggleStack])
+  const openStack = useCallback(() => {
+    if (!stackId) return
+    void onOpenStack(stackId).catch((error: unknown) =>
+      console.warn('[github-sidecar] could not load the stack', error),
+    )
+  }, [onOpenStack, stackId])
+  const toggleStack = useCallback(() => {
+    if (!isStackOpen) openStack()
+    onToggleStack(item)
+  }, [isStackOpen, item, onToggleStack, openStack])
   const toggleChecks = useCallback(() => onToggleChecks(item), [item, onToggleChecks])
 
   // A failed copy is reported where a failed refresh is not: it changes
@@ -185,12 +214,16 @@ function ItemRowImpl({
   )
   const copyItemTitle = useCallback(() => copy(copyText(item.title)), [copy, item.title])
   const copyItemMarkdown = useCallback(() => copy(copyText(itemMarkdown(item))), [copy, item])
-  const copyStackLinks = useCallback(() => {
-    if (stack) copy(copyText(stackUrls(stack)))
-  }, [copy, stack])
-  const copyStackMarkdown = useCallback(() => {
-    if (stack) copy(copyText(stackMarkdown(stack)))
-  }, [copy, stack])
+  // Loads first even when a copy is cached, so a read in flight decides what is copied.
+  const copyStack = useCallback(
+    (format: (whole: Stack) => string) => {
+      if (!stackId) return
+      copy(onLoadStack(stackId).then((loaded) => copyText(format(loaded))))
+    },
+    [copy, onLoadStack, stackId],
+  )
+  const copyStackLinks = useCallback(() => copyStack(stackUrls), [copyStack])
+  const copyStackMarkdown = useCallback(() => copyStack(stackMarkdown), [copyStack])
   const branch = item.kind === 'pull-request' ? item.headRefName : null
   const copyBranch = useCallback(() => {
     if (branch) copy(copyText(branch))
@@ -398,6 +431,7 @@ function ItemRowImpl({
                     stack={stack}
                     isOpen={isStackOpen}
                     onToggle={toggleStack}
+                    onIntent={loadStack}
                   />
                 )}
                 {reminder !== 'none' && reminderDetail && (
@@ -460,10 +494,14 @@ function ItemRowImpl({
             >
               <div className="overflow-hidden">
                 <StackSection
-                  stack={stack}
+                  membership={stack}
+                  stack={whole.stack}
+                  isLoading={whole.isLoading}
+                  isFailed={whole.isFailed}
                   currentId={item.id}
                   onOpen={onOpenUrl}
                   onCollapse={toggleStack}
+                  onRetry={openStack}
                 />
               </div>
             </div>

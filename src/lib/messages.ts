@@ -1,7 +1,14 @@
 import { browser } from './browser.ts'
 import type { ApiCall } from './github/api'
 import type { ArrivedEnrichment } from './github/enrichment'
-import type { ApiErrorKind, SearchItem, SearchPage } from './github/types'
+import type {
+  ApiErrorKind,
+  LayerReview,
+  SearchItem,
+  SearchPage,
+  Stack,
+  StackedRow,
+} from './github/types'
 
 /** One request the worker made, and when. Developer mode reads these. */
 export interface ApiLogEntry extends ApiCall {
@@ -28,6 +35,13 @@ export type RequestMessage =
    * dropped simply do not come back.
    */
   | { type: 'lookup-items'; ids: string[] }
+  /**
+   * Whole stacks, for the loaded rows in them. Answered from the worker cache,
+   * reading only stacks that are missing, old, or disagree with a row.
+   */
+  | { type: 'stacks'; rows: StackedRow[] }
+  /** Review decisions of stack layers by pull request id, read again once older than the refresh window. */
+  | { type: 'layer-reviews'; ids: string[] }
   | { type: 'tab-open' }
   | { type: 'set-tab-open'; open: boolean }
   | { type: 'validate-token'; token: string }
@@ -81,11 +95,35 @@ export interface EnrichmentUpdate extends ArrivedEnrichment {
   type: 'items-enriched'
 }
 
+export interface StacksAnswer {
+  stacks: Stack[]
+  /** Stacks GitHub would not answer for in full. */
+  failedIds: string[]
+}
+
+/** Broadcast when stacks are read from GitHub, so every tab gets them. */
+export interface StacksUpdate extends StacksAnswer {
+  type: 'stacks-updated'
+}
+
+export interface LayerReviewsAnswer {
+  reviews: LayerReview[]
+  /** Pull requests GitHub would not answer for. */
+  failedIds: string[]
+}
+
+/** Broadcast when layer reviews are read from GitHub, so every tab gets them. */
+export interface LayerReviewsUpdate extends LayerReviewsAnswer {
+  type: 'layer-reviews-updated'
+}
+
 export type BroadcastMessage =
   | ToggleMessage
   | SearchUpdate
   | ItemUpdate
   | EnrichmentUpdate
+  | StacksUpdate
+  | LayerReviewsUpdate
 
 export type ResultFor<M extends RequestMessage> = M extends { type: 'search' }
   ? CachedSearchPage
@@ -99,7 +137,11 @@ export type ResultFor<M extends RequestMessage> = M extends { type: 'search' }
           ? boolean
           : M extends { type: 'api-log' }
             ? ApiLogEntry[]
-            : void
+            : M extends { type: 'stacks' }
+              ? StacksAnswer
+              : M extends { type: 'layer-reviews' }
+                ? LayerReviewsAnswer
+                : void
 
 /**
  * A failure that crossed the worker boundary. `browser.runtime.sendMessage`

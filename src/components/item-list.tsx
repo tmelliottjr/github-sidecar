@@ -5,6 +5,9 @@ import { ChevronDownIcon, SyncIcon } from '@primer/octicons-react'
 import { CurrentRowMarker } from '@/components/current-row-marker'
 import { ItemRow } from '@/components/item-row'
 import { useMorphSettled } from '@/components/morph'
+import { StackFailed, StackLayerRow, StackLoading } from '@/components/stack-section'
+import { StackRail, StackRow } from '@/components/stack-row'
+import { useStackViews } from '@/hooks/use-stacks'
 import {
   changesSince,
   reminderState,
@@ -13,8 +16,8 @@ import {
   type ReminderChoice,
   type ReminderOverrides,
 } from '@/lib/attention'
-import type { SearchItem } from '@/lib/github/types'
-import { collapseRows, type ListRow } from '@/lib/list-view'
+import type { SearchItem, Stack } from '@/lib/github/types'
+import { collapseRows, expandStacks, type ListRow } from '@/lib/list-view'
 import type { FeatureFlags } from '@/lib/storage'
 import { cn } from '@/lib/utils'
 
@@ -40,6 +43,9 @@ interface Props {
   onOpen: (item: SearchItem, event: React.MouseEvent) => void
   onOpenUrl: (url: string, event: React.MouseEvent) => void
   onRefreshItem: (item: SearchItem) => Promise<void>
+  onLoadStack: (id: string) => Promise<Stack>
+  /** Loads the whole stack, then review state for layers that are not loaded rows. */
+  onOpenStack: (id: string) => Promise<void>
   onTogglePin: (item: SearchItem) => void
   onMarkSeen: (item: SearchItem) => void
   onRemind: (item: SearchItem, choice: ReminderChoice) => void
@@ -71,6 +77,24 @@ function toggled(current: ReadonlySet<string>, id: string): ReadonlySet<string> 
   return next
 }
 
+/**
+ * What makes a top-level row the same row across renders, whichever group it
+ * sits in. A layer joining a stack keeps the stack row the same row. Rows
+ * inside an expanded stack have none: they appear because the reader opened it.
+ */
+function identityOf(row: ListRow): string | null {
+  if (row.type === 'item' && row.nesting === null) return row.item.id
+  if (row.type === 'stack') return `stack:${row.stack.id}`
+  return null
+}
+
+/** The position in the list of the row holding `target`, if it is in one. */
+function rowIndexOf(target: EventTarget | null): number | null {
+  if (!(target instanceof Element)) return null
+  const index = target.closest('[data-index]')?.getAttribute('data-index')
+  return index == null ? null : Number(index)
+}
+
 /** Keys typed into a field are the field's, whatever they would otherwise do. */
 function isTyping(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
@@ -97,6 +121,8 @@ export function ItemList({
   onOpen,
   onOpenUrl,
   onRefreshItem,
+  onLoadStack,
+  onOpenStack,
   onTogglePin,
   onMarkSeen,
   onRemind,
@@ -121,6 +147,28 @@ export function ItemList({
     setOpenStacks((current) => toggled(current, item.id))
   }, [])
 
+  // Stack rows the reader expanded, by stack id. Forgotten with the panel or the query, which remount the list.
+  const [expandedStacks, setExpandedStacks] = useState<ReadonlySet<string>>(() => new Set())
+  const expandedIds = useMemo(() => [...expandedStacks], [expandedStacks])
+  const stackViews = useStackViews(expandedIds)
+
+  const openStack = useCallback(
+    (id: string) => {
+      void onOpenStack(id).catch((error: unknown) =>
+        console.warn('[github-sidecar] could not load the stack', error),
+      )
+    },
+    [onOpenStack],
+  )
+
+  const toggleStackRow = useCallback(
+    (id: string) => {
+      if (!expandedStacks.has(id)) openStack(id)
+      setExpandedStacks((current) => toggled(current, id))
+    },
+    [expandedStacks, openStack],
+  )
+
   // Which rows have their failing checks open, held here for the same reason
   // an open stack is: it is a way of reading the list, not a property of a row.
   const [openChecks, setOpenChecks] = useState<ReadonlySet<string>>(() => new Set())
@@ -132,15 +180,18 @@ export function ItemList({
   // The rows actually drawn. A collapsed group keeps its header but drops the
   // rows beneath it, so they leave the virtual list rather than merely hiding
   // behind it — nothing under a folded section is measured, focused or paged.
-  const visibleRows = useMemo(() => collapseRows(rows, collapsed), [rows, collapsed])
+  const visibleRows = useMemo(
+    () => expandStacks(collapseRows(rows, collapsed), expandedStacks, stackViews),
+    [rows, collapsed, expandedStacks, stackViews],
+  )
 
-  // The rows that hold an item, by their position in `visibleRows`. Headers
-  // sit between them, so keyboard movement steps through these rather than
-  // every row, and a section title is never something the reader can land on.
+  // The rows the reader can land on, by their position in `visibleRows`.
+  // Headers and the loading rows of a stack sit between them, so keyboard
+  // movement steps through these rather than every row.
   const itemIndices = useMemo(() => {
     const indices: number[] = []
     visibleRows.forEach((row, index) => {
-      if (row.type === 'item') indices.push(index)
+      if (row.type === 'item' || row.type === 'stack' || row.type === 'layer') indices.push(index)
     })
     return indices
   }, [visibleRows])
@@ -160,14 +211,18 @@ export function ItemList({
     if (!previous) return NO_IDS
     const fresh = new Set<string>()
     for (const row of visibleRows) {
-      if (row.type === 'item' && !previous.has(row.item.id)) fresh.add(row.item.id)
+      const identity = identityOf(row)
+      if (identity && !previous.has(identity)) fresh.add(identity)
     }
     return fresh
   }, [visibleRows])
 
   useEffect(() => {
     const ids = new Set<string>()
-    for (const row of visibleRows) if (row.type === 'item') ids.add(row.item.id)
+    for (const row of visibleRows) {
+      const identity = identityOf(row)
+      if (identity) ids.add(identity)
+    }
     seenIds.current = ids
   }, [visibleRows])
 
@@ -218,26 +273,33 @@ export function ItemList({
     return () => cancelAnimationFrame(frame)
   }, [activeIndex])
 
-  const move = useCallback(
-    (delta: number) => {
-      if (itemIndices.length === 0) return
-      setActiveIndex((current) => {
-        // Movement is measured in item rows, then mapped back to the row's
-        // real position so the header sitting above it is scrolled into view
-        // and the focus lands on the item, never on a section title.
-        const ordinal = current === null ? -1 : itemIndices.indexOf(current)
-        const nextOrdinal =
-          ordinal < 0
-            ? delta > 0
-              ? 0
-              : itemIndices.length - 1
-            : Math.min(Math.max(ordinal + delta, 0), itemIndices.length - 1)
-        const nextIndex = itemIndices[nextOrdinal]
-        virtualizer.scrollToIndex(nextIndex, { align: 'auto' })
-        return nextIndex
-      })
+  // Focuses a mounted row at once, since moving to the index already active changes no state.
+  const focusRow = useCallback(
+    (index: number) => {
+      virtualizer.scrollToIndex(index, { align: 'auto' })
+      setActiveIndex(index)
+      const row = scrollRef.current?.querySelector(`[data-index="${index}"] button`)
+      if (row instanceof HTMLElement) row.focus()
     },
-    [itemIndices, virtualizer],
+    [virtualizer],
+  )
+
+  const move = useCallback(
+    (delta: number, from: number | null) => {
+      if (itemIndices.length === 0) return
+      // Movement is measured in item rows, then mapped back to the row's
+      // real position so the header sitting above it is scrolled into view
+      // and the focus lands on the item, never on a section title.
+      const ordinal = from === null ? -1 : itemIndices.indexOf(from)
+      const nextOrdinal =
+        ordinal < 0
+          ? delta > 0
+            ? 0
+            : itemIndices.length - 1
+          : Math.min(Math.max(ordinal + delta, 0), itemIndices.length - 1)
+      focusRow(itemIndices[nextOrdinal])
+    },
+    [focusRow, itemIndices],
   )
 
   const onKeyDown = useCallback(
@@ -246,19 +308,54 @@ export function ItemList({
       // their own arrows and type-ahead must not move or act on rows.
       if (!event.currentTarget.contains(event.target as Node)) return
       if (!features.keyboard || isTyping(event.target)) return
-      const activeRow = activeIndex === null ? null : visibleRows[activeIndex]
+      // The focused row wins over the last one moved to, since a click or Tab can move focus too.
+      const focusedIndex = rowIndexOf(event.target)
+      const currentIndex =
+        focusedIndex !== null && itemIndices.includes(focusedIndex) ? focusedIndex : activeIndex
+      const activeRow = currentIndex === null ? null : visibleRows[currentIndex]
       const active = activeRow?.type === 'item' ? activeRow.item : null
+
+      // Arrows open, close, and climb stacks, following the WAI-ARIA tree view pattern.
+      if (event.key === 'ArrowRight' && activeRow?.type === 'stack' && currentIndex !== null) {
+        event.preventDefault()
+        if (!expandedStacks.has(activeRow.stack.id)) toggleStackRow(activeRow.stack.id)
+        else focusRow(currentIndex + 1)
+        return
+      }
+      if (event.key === 'ArrowLeft' && activeRow && currentIndex !== null) {
+        if (activeRow.type === 'stack' && expandedStacks.has(activeRow.stack.id)) {
+          event.preventDefault()
+          toggleStackRow(activeRow.stack.id)
+          return
+        }
+        const nesting = 'nesting' in activeRow ? activeRow.nesting : null
+        if (nesting) {
+          event.preventDefault()
+          const parent = visibleRows.findLastIndex(
+            (row, index) =>
+              index < currentIndex && row.type === 'stack' && row.stack.id === nesting.stackId,
+          )
+          if (parent >= 0) focusRow(parent)
+          return
+        }
+      }
+
+      if (event.key === 'o' && activeRow?.type === 'layer') {
+        event.preventDefault()
+        onOpenUrl(activeRow.layer.url, event as unknown as React.MouseEvent)
+        return
+      }
 
       switch (event.key) {
         case 'j':
         case 'ArrowDown':
           event.preventDefault()
-          move(1)
+          move(1, currentIndex)
           return
         case 'k':
         case 'ArrowUp':
           event.preventDefault()
-          move(-1)
+          move(-1, currentIndex)
           return
         case 'o':
           if (!active) return
@@ -286,7 +383,7 @@ export function ItemList({
           return
         }
         case 'Escape':
-          if (activeIndex === null) return
+          if (currentIndex === null) return
           event.preventDefault()
           setActiveIndex(null)
           scrollRef.current?.focus()
@@ -294,14 +391,19 @@ export function ItemList({
     },
     [
       activeIndex,
+      expandedStacks,
       features.hide,
       features.keyboard,
       features.reminders,
+      focusRow,
       hiddenIds,
+      itemIndices,
+      toggleStackRow,
       visibleRows,
       move,
       onHide,
       onOpen,
+      onOpenUrl,
       onRemind,
       onTogglePin,
       onUnhide,
@@ -337,16 +439,71 @@ export function ItemList({
             const row = visibleRows[virtualRow.index]
             const item = row?.type === 'item' ? row.item : undefined
             const isCurrent = item?.id === currentId
+            const nesting = row && 'nesting' in row ? row.nesting : null
+            const isExpandedStack = row?.type === 'stack' && expandedStacks.has(row.stack.id)
+            // A collapsed stack stands for the page when one of its layers is the page.
+            const isCurrentStack =
+              row?.type === 'stack' &&
+              !isExpandedStack &&
+              row.stack.layers.some((layer) => layer.id === currentId)
+            const identity = row ? identityOf(row) : null
+
+            const itemRow = item && (
+              <ItemRow
+                item={item}
+                isPinned={pinned.has(item.id)}
+                isCurrent={isCurrent}
+                isNested={nesting !== null}
+                isStackOpen={openStacks.has(item.id)}
+                // Worked out per rendered row rather than for the whole
+                // list: only the rows on screen are mounted, so this is
+                // the smaller of the two sums by a wide margin.
+                changes={
+                  features.changes ? changesSince(memory[item.id]?.seen, item) : NO_CHANGES
+                }
+                seen={memory[item.id]?.seen}
+                reminder={features.reminders ? reminderState(memory[item.id], item) : 'none'}
+                reminderDetail={memory[item.id]?.reminder}
+                isHidden={hiddenIds.has(item.id)}
+                isChecksOpen={openChecks.has(item.id)}
+                canRemind={features.reminders}
+                reminderOverrides={reminderOverrides}
+                canHide={features.hide}
+                showFailingChecks={features.failingChecks}
+                showMergeState={features.mergeState}
+                onOpen={onOpen}
+                onOpenUrl={onOpenUrl}
+                onRefresh={onRefreshItem}
+                onTogglePin={onTogglePin}
+                onToggleStack={toggleStack}
+                onLoadStack={onLoadStack}
+                onOpenStack={onOpenStack}
+                onToggleChecks={toggleChecks}
+                onMarkSeen={onMarkSeen}
+                onRemind={onRemind}
+                onClearReminder={onClearReminder}
+                onHide={onHide}
+                onUnhide={onUnhide}
+              />
+            )
+
             return (
               <div
                 key={virtualRow.key}
                 data-index={virtualRow.index}
-                ref={isCurrent ? measureCurrent : virtualizer.measureElement}
+                ref={isCurrent || isCurrentStack ? measureCurrent : virtualizer.measureElement}
                 // The gap below each row is inside the measured box, so the
-                // virtualizer spaces the tiles without knowing about it.
+                // virtualizer spaces the tiles without knowing about it. The
+                // rows of an expanded stack sit flush so they read as one card.
                 className={cn(
                   'absolute left-0 top-0 w-full px-1.5',
-                  row?.type !== 'header' && 'pb-0.5',
+                  row?.type === 'header'
+                    ? null
+                    : nesting
+                      ? nesting.isLast && 'pb-2'
+                      : isExpandedStack
+                        ? 'pt-1.5'
+                        : 'pb-0.5',
                   // Each wrapper is its own stacking context, so the next row would cut off a lifted shadow.
                   'has-[[data-lifted]]:z-[1]',
                 )}
@@ -360,50 +517,51 @@ export function ItemList({
                     isCollapsed={collapsed.has(row.groupKey)}
                     onToggle={() => onToggleGroup(row.groupKey)}
                   />
+                ) : row?.type === 'stack' ? (
+                  <div className={cn(identity && entering.has(identity) && 'animate-row-in')}>
+                    <StackRow
+                      stack={row.stack}
+                      isExpanded={isExpandedStack}
+                      isCurrent={isCurrentStack}
+                      hasChanges={
+                        features.changes &&
+                        row.stack.layers.some((layer) => {
+                          const seen = memory[layer.id]?.seen
+                          return seen !== undefined && changesSince(seen, layer).length > 0
+                        })
+                      }
+                      showFailingChecks={features.failingChecks}
+                      showMergeState={features.mergeState}
+                      onToggle={toggleStackRow}
+                      onLoadStack={onLoadStack}
+                      onOpen={onOpen}
+                    />
+                  </div>
+                ) : row && nesting ? (
+                  <StackRail nesting={nesting} isLoaded={row.type === 'item'}>
+                    {row.type === 'item' ? (
+                      itemRow
+                    ) : row.type === 'layer' ? (
+                      <StackLayerRow
+                        layer={row.layer}
+                        isCurrent={false}
+                        showPosition={false}
+                        onOpen={onOpenUrl}
+                      />
+                    ) : row.type === 'stack-status' && row.status === 'failed' ? (
+                      <StackFailed onRetry={() => openStack(nesting.stackId)} />
+                    ) : (
+                      <StackLoading />
+                    )}
+                  </StackRail>
                 ) : (
                   /*
                    * The entrance lives on an inner element: the wrapper's own
                    * transform is what places the row in the virtual list, and an
                    * animation of the same property would fight it.
                    */
-                  <div className={cn(item && entering.has(item.id) && 'animate-row-in')}>
-                    {item ? (
-                      <ItemRow
-                        item={item}
-                        isPinned={pinned.has(item.id)}
-                        isCurrent={isCurrent}
-                        isStackOpen={openStacks.has(item.id)}
-                        // Worked out per rendered row rather than for the whole
-                        // list: only the rows on screen are mounted, so this is
-                        // the smaller of the two sums by a wide margin.
-                        changes={
-                          features.changes ? changesSince(memory[item.id]?.seen, item) : NO_CHANGES
-                        }
-                        seen={memory[item.id]?.seen}
-                        reminder={
-                          features.reminders ? reminderState(memory[item.id], item) : 'none'
-                        }
-                        reminderDetail={memory[item.id]?.reminder}
-                        isHidden={hiddenIds.has(item.id)}
-                        isChecksOpen={openChecks.has(item.id)}
-                        canRemind={features.reminders}
-                        reminderOverrides={reminderOverrides}
-                        canHide={features.hide}
-                        showFailingChecks={features.failingChecks}
-                        showMergeState={features.mergeState}
-                        onOpen={onOpen}
-                        onOpenUrl={onOpenUrl}
-                        onRefresh={onRefreshItem}
-                        onTogglePin={onTogglePin}
-                        onToggleStack={toggleStack}
-                        onToggleChecks={toggleChecks}
-                        onMarkSeen={onMarkSeen}
-                        onRemind={onRemind}
-                        onClearReminder={onClearReminder}
-                        onHide={onHide}
-                        onUnhide={onUnhide}
-                      />
-                    ) : (
+                  <div className={cn(identity && entering.has(identity) && 'animate-row-in')}>
+                    {itemRow || (
                       <div className="flex items-center justify-center gap-2 py-4 text-[12px] text-muted-foreground">
                         <SyncIcon className="size-3.5 animate-spin" />
                         Loading more

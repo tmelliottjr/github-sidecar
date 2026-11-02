@@ -3,9 +3,10 @@ import { useQueryClient, type InfiniteData } from '@tanstack/react-query'
 
 import { browser } from '@/lib/browser'
 import { mergeEnrichments } from '@/lib/github/enrichment'
-import type { SearchPage } from '@/lib/github/types'
+import type { SearchPage, Stack } from '@/lib/github/types'
 import type { BroadcastMessage, CachedSearchPage } from '@/lib/messages'
 import { ISSUE_SEARCH_KEY, issueSearchKey } from './use-issue-search'
+import { layerReviewsKey, mergeLayerReviews, newerStack, stackKey, type LayerReviewMap } from './use-stacks'
 
 type SearchData = InfiniteData<CachedSearchPage, string | null>
 
@@ -21,8 +22,9 @@ function replaceItem(page: SearchPage, item: SearchPage['items'][number]): Searc
 
 /**
  * Applies results pushed by the service worker: whole pages after it
- * revalidates a query, single rows after one is refreshed on demand, and the
- * costly half of a page as it lands.
+ * revalidates a query, single rows after one is refreshed on demand, the
+ * costly half of a page as it lands, and whole stacks and layer reviews as
+ * they are read.
  *
  * Only the active tab triggers a network refresh; every other tab picks the
  * result up from here rather than making its own request. A row refreshed in
@@ -46,6 +48,22 @@ export function useSearchUpdates(): void {
           pages[index] = { ...message.page, source: 'network', revalidating: false }
           return { ...current, pages }
         })
+        return
+      }
+
+      if (message?.type === 'layer-reviews-updated') {
+        queryClient.setQueryData<LayerReviewMap>(layerReviewsKey(), (current) =>
+          mergeLayerReviews(current, message.reviews),
+        )
+        return
+      }
+
+      if (message?.type === 'stacks-updated') {
+        for (const stack of message.stacks) {
+          queryClient.setQueryData<Stack>(stackKey(stack.id), (current) =>
+            newerStack(current, stack),
+          )
+        }
         return
       }
 

@@ -17,6 +17,7 @@ import {
   IssueClosedIcon,
   IssueOpenedIcon,
   SkipIcon,
+  StackIcon,
   SyncIcon,
   XCircleFillIcon,
 } from '@primer/octicons-react'
@@ -98,6 +99,22 @@ export function StateIcon({
         <Icon className="size-4" aria-label={label} />
       </span>
     </Hint>
+  )
+}
+
+/** The leading disc of a stack row: the stack glyph, tinted with the state of its lead layer. */
+export function StackDisc({ item }: { item: StateItem }) {
+  const { tone } = describeState(item)
+  return (
+    <span
+      className={cn(
+        'flex size-7 shrink-0 items-center justify-center rounded-full',
+        TONES[tone].text,
+        TONES[tone].disc,
+      )}
+    >
+      <StackIcon className="size-4" aria-hidden />
+    </span>
   )
 }
 

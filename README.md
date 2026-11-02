@@ -184,16 +184,17 @@ already have a mark of their own on the same line.
 A row arrives in two halves.
 
 The search lists the rows and everything cheap about them: title, repository,
-author, assignees, labels, comments, the diff size, and whether the branch
-conflicts. That request is what has to be quick, and it is.
+author, assignees, labels, comments, the diff size, whether the branch
+conflicts, and where a pull request sits in its stack. That request is what has
+to be quick, and it is.
 
-The rest — the review decision, the CI rollup and its failing checks, the full
-merge state, and the stack — is read afterwards, five rows at a time, and
+The rest — the review decision, the CI rollup and its failing checks, and the
+full merge state — is read afterwards, five rows at a time, and
 merged field by field into the rows already on screen. Field by field because
 the row may have been refreshed in the seconds it took to answer, and swapping
 the whole row would put the older title back.
 
-Measured against an `org:`-wide search, those four fields cost several times
+Measured against an `org:`-wide search, those fields cost several times
 what everything else on a row costs put together, and `mergeStateStatus` on its
 own is enough to put a page over GitHub's limit.
 
@@ -223,6 +224,14 @@ Three things follow from the split, and all three are deliberate:
 
 Refreshing a single row is unaffected: one row is cheap however costly its
 fields are, so that request still reads all of it at once.
+
+Whole stacks are not part of either request. A stack loads by id when the
+reader goes to open one: hovering or focusing its row or badge, opening it, or
+copying its links. Opening a stack also reads the review decision of each layer
+that is not a loaded row, since loaded rows already have theirs. Both are
+cached in the worker and read again once older than the refresh window. A layer
+whose review has not been read shows no review mark, which is kept apart from a
+layer with no review decision.
 
 #### Refreshing a single row
 
@@ -606,7 +615,7 @@ the browser and the system.
 </details>
 
 <details>
-<summary><strong>Stacked pull requests</strong> — a <code>layer/size</code> badge and the whole chain from its own chevron.</summary>
+<summary><strong>Stacked pull requests</strong> — one row per stack, which opens into every layer.</summary>
 
 #### Stacked pull requests
 
@@ -615,15 +624,35 @@ one below it. GitHub exposes membership directly: `PullRequest.stackEntry`
 gives this pull request's position, and `PullRequest.stack` gives the stack's
 number, size, base branch, and entries. Nothing is inferred from branch names.
 
-A stacked row carries a `layer/size` badge, and that badge is the control: it
-slides open a list of the whole stack, top layer first so layer 1 sits at the
-bottom, and lifts the row into a card that holds it. The row it was expanded
-from stays in that list with its step number filled in, instead of being
-filtered out, because a stack is only legible as a whole. The chevron in the
-slide-out's caption shuts it again, since by then the badge that opened it may
-be several layers up the panel. Expansion is
-deliberately not on the row itself: clicking a row still means "open this pull
-request".
+When two or more layers of a stack are in the list, they fold into one stack
+row:
+
+- It sits where its first layer would, even when other layers come from later
+  pages or from Pinned. No layer also shows on its own, in any section.
+- The lead layer, the loaded one closest to the base branch, gives the title
+  and decides the group.
+- Its marks sum the loaded layers: failing checks, review decisions, and any
+  conflict, plus the change dot when any layer changed.
+- It pins when any loaded layer is pinned, at the place of the earliest pin.
+
+Clicking a stack row, or pressing Enter on it, opens it into a card that lists
+every layer top first, so layer 1 sits at the bottom. Loaded layers are full
+rows and the rest are one-line rows, each on a numbered step. While the stack
+loads, the loaded layers show with a loading row, and a failed load keeps them
+with a retry. Expansion is forgotten when the panel closes or the query
+changes. The arrow keys follow the
+[tree view pattern](https://www.w3.org/WAI/ARIA/apg/patterns/treeview/): →
+opens a stack row and then steps into its layers, and ← steps back out to the
+stack row and then closes it. When the page is one of the layers of a closed
+stack, the stack row carries the wash and the marker, and it stays closed.
+
+A stack with only one layer in the list stays a plain row with a `layer/size`
+badge. That badge slides open the whole stack under the row, and the chevron
+in the slide-out caption shuts it again.
+
+The footer and the launcher count pull requests, so folding never changes
+them. When the list drops its oldest page after ten, a stack moves to the slot
+of its next loaded layer.
 
 `stack` and `stackEntry` are a public preview. A host that has not been given
 the fields rejects the whole query rather than returning null, which would take
@@ -631,9 +660,18 @@ the list down with it, so the first such failure drops the stack fields and
 every request after it asks the smaller question. Losing the badges is an
 acceptable outcome; losing the list is not.
 
-Only the first 20 layers of a stack are read per row, but `size` comes from
-GitHub, so a deeper stack still reports its real size and says how many layers
-it is not showing.
+Membership arrives with the search, so the badge shows with the row. A search
+that times out while asking for it is asked again without it, and that query
+skips membership until the worker restarts.
+
+The whole stack loads when its row or badge is hovered or focused, when the
+stack is opened, or when its links are copied. The worker reads it by id, a
+hundred layers per request with no cap, keeps it in IndexedDB for every tab,
+and reads it again once it is older than the refresh window or disagrees with
+a loaded row. Review decisions for layers that are not loaded rows load when
+the stack opens, without the review field on the stack request, which made it
+three to five times slower. A stack that fails to load keeps whatever the panel
+already showed and offers a retry.
 
 ##### Pinned rows
 
@@ -692,6 +730,9 @@ The pieces that make that work:
 - **The refresh button always wins.** It drops the cached pages for that query
   first, so it is a true forced refresh. Entries older than a day are pruned on
   startup.
+- **Stacks are cached too.** Whole stacks and the review decisions of their
+  layers sit in their own stores, keyed by node id, stamped with when their
+  request started so a slower, older answer never replaces a newer one.
 - **A half-filled page is finished off.** The second half of each row is written
   to the cache as it lands, so a tab that opens later gets whole rows without
   asking again. The worker is shut down between messages and can be stopped part
@@ -800,8 +841,10 @@ neither, and no notification to play a sound alongside.
 | Refresh one row       | Right-click it → **Refresh this item**           |
 | Use a row's quick actions | Hover the row, or move to it with `j`/`k` and press Tab |
 | Pin a row to the top  | The pin in its quick actions, or right-click → **Pin item** (again to unpin) |
-| See a stack           | The `layer/size` badge on a stacked row, or right-click → **Show the stack** |
-| Shut a stack          | The chevron in the slide-out's caption, or the badge again      |
+| Open a stack          | Click its stack row, or press Enter or → on it, or right-click → **Show the stack** |
+| Step into its layers  | → again, then `j` and `k`; ← goes back to the stack row |
+| Shut a stack          | The stack row again, or ← on it                  |
+| See a one-layer stack | The `layer/size` badge on the row; the chevron in the slide-out shuts it |
 | Copy a link           | The link button in a row's quick actions, or right-click → **Copy** → **Link** (rich text, titled; the URL as plain text) |
 | Copy it as Markdown   | **Copy** → **Link as Markdown**                  |
 | Copy a title          | **Copy** → **Title**                             |
@@ -820,7 +863,7 @@ neither, and no notification to play a sound alongside.
 | Reorder them          | The sort control in the filter bar               |
 | Group them            | The grouping control in the filter bar (remembered per query) |
 | Move through the list | `j` and `k`, then Enter or `o` to open, `p` to pin |
-| Spot the page you are on | Its row is washed, and a rule on the panel's outer edge points out at it |
+| Spot the page you are on | Its row is washed, and a rule on the panel's outer edge points out at it; a closed stack stands in for its layers |
 | Hear about it            | Settings → **Notifications** → **Desktop notifications** |
 | Hear about only one kind | The same section: **Reminders you set** / **Rows that changed** |
 | Change what one sounds like | The **Sound** row under that kind; **Silent** to mute it |

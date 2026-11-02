@@ -5,8 +5,12 @@ import {
   ENRICH_QUERY,
   GitHubApiError,
   SEARCH_QUERY,
+  LAYER_REVIEWS_QUERY,
+  STACKS_QUERY,
   enrichItems,
   fetchItem,
+  fetchLayerReviews,
+  fetchStacks,
   resetPreviewSupport,
   searchIssues,
 } from '../src/lib/github/api.ts'
@@ -125,6 +129,7 @@ const pullRequestNode = {
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  resetPreviewSupport()
 })
 
 describe('searchIssues', () => {
@@ -389,48 +394,41 @@ const stackedPullRequestNode = {
   id: 'PR_2',
   number: 35,
   stackEntry: { position: 2 },
-  stack: {
-    number: 7,
-    size: 3,
-    baseRefName: 'main',
-    entries: {
-      totalCount: 3,
-      nodes: [
-        // Deliberately out of order: the reader is told where each layer sits,
-        // not which order GitHub happened to answer in.
-        {
-          position: 2,
-          pullRequest: {
-            id: 'PR_2',
-            number: 35,
-            title: 'Fix the thing',
-            url: 'https://github.com/acme/app/pull/35',
-            state: 'OPEN',
-            isDraft: true,
-            reviewDecision: 'CHANGES_REQUESTED',
-            repository: { nameWithOwner: 'acme/app' },
-          },
-        },
-        {
-          position: 1,
-          pullRequest: {
-            id: 'PR_1',
-            number: 34,
-            title: 'Groundwork',
-            url: 'https://github.com/acme/app/pull/34',
-            state: 'OPEN',
-            isDraft: false,
-            isInMergeQueue: true,
-            reviewDecision: 'APPROVED',
-            repository: { nameWithOwner: 'acme/app' },
-          },
-        },
-        // A layer the token cannot see comes back without its pull request.
-        { position: 3, pullRequest: null },
-      ],
+  stack: { id: 'STACK_7', number: 7, size: 3, baseRefName: 'main' },
+}
+
+/** The layers of stack 7, as `entries` lists them. */
+const stackEntryNodes = [
+  // Deliberately out of order: the reader is told where each layer sits,
+  // not which order GitHub happened to answer in.
+  {
+    position: 2,
+    pullRequest: {
+      id: 'PR_2',
+      number: 35,
+      title: 'Fix the thing',
+      url: 'https://github.com/acme/app/pull/35',
+      state: 'OPEN',
+      isDraft: true,
+      repository: { nameWithOwner: 'acme/app' },
     },
   },
-}
+  {
+    position: 1,
+    pullRequest: {
+      id: 'PR_1',
+      number: 34,
+      title: 'Groundwork',
+      url: 'https://github.com/acme/app/pull/34',
+      state: 'OPEN',
+      isDraft: false,
+      isInMergeQueue: true,
+      repository: { nameWithOwner: 'acme/app' },
+    },
+  },
+  // A layer the token cannot see comes back without its pull request.
+  { position: 3, pullRequest: null },
+]
 
 describe('stacked pull requests', () => {
   afterEach(() => {
@@ -438,42 +436,35 @@ describe('stacked pull requests', () => {
     resetPreviewSupport()
   })
 
-  it('asks GitHub for stack membership, in the second request', () => {
-    assert.match(ENRICH_QUERY, /stackEntry\s*\{\s*position/)
-    assert.match(ENRICH_QUERY, /stack\s*\{[\s\S]*baseRefName/)
-    // The search is what has to stay under GitHub's time limit, and a stack
-    // is one of the fields that put it over.
-    assert.ok(!SEARCH_QUERY.includes('stackEntry'))
+  it('asks for stack membership with the search, and nothing about stacks in enrichment', () => {
+    assert.match(SEARCH_QUERY, /stackEntry\s*\{\s*position/)
+    assert.match(SEARCH_QUERY, /stack\s*\{\s*id\s+number\s+size\s+baseRefName\s*\}/)
+    assert.ok(!SEARCH_QUERY.includes('entries('))
+    assert.ok(!ENRICH_QUERY.includes('stack'))
+    assert.match(ENRICH_QUERY, /mergeStateStatus/)
   })
 
-  it('reports where a row sits in its stack', async () => {
-    stubFetch(nodesPayload([stackedPullRequestNode]))
+  it('reports where a searched row sits in its stack', async () => {
+    stubFetch(searchPayload([stackedPullRequestNode]))
 
-    const { enrichments } = await enrichItems('token', ['PR_2'])
-    const { stack } = enrichments[0]
+    const page = await searchIssues('token', { q: 'is:pr', first: 30 })
 
-    assert.ok(stack)
-    assert.equal(stack.number, 7)
-    assert.equal(stack.size, 3)
-    assert.equal(stack.position, 2)
-    assert.equal(stack.baseRefName, 'main')
+    assert.deepEqual(page.items[0].stack, {
+      id: 'STACK_7',
+      number: 7,
+      size: 3,
+      baseRefName: 'main',
+      position: 2,
+    })
   })
 
-  it('lists the stack from the base branch up, skipping layers it cannot read', async () => {
-    stubFetch(nodesPayload([stackedPullRequestNode]))
+  it('reports where a refreshed row sits in its stack', async () => {
+    stubFetch({ data: { repository: { issueOrPullRequest: stackedPullRequestNode } } })
 
-    const { enrichments } = await enrichItems('token', ['PR_2'])
-    const entries = enrichments[0].stack!.entries
+    const item = await fetchItem('token', { repository: 'acme/app', number: 35 })
 
-    assert.deepEqual(
-      entries.map((entry) => entry.number),
-      [34, 35],
-    )
-    // Every layer is flattened exactly as a row of its own would be.
-    assert.equal(entries[0].state, 'queued')
-    assert.equal(entries[0].reviewDecision, 'APPROVED')
-    assert.equal(entries[1].state, 'draft')
-    assert.equal(entries[1].repository, 'acme/app')
+    assert.equal(item.stack?.id, 'STACK_7')
+    assert.equal(item.stack?.position, 2)
   })
 
   it('leaves unstacked pull requests and issues alone', async () => {
@@ -490,10 +481,10 @@ describe('stacked pull requests', () => {
     globalThis.fetch = (async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as { query: string }
       sent.push(body.query)
-      if (body.query.includes('stackEntry')) {
+      if (body.query.includes('mergeStateStatus')) {
         return new Response(
           JSON.stringify({
-            errors: [{ message: "Field 'stackEntry' doesn't exist on type 'PullRequest'" }],
+            errors: [{ message: "Field 'mergeStateStatus' doesn't exist on type 'PullRequest'" }],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
@@ -507,15 +498,104 @@ describe('stacked pull requests', () => {
     const first = await enrichItems('token', ['PR_1'])
 
     assert.equal(first.enrichments.length, 1)
-    assert.equal(first.enrichments[0].stack, null)
     assert.equal(first.failedIds.length, 0)
     assert.equal(sent.length, 2)
-    assert.ok(!sent[1].includes('stackEntry'))
+    assert.ok(!sent[1].includes('mergeStateStatus'))
 
     // Having been told once, it does not ask for them again.
     await enrichItems('token', ['PR_1'])
     assert.equal(sent.length, 3)
+    assert.ok(!sent[2].includes('mergeStateStatus'))
+  })
+
+  /** Answers a query that asks for membership with `refusal`, and lists rows otherwise. */
+  function stubMembership(refusal: () => Response) {
+    const sent: string[] = []
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { query: string }
+      sent.push(body.query)
+      if (body.query.includes('stackEntry')) return refusal()
+      return new Response(JSON.stringify(searchPayload([pullRequestNode])), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+    return sent
+  }
+
+  it('searches again without the preview fields when a host rejects them', async () => {
+    const sent = stubMembership(
+      () =>
+        new Response(
+          JSON.stringify({
+            errors: [{ message: "Field 'stackEntry' doesn't exist on type 'PullRequest'" }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    )
+
+    const page = await searchIssues('token', { q: 'is:pr', first: 30 })
+
+    assert.equal(page.items.length, 1)
+    assert.equal(page.items[0].stack, null)
+    assert.equal(sent.length, 2)
+    assert.ok(!sent[1].includes('stackEntry'))
+  })
+
+  it('searches again without membership when GitHub runs out of time', async () => {
+    const sent = stubMembership(() => new Response('<html>504</html>', { status: 504 }))
+
+    const page = await searchIssues('token', { q: 'org:acme', first: 30 })
+
+    assert.equal(page.items.length, 1)
+    assert.equal(sent.length, 2)
+    assert.ok(!sent[1].includes('stackEntry'))
+
+    // The next poll of that query asks without it, and other queries still ask.
+    await searchIssues('token', { q: 'org:acme', first: 30, after: 'CURSOR' })
+    assert.equal(sent.length, 3)
     assert.ok(!sent[2].includes('stackEntry'))
+
+    await searchIssues('token', { q: 'repo:acme/app', first: 30 })
+    assert.ok(sent[3].includes('stackEntry'))
+  })
+
+  it('retries a timed-out search even after another search dropped the preview', async () => {
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { query: string; variables: { q: string } }
+      if (!body.query.includes('stackEntry')) {
+        return new Response(JSON.stringify(searchPayload([pullRequestNode])), { status: 200 })
+      }
+      if (body.variables.q === 'slow') {
+        await gate
+        return new Response('<html>504</html>', { status: 504 })
+      }
+      return new Response(
+        JSON.stringify({
+          errors: [{ message: "Field 'stackEntry' doesn't exist on type 'PullRequest'" }],
+        }),
+        { status: 200 },
+      )
+    }) as unknown as typeof fetch
+
+    const slow = searchIssues('token', { q: 'slow', first: 30 })
+    await searchIssues('token', { q: 'rejected', first: 30 })
+    release()
+
+    assert.equal((await slow).items.length, 1)
+  })
+
+  it('reports a timeout when the search without membership times out too', async () => {
+    stubFetch('<html>502 Bad Gateway</html>' as unknown as object, { status: 502 })
+
+    await assert.rejects(
+      () => searchIssues('token', { q: 'org:acme', first: 30 }),
+      /took too long/,
+    )
   })
 
   it('still surfaces unrelated GraphQL errors', async () => {
@@ -525,6 +605,127 @@ describe('stacked pull requests', () => {
       () => searchIssues('token', { q: 'is:pr', first: 30 }),
       /Something else went wrong/,
     )
+  })
+
+  const stackNode = (entries: Record<string, unknown> = {}) => ({
+    __typename: 'PullRequestStack',
+    id: 'STACK_7',
+    number: 7,
+    size: 3,
+    baseRefName: 'main',
+    entries: {
+      pageInfo: { hasNextPage: false, endCursor: null },
+      nodes: stackEntryNodes,
+      ...entries,
+    },
+  })
+
+  /** Answers each request with the next response, and records what was sent. */
+  function stubResponses(...responses: Array<() => Response>) {
+    const sent: Array<{ query: string; variables: Record<string, unknown> }> = []
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)))
+      return responses[sent.length - 1]()
+    }) as unknown as typeof fetch
+    return sent
+  }
+
+  const json = (body: unknown) => () =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+  it('reads whole stacks by id, from the base branch up, without review state', async () => {
+    const sent = stubResponses(json(nodesPayload([stackNode()])))
+
+    const { stacks, failedIds } = await fetchStacks('token', ['STACK_7'])
+
+    assert.deepEqual(sent[0].variables, { ids: ['STACK_7'] })
+    assert.ok(!STACKS_QUERY.includes('reviewDecision'))
+    assert.deepEqual(failedIds, [])
+    assert.equal(stacks[0].size, 3)
+    assert.deepEqual(
+      stacks[0].layers.map((layer) => [layer.position, layer.number, layer.state]),
+      [
+        [1, 34, 'queued'],
+        [2, 35, 'draft'],
+      ],
+    )
+    assert.equal(typeof stacks[0].fetchedAt, 'number')
+  })
+
+  it('reads every page of layers in a deep stack', async () => {
+    const [upper, lower] = stackEntryNodes
+    const sent = stubResponses(
+      json(
+        nodesPayload([
+          stackNode({ pageInfo: { hasNextPage: true, endCursor: 'PAGE_1' }, nodes: [upper] }),
+        ]),
+      ),
+      json({
+        data: {
+          node: {
+            __typename: 'PullRequestStack',
+            entries: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [lower] },
+          },
+        },
+      }),
+    )
+
+    const { stacks } = await fetchStacks('token', ['STACK_7'])
+
+    assert.deepEqual(sent[1].variables, { id: 'STACK_7', after: 'PAGE_1' })
+    assert.deepEqual(
+      stacks[0].layers.map((layer) => layer.position),
+      [1, 2],
+    )
+  })
+
+  it('reports a stack as failed when a later page of layers fails', async () => {
+    stubResponses(
+      json(nodesPayload([stackNode({ pageInfo: { hasNextPage: true, endCursor: 'PAGE_1' } })])),
+      () => new Response('<html>502</html>', { status: 502 }),
+    )
+
+    const result = await fetchStacks('token', ['STACK_7'])
+
+    assert.deepEqual(result.stacks, [])
+    assert.deepEqual(result.failedIds, ['STACK_7'])
+    assert.match(result.error!, /took too long/)
+  })
+
+  it('reads layer reviews by id, keeping no decision apart from no answer', async () => {
+    assert.match(LAYER_REVIEWS_QUERY, /\.\.\. on PullRequest \{\s*id\s+reviewDecision\s*\}/)
+    stubResponses(
+      json(
+        nodesPayload([
+          { __typename: 'PullRequest', id: 'PR_1', reviewDecision: 'APPROVED' },
+          { __typename: 'PullRequest', id: 'PR_2', reviewDecision: null },
+          null,
+        ]),
+      ),
+    )
+
+    const result = await fetchLayerReviews('token', ['PR_1', 'PR_2', 'PR_hidden'])
+
+    assert.deepEqual(
+      result.reviews.map((review) => [review.id, review.reviewDecision]),
+      [
+        ['PR_1', 'APPROVED'],
+        ['PR_2', null],
+      ],
+    )
+    assert.deepEqual(result.failedIds, ['PR_hidden'])
+  })
+
+  it('reports a stack the token cannot read as failed', async () => {
+    stubResponses(json(nodesPayload([null, stackNode()])))
+
+    const result = await fetchStacks('token', ['STACK_hidden', 'STACK_7'])
+
+    assert.deepEqual(result.stacks.map((stack) => stack.id), ['STACK_7'])
+    assert.deepEqual(result.failedIds, ['STACK_hidden'])
   })
 })
 
