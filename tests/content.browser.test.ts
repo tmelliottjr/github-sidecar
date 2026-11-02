@@ -209,6 +209,18 @@ window.chrome = {
 };
 `
 
+/**
+ * Waits for the launcher and the panel to finish morphing into each other, and
+ * for the page to finish moving with them. Motion drives the morph from
+ * JavaScript, so `getAnimations()` misses it.
+ */
+const settleMorph = (target: Page) =>
+  target.waitForFunction(
+    () =>
+      !document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector('[data-morphing]') &&
+      !document.body.hasAttribute('data-github-sidecar-moving'),
+  )
+
 let browser: Browser
 let page: Page
 const consoleErrors: string[] = []
@@ -303,6 +315,13 @@ describe('content script', { concurrency: false, skip }, () => {
     // 40 items are loaded but only a window of them should be in the DOM.
     assert.ok(counts.rendered < 40, `expected virtualisation, saw ${counts.rendered} rows`)
     assert.match(counts.footer, /of 400/)
+  })
+
+  it('shows its rows at once when the page loads with the panel open', async () => {
+    const fades = await page.evaluate(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('.animate-list-in')),
+    )
+    assert.equal(fades, false, 'expected no morph to wait for on page load')
   })
 
   it('shows the author as an avatar and a handle', async () => {
@@ -630,8 +649,9 @@ describe('docked into the page', { concurrency: false, skip }, () => {
     assert.equal(fonts.panelFont, fonts.pageFont)
   })
 
-  const panel = () =>
-    dockPage.evaluate(() => {
+  const panel = async () => {
+    await settleMorph(dockPage)
+    return dockPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const node = shadow.querySelector('[role="complementary"]') as HTMLElement
       const box = node.getBoundingClientRect()
@@ -647,8 +667,10 @@ describe('docked into the page', { concurrency: false, skip }, () => {
         borderRight: styles.borderRightWidth,
         radius: parseFloat(styles.borderTopLeftRadius),
         boxShadow: styles.boxShadow,
+        transform: styles.transform,
       }
     })
+  }
 
   /** Where the page itself starts drawing, and what we took to get it there. */
   const host = () =>
@@ -769,9 +791,26 @@ describe('docked into the page', { concurrency: false, skip }, () => {
     )
   })
 
+  it('follows the nav as it scrolls away, rather than springing after it', async () => {
+    await dockPage.evaluate(() => window.scrollTo(0, 0))
+    await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
+    const unscrolled = await panel()
+
+    await dockPage.evaluate(() => window.scrollTo(0, 30))
+    // The top is remeasured on the frame after the scroll, then rendered.
+    await dockPage.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    )
+    const scrolled = await panel()
+
+    assert.equal(scrolled.y, unscrolled.y - 30)
+    assert.equal(scrolled.transform, 'none')
+  })
+
   /** The launcher tab, measured once it settles, or null when it is not showing. */
-  const launcher = () =>
-    dockPage.evaluate(async () => {
+  const launcher = async () => {
+    await settleMorph(dockPage)
+    return dockPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
       const node = shadow.querySelector('[data-launcher]') as HTMLElement | null
@@ -785,6 +824,7 @@ describe('docked into the page', { concurrency: false, skip }, () => {
         panelGone: !shadow.querySelector('[data-docked]'),
       }
     })
+  }
 
   it('collapses to the launcher and gives the page its space back', async () => {
     await dockPage.evaluate(() => window.scrollTo(0, 0))
@@ -803,10 +843,8 @@ describe('docked into the page', { concurrency: false, skip }, () => {
     assert.equal(Math.round(pill.middle), 450)
     assert.equal((await host()).bodyPadding, 0)
     assert.equal(
-      await dockPage.evaluate(() =>
-        Boolean(document.getElementById('github-sidecar-dock-style')),
-      ),
-      false,
+      await dockPage.evaluate(() => document.body.style.getPropertyValue('padding-left')),
+      '',
     )
   })
 
@@ -2032,11 +2070,13 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
           .__sentMessages,
     )
 
-  const launcher = () =>
-    quietPage.evaluate(() => {
+  const launcher = async () => {
+    await settleMorph(quietPage)
+    return quietPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidecar"]'))
     })
+  }
 
   it('starts closed, showing only the launcher on the left edge', async () => {
     await quietPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
@@ -2118,12 +2158,14 @@ describe('a github.com tab that was never asked', { concurrency: false, skip }, 
     await closedBrowser?.close()
   })
 
-  const pill = () =>
-    closedPage.evaluate(async () => {
+  const pill = async () => {
+    await settleMorph(closedPage)
+    return closedPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
       return Boolean(shadow.querySelector('[data-launcher]'))
     })
+  }
 
   const clickLauncher = async () => {
     await closedPage.evaluate(() => {
@@ -2135,88 +2177,89 @@ describe('a github.com tab that was never asked', { concurrency: false, skip }, 
     await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
   }
 
-  const panelShowing = () =>
-    closedPage.evaluate(() => {
+  const panelShowing = async () => {
+    await settleMorph(closedPage)
+    return closedPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return Boolean(shadow.querySelector('[data-docked]'))
     })
+  }
 
   it('leaves the page where it is until the panel opens', async () => {
     assert.equal(await pill(), true)
     assert.equal(await panelShowing(), false)
     const layout = await closedPage.evaluate(() => ({
       bodyPadding: parseFloat(getComputedStyle(document.body).paddingLeft),
-      reserved: Boolean(document.getElementById('github-sidecar-dock-style')),
+      reserved: Boolean(document.body.style.getPropertyValue('padding-left')),
     }))
     assert.deepEqual(layout, { bodyPadding: 0, reserved: false })
   })
 
   /**
-   * Clicks a control, then reads where the morph shell starts and ends once
-   * it is moving, along with the boxes it should start and end on.
+   * Clicks a control, or the toolbar button, then follows the element taking
+   * over frame by frame until the morph ends and the element it replaced is gone.
    */
-  const morphOn = (label: string, from: string, to: string) =>
+  const morphOn = (label: string | 'toolbar', from: string, to: string) =>
     closedPage.evaluate(
       async (control, fromSelector, toSelector) => {
         const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-        const box = (selector: string) => {
-          const rect = shadow.querySelector(selector)!.getBoundingClientRect()
+        const box = (element: Element) => {
+          const rect = element.getBoundingClientRect()
           return [rect.left, rect.top, rect.width, rect.height].map(Math.round)
         }
-        const frames = (count: number): Promise<void> =>
-          count === 0
-            ? Promise.resolve()
-            : new Promise((resolve) => requestAnimationFrame(() => resolve(frames(count - 1))))
+        const present = (selector: string) =>
+          [...shadow.querySelectorAll<HTMLElement>(selector)].find((element) => !element.inert)
 
-        const start = box(fromSelector)
-        ;(shadow.querySelector(`[aria-label="${control}"]`) as HTMLElement).click()
-        // The shell waits two frames for the dock to settle before it moves.
-        await frames(4)
-        const shell = shadow.querySelector('[data-morph]') as HTMLElement | null
-        const effect = shell?.getAnimations()[0]?.effect
-        const keyframes = effect instanceof KeyframeEffect ? effect.getKeyframes() : []
-        const at = (frame: Keyframe | undefined) =>
-          ['left', 'top', 'width', 'height'].map((key) =>
-            Math.round(parseFloat(String(frame?.[key]))),
-          )
-        const copy = shell?.firstElementChild
-        return {
-          start,
-          end: box(toSelector),
-          shellFrom: at(keyframes[0]),
-          shellTo: at(keyframes[keyframes.length - 1]),
-          radiusFrom: String(keyframes[0]?.borderRadius),
-          copyScroll: copy
-            ? Math.max(0, ...[...copy.querySelectorAll('*')].map((node) => node.scrollTop))
-            : null,
-          // CSS entrances on the copy, which would fade copied rows in from nothing.
-          copyEntrances: copy
-            ? copy
-                .getAnimations({ subtree: true })
-                .filter((animation) => animation instanceof CSSAnimation)
-                .map((animation) => (animation as CSSAnimation).animationName)
-            : null,
-          targetOpacity: getComputedStyle(shadow.querySelector(toSelector)!).opacity,
+        const start = box(shadow.querySelector(fromSelector)!)
+        if (control === 'toolbar') {
+          ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
+            type: 'toggle-sidebar',
+          })
+        } else {
+          ;(shadow.querySelector(`[aria-label="${control}"]`) as HTMLElement).click()
         }
+
+        const seen = {
+          first: null as number[] | null,
+          last: null as number[] | null,
+          oldStayed: false,
+          frames: 0,
+        }
+        const follow = (): Promise<void> =>
+          new Promise((resolve) => requestAnimationFrame(resolve)).then(() => {
+            seen.frames += 1
+            if (shadow.querySelector<HTMLElement>(fromSelector)?.inert) seen.oldStayed = true
+            const target = present(toSelector)
+            if (target && getComputedStyle(target).transform !== 'none') {
+              seen.first ??= box(target)
+              seen.last = box(target)
+            }
+            const done =
+              target && !target.hasAttribute('data-morphing') && !shadow.querySelector(fromSelector)
+            return done || seen.frames >= 120 ? undefined : follow()
+          })
+        await follow()
+
+        const target = present(toSelector)!
+        return { ...seen, start, end: box(target), opacity: getComputedStyle(target).opacity }
       },
       label,
       from,
       to,
     )
 
-  /** Waits for the shell to go, then reads how opaque the element it ended on is. */
-  const settledOpacity = async (selector: string) => {
-    await closedPage.waitForFunction(
-      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-morph]'),
-    )
-    return closedPage.evaluate(
-      (target) =>
-        getComputedStyle(
-          document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector(target)!,
-        ).opacity,
-      selector,
-    )
-  }
+  /** Whether every edge of a box is within `slack` pixels of another box. */
+  const near = (actual: number[] | null, expected: number[], slack: number) =>
+    actual !== null && actual.every((value, index) => Math.abs(value - expected[index]) <= slack)
+
+  /**
+   * Whether the first frame drawn is still close to where the morph starts.
+   * Motion skips up to 40ms of an animation whose first frame is late, and
+   * opening renders the whole panel before that frame.
+   */
+  const startsOn = ({ first, start, end }: { first: number[] | null; start: number[]; end: number[] }) =>
+    first !== null &&
+    first.every((value, index) => Math.abs(value - start[index]) <= 0.15 * Math.abs(end[index] - start[index]) + 1)
 
   it('opens from the launcher alone, growing the pill into the panel', async () => {
     const morph = await morphOn(
@@ -2225,14 +2268,12 @@ describe('a github.com tab that was never asked', { concurrency: false, skip }, 
       '[role="complementary"]',
     )
 
-    assert.deepEqual(morph.shellFrom, morph.start)
-    // Square where the tab meets the edge, round on the outside.
-    assert.equal(morph.radiusFrom, '0px 22px 22px 0px')
-    // A tab that was never opened has not measured the page yet, so this is
-    // also where a stale dock position would show.
-    assert.deepEqual(morph.shellTo, morph.end)
-    assert.equal(morph.targetOpacity, '0', 'expected the panel hidden until the shell arrives')
-    assert.equal(await settledOpacity('[role="complementary"]'), '1')
+    assert.ok(startsOn(morph), `expected it to start on the pill at ${morph.start}, saw ${morph.first}`)
+    assert.ok(morph.oldStayed, 'expected the pill to stay, inert, while it fades')
+    // A tab that was never opened has not measured the page yet, so a stale
+    // dock position would show as a jump on the last frame.
+    assert.ok(near(morph.last, morph.end, 3), `expected it to land on ${morph.end}, saw ${morph.last}`)
+    assert.equal(morph.opacity, '1')
 
     assert.equal(await panelShowing(), true)
     const opened = await closedPage.evaluate(() =>
@@ -2275,40 +2316,365 @@ describe('a github.com tab that was never asked', { concurrency: false, skip }, 
   })
 
   it('shrinks the panel back into the pill when hidden', async () => {
-    await settledOpacity('[role="complementary"]')
-    const scrolled = await closedPage.evaluate(async () => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const list = shadow.querySelector('[data-index]')!.closest('.overflow-y-auto')!
-      list.scrollTop = 600
-      // Lets the list render the rows it has scrolled to.
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-      return list.scrollTop
-    })
-    assert.ok(scrolled > 0, 'expected the list to scroll')
     const morph = await morphOn('Hide sidebar', '[role="complementary"]', '[data-launcher-capsule]')
 
-    assert.deepEqual(morph.shellFrom, morph.start)
-    assert.deepEqual(morph.shellTo, morph.end)
-    assert.deepEqual(morph.copyEntrances, [], 'expected the copied panel to keep its rows showing')
-    assert.equal(morph.copyScroll, scrolled, 'expected the copied list where the list was scrolled')
-    assert.equal(morph.targetOpacity, '0', 'expected the pill hidden until the shell arrives')
-    assert.equal(await settledOpacity('[data-launcher-capsule]'), '1')
+    assert.ok(startsOn(morph), `expected it to start on the panel at ${morph.start}, saw ${morph.first}`)
+    assert.ok(morph.oldStayed, 'expected the panel to stay, inert, while it fades')
+    assert.ok(near(morph.last, morph.end, 3), `expected it to land on ${morph.end}, saw ${morph.last}`)
+    assert.equal(morph.opacity, '1')
   })
 
+  /** How opaque the launcher count looks, through every element above it. */
+  const chipOpacity = () =>
+    closedPage.evaluate(() => {
+      let opacity = 1
+      let node = document
+        .getElementById('github-sidecar-root')!
+        .shadowRoot!.querySelector('[data-launcher-chip]')
+      while (node instanceof Element) {
+        opacity *= parseFloat(getComputedStyle(node).opacity)
+        node = node.parentElement
+      }
+      return opacity
+    })
+
+  it('shows the whole pill again when the panel is hidden mid-morph', async () => {
+    await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const start = performance.now()
+      const until = (ms: number): Promise<void> =>
+        performance.now() - start >= ms
+          ? Promise.resolve()
+          : new Promise((resolve) => requestAnimationFrame(() => resolve(until(ms))))
+      ;(shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLElement).click()
+      // Past the fade of the pill contents, before the pill has gone.
+      await until(250)
+      ;(shadow.querySelector('[aria-label="Hide sidebar"]') as HTMLElement).click()
+    })
+    await settleMorph(closedPage)
+
+    assert.equal(await panelShowing(), false)
+    assert.equal(await chipOpacity(), 1)
+  })
+
+  it('keeps the panel fading out through a refresh that lands mid-morph', async () => {
+    await clickLauncher()
+    await settleMorph(closedPage)
+
+    const midway = await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const start = performance.now()
+      const until = (ms: number): Promise<void> =>
+        performance.now() - start >= ms
+          ? Promise.resolve()
+          : new Promise((resolve) => requestAnimationFrame(() => resolve(until(ms))))
+      ;(shadow.querySelector('[aria-label="Hide sidebar"]') as HTMLElement).click()
+      await until(50)
+      ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
+        type: 'search-updated',
+        query: 'is:open is:pr',
+        after: null,
+        page: {
+          items: (window as unknown as { __items: unknown[] }).__items,
+          totalCount: 12,
+          endCursor: null,
+          hasNextPage: false,
+          fetchedAt: Date.now(),
+        },
+      })
+      // Past the fade of the panel contents, before the panel has gone.
+      await until(250)
+      return {
+        chip: shadow.querySelector('[data-launcher-chip]')?.textContent,
+        panel: Boolean(shadow.querySelector('[data-docked]')),
+      }
+    })
+
+    assert.equal(midway.chip, '12', 'expected the refresh to re-render the launcher')
+    assert.equal(midway.panel, true, 'expected the panel to stay until it has faded')
+    assert.equal(await panelShowing(), false)
+  })
+
+  it('shows the edge of the pill again when the window is resized mid-morph', async () => {
+    await clickLauncher()
+    await settleMorph(closedPage)
+    await closedPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Hide sidebar"]') as HTMLElement).click()
+    })
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
+
+    // Motion finishes the morph early when the width changes.
+    await closedPage.setViewport({ width: 1240, height: 800 })
+    try {
+      await closedPage.waitForFunction(
+        () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-morphing]'),
+        { timeout: 2000 },
+      )
+    } finally {
+      await closedPage.setViewport({ width: 1280, height: 800 })
+    }
+    assert.equal(await panelShowing(), false)
+  })
+
+  it('closes an open menu as soon as the panel starts to go', async () => {
+    await clickLauncher()
+    await settleMorph(closedPage)
+    const trigger = await closedPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = shadow.querySelector('[data-docked] [aria-haspopup="menu"]')!.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+    await closedPage.mouse.click(trigger.x, trigger.y)
+    await closedPage.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[role="menu"]')),
+    )
+
+    await closedPage.evaluate(() => {
+      ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
+        type: 'toggle-sidebar',
+      })
+    })
+    await closedPage.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-docked][inert]')),
+    )
+    const menu = await closedPage.evaluate(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[role="menu"]')),
+    )
+
+    assert.equal(menu, false)
+    assert.equal(await panelShowing(), false)
+  })
+
+  /**
+   * Sets the motion preference, then waits for it to reach Motion, which reads
+   * it from a media query listener that hears about it a frame or so later.
+   */
+  const preferReducedMotion = async (reduce: boolean) => {
+    const changed = closedPage.evaluate(
+      () =>
+        new Promise((resolve) => {
+          matchMedia('(prefers-reduced-motion)').addEventListener('change', resolve, { once: true })
+        }),
+    )
+    await closedPage.emulateMediaFeatures(
+      reduce ? [{ name: 'prefers-reduced-motion', value: 'reduce' }] : [],
+    )
+    await changed
+  }
+
   it('skips the morph for anyone who asks for reduced motion', async () => {
-    await closedPage.emulateMediaFeatures([
-      { name: 'prefers-reduced-motion', value: 'reduce' },
-    ])
+    await preferReducedMotion(true)
     try {
       const morph = await morphOn(
         'Open GitHub Sidecar',
         '[data-launcher-capsule]',
         '[role="complementary"]',
       )
-      assert.deepEqual(morph.shellFrom.filter(Number.isFinite), [], 'expected no shell')
-      assert.equal(morph.targetOpacity, '1')
+      assert.equal(morph.first, null, 'expected the panel never to be scaled')
+      assert.equal(morph.opacity, '1')
+      assert.equal(
+        await closedPage.evaluate(() => document.body.style.getPropertyValue('transition')),
+        '',
+        'expected the page to move at once',
+      )
     } finally {
-      await closedPage.emulateMediaFeatures([])
+      await preferReducedMotion(false)
+    }
+  })
+
+  it('lands below the nav when the toolbar opens it on a scrolled page', async () => {
+    await clickToolbar()
+    assert.equal(await panelShowing(), false)
+    await closedPage.evaluate(() => window.scrollTo(0, 30))
+
+    // The page has scrolled since the panel last measured it.
+    const morph = await morphOn('toolbar', '[data-launcher-capsule]', '[role="complementary"]')
+    const navBottom = await closedPage.evaluate(
+      () => document.querySelector('.js-header-wrapper')!.getBoundingClientRect().bottom,
+    )
+
+    assert.equal(morph.end[1], navBottom + DOCK_INSET)
+    assert.ok(near(morph.last, morph.end, 3), `expected it to land on ${morph.end}, saw ${morph.last}`)
+  })
+
+  /**
+   * Clicks a control, then reads how far across the page is drawn, and where
+   * the header starts, on each frame until the panel and the page settle.
+   */
+  const pageMoveOn = (label: string) =>
+    closedPage.evaluate(async (control) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const header = document.querySelector('.AppHeader')!
+      const insets: number[] = []
+      const headerLefts: number[] = []
+      ;(shadow.querySelector(`[aria-label="${control}"]`) as HTMLElement).click()
+      const follow = (): Promise<void> =>
+        new Promise((resolve) => requestAnimationFrame(resolve)).then(() => {
+          insets.push(Math.round(parseFloat(getComputedStyle(document.body).paddingLeft)))
+          headerLefts.push(Math.round(header.getBoundingClientRect().left))
+          const settled =
+            !shadow.querySelector('[data-morphing]') &&
+            !document.body.hasAttribute('data-github-sidecar-moving')
+          return settled || insets.length >= 120 ? undefined : follow()
+        })
+      await follow()
+      return { insets, headerLefts, inline: document.body.style.cssText }
+    }, label)
+
+  /** Opens or hides the panel, then waits for it and the page to settle. */
+  const showPanel = async (open: boolean) => {
+    if ((await panelShowing()) !== open) {
+      await closedPage.evaluate((label) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        ;(shadow.querySelector(`[aria-label="${label}"]`) as HTMLElement).click()
+      }, open ? 'Open GitHub Sidecar' : 'Hide sidebar')
+    }
+    await settleMorph(closedPage)
+  }
+
+  it('moves the page back with the panel, and puts its own body styles back', async () => {
+    await closedPage.evaluate(() => window.scrollTo(0, 0))
+    await showPanel(true)
+    const open = await closedPage.evaluate(() =>
+      Math.round(parseFloat(getComputedStyle(document.body).paddingLeft)),
+    )
+    assert.ok(open > 0, 'expected the open panel to need the page moved')
+
+    const move = await pageMoveOn('Hide sidebar')
+
+    assert.ok(
+      move.insets.some((inset) => inset > 0 && inset < open),
+      `expected the page to pass through the space between, saw ${move.insets}`,
+    )
+    assert.equal(move.insets.at(-1), 0)
+    assert.ok(move.headerLefts.every((left) => left === 0), `expected the header to hold still, saw ${move.headerLefts}`)
+    // The fixture body carries its own inline margin, which must survive.
+    assert.equal(move.inline, 'margin: 0px;')
+  })
+
+  it('moves the page from where it is drawn when reopened partway through closing', async () => {
+    await showPanel(true)
+
+    const insets = await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const inset = () => Math.round(parseFloat(getComputedStyle(document.body).paddingLeft))
+      const start = performance.now()
+      const until = (ms: number): Promise<void> =>
+        performance.now() - start >= ms
+          ? Promise.resolve()
+          : new Promise((resolve) => requestAnimationFrame(() => resolve(until(ms))))
+      ;(shadow.querySelector('[aria-label="Hide sidebar"]') as HTMLElement).click()
+      await until(150)
+      const closing = inset()
+      ;(shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLElement).click()
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      return { closing, reopened: inset() }
+    })
+
+    assert.ok(insets.closing > 0, 'expected the page partway back')
+    // One frame of the spring moves the page far less than this.
+    assert.ok(
+      insets.reopened >= insets.closing - 2 && insets.reopened <= insets.closing + 40,
+      `expected the page to carry on from ${insets.closing}, saw ${insets.reopened}`,
+    )
+    await settleMorph(closedPage)
+  })
+
+  it('lands the page at once when a navigation interrupts the move back', async () => {
+    await showPanel(true)
+
+    const landed = await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Hide sidebar"]') as HTMLElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      // Turbo swaps in a fresh header, which the move back has not tagged.
+      const fresh = document.createElement('header')
+      fresh.className = 'AppHeader'
+      fresh.style.cssText = 'position:sticky;top:0;height:64px;background:#1f2328'
+      document.querySelector('.AppHeader')!.replaceWith(fresh)
+      document.dispatchEvent(new Event('turbo:load'))
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      return {
+        inset: parseFloat(getComputedStyle(document.body).paddingLeft),
+        headerLeft: fresh.getBoundingClientRect().left,
+        moving: document.body.hasAttribute('data-github-sidecar-moving'),
+      }
+    })
+
+    assert.deepEqual(landed, { inset: 0, headerLeft: 0, moving: false })
+    await settleMorph(closedPage)
+  })
+
+  it('moves the page back to the padding it had, with the header held still', async () => {
+    await showPanel(false)
+    await closedPage.evaluate(() => document.body.style.setProperty('padding-left', '24px'))
+    try {
+      await showPanel(true)
+      const move = await pageMoveOn('Hide sidebar')
+
+      assert.ok(Math.min(...move.insets) >= 23, `expected the page never to pass its padding, saw ${move.insets}`)
+      assert.equal(move.insets.at(-1), 24)
+      assert.ok(
+        move.headerLefts.every((left) => left === move.headerLefts[0]),
+        `expected the header to hold still, saw ${move.headerLefts}`,
+      )
+    } finally {
+      await closedPage.evaluate(() => document.body.style.removeProperty('padding-left'))
+    }
+  })
+
+  it('grows without its rows, then fades them in once it has landed', async () => {
+    await showPanel(false)
+
+    const seen = await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLElement).click()
+      const start = performance.now()
+      const result = {
+        rowsEarly: 0,
+        heightWithRows: null as number | null,
+        height: 0,
+      }
+      const follow = (): Promise<void> =>
+        new Promise((resolve) => requestAnimationFrame(resolve)).then(() => {
+          const elapsed = performance.now() - start
+          const rows = shadow.querySelectorAll('[data-index]').length
+          const panel = shadow.querySelector<HTMLElement>('[data-docked]:not([inert])')
+          if (elapsed < 200) result.rowsEarly = Math.max(result.rowsEarly, rows)
+          if (rows > 0 && panel) result.heightWithRows ??= panel.getBoundingClientRect().height
+          const done = panel && !panel.hasAttribute('data-morphing') && rows > 0
+          if (done) result.height = panel.offsetHeight
+          return done || elapsed > 2000 ? undefined : follow()
+        })
+      await follow()
+      return {
+        ...result,
+        fades: Boolean(shadow.querySelector('[data-docked] .animate-list-in [data-index]')),
+      }
+    })
+
+    assert.equal(seen.rowsEarly, 0, 'expected no rows while the panel is still small')
+    // The panel is still when they arrive, rather than growing a little more after.
+    assert.ok(
+      seen.heightWithRows !== null && Math.abs(seen.heightWithRows - seen.height) <= 1,
+      `expected the rows on a panel already ${seen.height}px tall, saw ${seen.heightWithRows}`,
+    )
+    assert.equal(seen.fades, true)
+    await settleMorph(closedPage)
+  })
+
+  it('keeps an inline style github.com writes while the panel is open', async () => {
+    await showPanel(true)
+    await closedPage.evaluate(() => document.body.style.setProperty('padding-left', '33px'))
+    try {
+      await showPanel(false)
+      assert.equal(
+        await closedPage.evaluate(() => document.body.style.getPropertyValue('padding-left')),
+        '33px',
+      )
+    } finally {
+      await closedPage.evaluate(() => document.body.style.removeProperty('padding-left'))
     }
   })
 })
@@ -2836,6 +3202,53 @@ describe('the page this tab is on', { concurrency: false, skip }, () => {
       Math.round(moved.right - moved.panelRight),
       Math.round(start.right - start.panelRight),
     )
+  })
+
+  it('hides while the panel morphs, and points at the row again once it lands', async () => {
+    await onPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Collapse"]') as HTMLElement).click()
+    })
+    await onPage.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-docked][inert]')),
+    )
+    const whileLeaving = await onPage.evaluate(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const marker = shadow.querySelector('[data-current-marker]')
+      return {
+        panel: Boolean(shadow.querySelector('[data-docked]')),
+        marker: marker ? getComputedStyle(marker).visibility : null,
+      }
+    })
+    assert.deepEqual(whileLeaving, { panel: true, marker: 'hidden' })
+    await settleMorph(onPage)
+
+    const shownWhileOpening = await onPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLElement).click()
+      let shown = false
+      const follow = (): Promise<void> =>
+        new Promise((resolve) => requestAnimationFrame(resolve)).then(() => {
+          const panel = shadow.querySelector('[data-docked]:not([inert])')
+          const marker = shadow.querySelector('[data-current-marker]')
+          const morphing = !panel || panel.hasAttribute('data-morphing')
+          if (morphing && marker && getComputedStyle(marker).visibility === 'visible') shown = true
+          return morphing ? follow() : undefined
+        })
+      await follow()
+      return shown
+    })
+    assert.equal(shownWhileOpening, false)
+
+    await onPage.waitForFunction(() => {
+      const marker = document
+        .getElementById('github-sidecar-root')!
+        .shadowRoot!.querySelector('[data-current-marker]')
+      return marker ? getComputedStyle(marker).visibility === 'visible' : false
+    })
+    const marker = (await markerGeometry())!
+    assert.equal(Math.round(marker.top), Math.round(marker.rowTop!))
   })
 
   it('marks nothing for an item this query does not hold', async () => {

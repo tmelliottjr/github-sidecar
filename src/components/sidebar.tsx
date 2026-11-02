@@ -13,11 +13,10 @@ import {
 import { DockedPanel, clampDockWidth } from '@/components/docked-panel'
 import { ItemList } from '@/components/item-list'
 import { Launcher } from '@/components/launcher'
-import { Morph, captureOrigin, type MorphOrigin } from '@/components/morph'
+import { MorphPresence } from '@/components/morph'
 import { QueryEditor } from '@/components/query-editor'
 import { SidebarHeader } from '@/components/sidebar-header'
 import { Button } from '@/components/ui/button'
-import { usePortalContainer } from '@/components/ui/portal-container'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FilterBar, type GroupBy, type SortOrder } from '@/components/filter-bar'
 import { useDockLayout } from '@/hooks/use-dock-layout'
@@ -46,9 +45,7 @@ import { sendMessage, RequestError } from '@/lib/messages'
 import { DEFAULT_FEATURES, type SavedQuery, type Settings, type WindowState } from '@/lib/storage'
 import { cn, relativeTime } from '@/lib/utils'
 
-const PANEL_SELECTOR = '[role="complementary"]'
 const NO_QUICK_FILTER: QuickFilter = {}
-const LAUNCHER_SELECTOR = '[data-launcher-capsule]'
 
 export function Sidebar() {
   const [settings, setSettings] = useStorageValue('settings')
@@ -84,30 +81,6 @@ export function Sidebar() {
 
   useSearchUpdates()
 
-  const container = usePortalContainer()
-  const [morph, setMorph] = useState<{ id: number; origin: MorphOrigin; target: string } | null>(
-    null,
-  )
-
-  /**
-   * Starts the launcher morphing into the panel, or the panel back into the
-   * launcher. Call it before the state change that swaps them, while the one
-   * on screen can still be measured.
-   */
-  const beginMorph = useCallback(
-    (to: 'panel' | 'launcher') => {
-      if (!container || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-      const from = container.querySelector(to === 'panel' ? LAUNCHER_SELECTOR : PANEL_SELECTOR)
-      if (!(from instanceof HTMLElement)) return
-      setMorph({
-        id: Date.now(),
-        origin: captureOrigin(from),
-        target: to === 'panel' ? PANEL_SELECTOR : LAUNCHER_SELECTOR,
-      })
-    },
-    [container],
-  )
-
   const patchWindow = useCallback(
     (patch: Partial<WindowState>) => {
       setWindowState((current) => ({ ...current, ...patch }))
@@ -126,15 +99,23 @@ export function Sidebar() {
   const isCollapsed = windowState?.collapsed ?? false
   const showsLauncher = !isVisible || isCollapsed
 
+  // The launcher slides in only until the first swap. After that it always
+  // morphs out of the panel, and a slide would move the box Motion measures.
+  const [wasLauncher, setWasLauncher] = useState(showsLauncher)
+  const [hasSwapped, setHasSwapped] = useState(false)
+  if (wasLauncher !== showsLauncher) {
+    setWasLauncher(showsLauncher)
+    setHasSwapped(true)
+  }
+
   /**
    * The launcher can stand for a hidden panel, a collapsed one, or both, and
    * opening has to clear both or it just redraws the launcher.
    */
   const openPanel = useCallback(() => {
-    beginMorph('panel')
     setOpen(true)
     if (isCollapsed) patchWindow({ collapsed: false })
-  }, [beginMorph, isCollapsed, patchWindow, setOpen])
+  }, [isCollapsed, patchWindow, setOpen])
 
   // The toolbar button opens the panel in the tab it was clicked on, or hides it there.
   useEffect(() => {
@@ -144,12 +125,11 @@ export function Sidebar() {
         openPanel()
         return
       }
-      beginMorph('launcher')
       setOpen(false)
     }
     browser.runtime.onMessage.addListener(listener)
     return () => browser.runtime.onMessage.removeListener(listener)
-  }, [beginMorph, openPanel, setOpen, showsLauncher])
+  }, [openPanel, setOpen, showsLauncher])
 
   const activeQuery = useMemo<SavedQuery | null>(() => {
     if (!savedQueries?.length) return null
@@ -177,7 +157,7 @@ export function Sidebar() {
   // Measuring the host page is only worth doing while the panel is on screen.
   // The launcher sits over the page and takes no room from it.
   const dockTop = useDockLayout({
-    enabled: !showsLauncher,
+    enabled: isOpen === null || !windowState ? null : !showsLauncher,
     width: dockWidth,
   })
 
@@ -502,28 +482,19 @@ export function Sidebar() {
       : null
   const totalCount = search.data?.pages[0]?.totalCount ?? 0
 
-  // Rendered before the panel, so the panel paints over it as it fades in.
-  const shell = morph && (
-    <Morph
-      key={morph.id}
-      origin={morph.origin}
-      target={morph.target}
-      onDone={() => setMorph(null)}
-    />
-  )
-
   // Rendered before anything else so the list is not built just to sit
   // behind the launcher.
   if (showsLauncher) {
     return (
-      <>
-        {shell}
+      <MorphPresence>
         <Launcher
+          key="launcher"
           title={activeQuery?.name ?? 'GitHub Sidecar'}
           count={search.data ? totalCount : null}
           onOpen={openPanel}
+          slideIn={!hasSwapped}
         />
-      </>
+      </MorphPresence>
     )
   }
 
@@ -554,14 +525,8 @@ export function Sidebar() {
       canInspect={developer?.enabled ?? false}
       onMarkAllSeen={markAllSeen}
       onRefresh={refetch}
-      onCollapse={() => {
-        beginMorph('launcher')
-        patchWindow({ collapsed: true })
-      }}
-      onHide={() => {
-        beginMorph('launcher')
-        setOpen(false)
-      }}
+      onCollapse={() => patchWindow({ collapsed: true })}
+      onHide={() => setOpen(false)}
     />
   )
 
@@ -753,9 +718,9 @@ export function Sidebar() {
   )
 
   return (
-    <>
-      {shell}
+    <MorphPresence>
       <DockedPanel
+        key="panel"
         width={clampDockWidth(windowState.dockWidth)}
         top={dockTop}
         onWidthChange={setDockWidth}
@@ -763,7 +728,7 @@ export function Sidebar() {
       >
         {body}
       </DockedPanel>
-    </>
+    </MorphPresence>
   )
 }
 

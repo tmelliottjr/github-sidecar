@@ -4,6 +4,7 @@ import { ChevronDownIcon, SyncIcon } from '@primer/octicons-react'
 
 import { CurrentRowMarker } from '@/components/current-row-marker'
 import { ItemRow } from '@/components/item-row'
+import { useMorphSettled } from '@/components/morph'
 import {
   changesSince,
   reminderState,
@@ -104,6 +105,10 @@ export function ItemList({
   onUnhide,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Rows are the slowest part of the panel to render, so an opening panel
+  // grows without them and they fade in together once it has.
+  const settled = useMorphSettled()
+  const [heldBack] = useState(!settled)
   // The element the marker is drawn against, held in state so the marker
   // re-places itself when the virtualiser mounts or drops that row.
   const [currentRow, setCurrentRow] = useState<HTMLElement | null>(null)
@@ -323,91 +328,96 @@ export function ItemList({
       tabIndex={-1}
       className="scrollbar-slim h-full overflow-y-auto overscroll-contain focus:outline-none"
     >
-      <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-        {virtualItems.map((virtualRow) => {
-          const row = visibleRows[virtualRow.index]
-          const item = row?.type === 'item' ? row.item : undefined
-          const isCurrent = item?.id === currentId
-          return (
-            <div
-              key={virtualRow.key}
-              data-index={virtualRow.index}
-              ref={isCurrent ? measureCurrent : virtualizer.measureElement}
-              // The gap below each row is inside the measured box, so the
-              // virtualizer spaces the tiles without knowing about it.
-              className={cn(
-                'absolute left-0 top-0 w-full px-1.5',
-                row?.type !== 'header' && 'pb-0.5',
-                // Each wrapper is its own stacking context, so the next row would cut off a lifted shadow.
-                'has-[[data-lifted]]:z-[1]',
-              )}
-              style={{ transform: `translateY(${virtualRow.start}px)` }}
-            >
-              {row?.type === 'header' ? (
-                <GroupHeader
-                  label={row.label}
-                  count={row.count}
-                  avatarUrl={row.avatarUrl}
-                  isCollapsed={collapsed.has(row.groupKey)}
-                  onToggle={() => onToggleGroup(row.groupKey)}
-                />
-              ) : (
-                /*
-                 * The entrance lives on an inner element: the wrapper's own
-                 * transform is what places the row in the virtual list, and an
-                 * animation of the same property would fight it.
-                 */
-                <div className={cn(item && entering.has(item.id) && 'animate-row-in')}>
-                  {item ? (
-                    <ItemRow
-                      item={item}
-                      isPinned={pinned.has(item.id)}
-                      isCurrent={isCurrent}
-                      isStackOpen={openStacks.has(item.id)}
-                      // Worked out per rendered row rather than for the whole
-                      // list: only the rows on screen are mounted, so this is
-                      // the smaller of the two sums by a wide margin.
-                      changes={
-                        features.changes ? changesSince(memory[item.id]?.seen, item) : NO_CHANGES
-                      }
-                      seen={memory[item.id]?.seen}
-                      reminder={
-                        features.reminders ? reminderState(memory[item.id], item) : 'none'
-                      }
-                      reminderDetail={memory[item.id]?.reminder}
-                      isHidden={hiddenIds.has(item.id)}
-                      isChecksOpen={openChecks.has(item.id)}
-                      canRemind={features.reminders}
-                      reminderOverrides={reminderOverrides}
-                      canHide={features.hide}
-                      showFailingChecks={features.failingChecks}
-                      showMergeState={features.mergeState}
-                      onOpen={onOpen}
-                      onOpenUrl={onOpenUrl}
-                      onRefresh={onRefreshItem}
-                      onTogglePin={onTogglePin}
-                      onToggleStack={toggleStack}
-                      onToggleChecks={toggleChecks}
-                      onMarkSeen={onMarkSeen}
-                      onRemind={onRemind}
-                      onClearReminder={onClearReminder}
-                      onHide={onHide}
-                      onUnhide={onUnhide}
-                    />
-                  ) : (
-                    <div className="flex items-center justify-center gap-2 py-4 text-[12px] text-muted-foreground">
-                      <SyncIcon className="size-3.5 animate-spin" />
-                      Loading more
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+      {settled && (
+        <div
+          className={cn('relative w-full', heldBack && 'animate-list-in')}
+          style={{ height: virtualizer.getTotalSize() }}
+        >
+          {virtualItems.map((virtualRow) => {
+            const row = visibleRows[virtualRow.index]
+            const item = row?.type === 'item' ? row.item : undefined
+            const isCurrent = item?.id === currentId
+            return (
+              <div
+                key={virtualRow.key}
+                data-index={virtualRow.index}
+                ref={isCurrent ? measureCurrent : virtualizer.measureElement}
+                // The gap below each row is inside the measured box, so the
+                // virtualizer spaces the tiles without knowing about it.
+                className={cn(
+                  'absolute left-0 top-0 w-full px-1.5',
+                  row?.type !== 'header' && 'pb-0.5',
+                  // Each wrapper is its own stacking context, so the next row would cut off a lifted shadow.
+                  'has-[[data-lifted]]:z-[1]',
+                )}
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                {row?.type === 'header' ? (
+                  <GroupHeader
+                    label={row.label}
+                    count={row.count}
+                    avatarUrl={row.avatarUrl}
+                    isCollapsed={collapsed.has(row.groupKey)}
+                    onToggle={() => onToggleGroup(row.groupKey)}
+                  />
+                ) : (
+                  /*
+                   * The entrance lives on an inner element: the wrapper's own
+                   * transform is what places the row in the virtual list, and an
+                   * animation of the same property would fight it.
+                   */
+                  <div className={cn(item && entering.has(item.id) && 'animate-row-in')}>
+                    {item ? (
+                      <ItemRow
+                        item={item}
+                        isPinned={pinned.has(item.id)}
+                        isCurrent={isCurrent}
+                        isStackOpen={openStacks.has(item.id)}
+                        // Worked out per rendered row rather than for the whole
+                        // list: only the rows on screen are mounted, so this is
+                        // the smaller of the two sums by a wide margin.
+                        changes={
+                          features.changes ? changesSince(memory[item.id]?.seen, item) : NO_CHANGES
+                        }
+                        seen={memory[item.id]?.seen}
+                        reminder={
+                          features.reminders ? reminderState(memory[item.id], item) : 'none'
+                        }
+                        reminderDetail={memory[item.id]?.reminder}
+                        isHidden={hiddenIds.has(item.id)}
+                        isChecksOpen={openChecks.has(item.id)}
+                        canRemind={features.reminders}
+                        reminderOverrides={reminderOverrides}
+                        canHide={features.hide}
+                        showFailingChecks={features.failingChecks}
+                        showMergeState={features.mergeState}
+                        onOpen={onOpen}
+                        onOpenUrl={onOpenUrl}
+                        onRefresh={onRefreshItem}
+                        onTogglePin={onTogglePin}
+                        onToggleStack={toggleStack}
+                        onToggleChecks={toggleChecks}
+                        onMarkSeen={onMarkSeen}
+                        onRemind={onRemind}
+                        onClearReminder={onClearReminder}
+                        onHide={onHide}
+                        onUnhide={onUnhide}
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center gap-2 py-4 text-[12px] text-muted-foreground">
+                        <SyncIcon className="size-3.5 animate-spin" />
+                        Loading more
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
-      <CurrentRowMarker row={currentRow} viewportRef={scrollRef} />
+      {settled && <CurrentRowMarker row={currentRow} viewportRef={scrollRef} />}
     </div>
   )
 }

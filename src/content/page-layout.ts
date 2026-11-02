@@ -15,16 +15,29 @@
  * the site rather than as something parked on top of it.
  */
 
+import { spring } from 'motion'
+
+import { MORPH_SPRING } from '../lib/morph-spring.ts'
+
 export const HOST_ID = 'github-sidecar-root'
 
-const STYLE_ID = 'github-sidecar-dock-style'
+/** Marks the bars pulled back across the reservation to keep spanning the viewport. */
+const FULL_BLEED_ATTR = 'data-github-sidecar-full-bleed'
+
+/** Set on body while the page moves with the panel. */
+const MOVING_ATTR = 'data-github-sidecar-moving'
 
 /**
- * Marks the bars that have to keep spanning the viewport once we have taken
- * space from the page. An attribute rather than a selector in the stylesheet
- * so the rule stays one line however github.com's markup is arranged.
+ * The panel spring as a CSS timing, such as `550ms linear(…)`, so the page
+ * moves with the panel. Its overshoot is capped: padding stops at 0, so a
+ * close that overshot would leave the header margin pulling it 1px right.
  */
-const FULL_BLEED_ATTR = 'data-github-sidecar-full-bleed'
+const MOVE_TIMING = String(spring(MORPH_SPRING.visualDuration, MORPH_SPRING.bounce)).replace(
+  /[\d.]+(?=[,)])/g,
+  (point) => String(Math.min(1, Number(point))),
+)
+/** A frame or so past the end of a move, so it is never cut short. */
+const MOVE_MS = parseFloat(MOVE_TIMING) + 50
 
 /** Breathing room between the docked panel and the page's own content. */
 export const DOCK_GAP = 16
@@ -150,6 +163,9 @@ export function measureContentTop(): number {
   return Math.round(Math.min(Math.max(top, 0), window.innerHeight / 2))
 }
 
+/** Bars pulled back across the reservation, with the left margin each has bare. */
+const fullBleed = new Map<HTMLElement, number>()
+
 /**
  * Tags the bars at the top of the document so the reservation can hand them
  * back the space it takes from everything else.
@@ -159,13 +175,19 @@ export function measureContentTop(): number {
  */
 function markFullBleedChrome(): void {
   clearFullBleedChrome()
-  for (const bar of topChrome()) bar.setAttribute(FULL_BLEED_ATTR, '')
+  for (const bar of topChrome()) {
+    if (!(bar instanceof HTMLElement)) continue
+    fullBleed.set(bar, parseFloat(getComputedStyle(bar).marginLeft) || 0)
+    bar.setAttribute(FULL_BLEED_ATTR, '')
+  }
 }
 
 function clearFullBleedChrome(): void {
-  for (const marked of document.querySelectorAll(`[${FULL_BLEED_ATTR}]`)) {
-    marked.removeAttribute(FULL_BLEED_ATTR)
+  for (const bar of fullBleed.keys()) {
+    bar.removeAttribute(FULL_BLEED_ATTR)
+    restoreStyle(bar)
   }
+  fullBleed.clear()
 }
 
 /**
@@ -236,42 +258,145 @@ function measureGutter(contentTop: number): number {
   return gutter === null ? MAX_GUTTER : Math.min(gutter, MAX_GUTTER)
 }
 
+interface Replaced {
+  /** What github.com had inline, which clearing puts back. */
+  value: string
+  priority: string
+  /** What the reservation last wrote, as the browser reads it back. */
+  applied: string
+}
+
+/** Inline values the reservation has replaced, per element. */
+const replaced = new WeakMap<HTMLElement, Map<string, Replaced>>()
+
+function setStyle(element: HTMLElement, property: string, value: string): void {
+  let saved = replaced.get(element)
+  if (!saved) {
+    saved = new Map()
+    replaced.set(element, saved)
+  }
+  const current = element.style.getPropertyValue(property)
+  const entry = saved.get(property)
+  // github.com may have written its own value since the reservation last did;
+  // that one is what clearing has to put back.
+  if (!entry || current !== entry.applied) {
+    saved.set(property, {
+      value: current,
+      priority: element.style.getPropertyPriority(property),
+      applied: '',
+    })
+  }
+  element.style.setProperty(property, value, 'important')
+  saved.get(property)!.applied = element.style.getPropertyValue(property)
+}
+
+/** Puts back one property, or with none named, every property the reservation set. */
+function restoreStyle(element: HTMLElement, property?: string): void {
+  const saved = replaced.get(element)
+  if (!saved) return
+  for (const [name, { value, priority, applied }] of saved) {
+    if (property !== undefined && name !== property) continue
+    saved.delete(name)
+    // Left alone if github.com has written its own value since.
+    if (element.style.getPropertyValue(name) !== applied) continue
+    if (value) element.style.setProperty(name, value, priority)
+    else element.style.removeProperty(name)
+  }
+}
+
+/** Left padding body has bare, which a close moves back to. */
+let basePadding = 0
+/** Whether the page keeps its reservation once a move ends. */
+let isReserved = false
+let moveEnd: number | undefined
+
 /**
  * The reservation lives on `<body>` rather than a content wrapper because body
  * is the one element Turbo navigation never replaces, so it survives a
- * navigation without having to be reapplied.
+ * navigation without having to be reapplied. It is written inline: changing a
+ * stylesheet restyles every element on github.com, which costs a frame.
+ *
+ * border-box stops the padding widening body past the viewport. The tagged
+ * bars are pulled back out by the same amount; their width is left auto so
+ * the negative margin alone restretches them across the window, which no
+ * padding or border on the bar itself can throw off.
+ *
+ * A move eases the page from where it is drawn to `pixels` on the panel
+ * spring, with the bars eased the same way so they hold still.
  */
-function reservationStyle(): HTMLStyleElement {
-  const existing = document.getElementById(STYLE_ID)
-  if (existing instanceof HTMLStyleElement) return existing
+function writeReservation(pixels: number, move: boolean): void {
+  const body = document.body
+  const inset = Math.round(pixels)
+  const shift = inset - basePadding
 
-  const style = document.createElement('style')
-  style.id = STYLE_ID
-  document.head.append(style)
-  return style
-}
-
-function writeReservation(style: HTMLStyleElement, pixels: number): void {
-  if (pixels <= 0) {
-    style.textContent = ''
-    return
+  for (const [element, property] of [
+    [body, 'padding-left'],
+    ...[...fullBleed.keys()].map((bar) => [bar, 'margin-left'] as const),
+  ] as const) {
+    // Restoring the transition also cancels a move that is still running.
+    if (move) setStyle(element, 'transition', `${property} ${MOVE_TIMING}`)
+    else restoreStyle(element, 'transition')
   }
 
-  const inset = Math.round(pixels)
-
-  // border-box stops the padding widening body past the viewport. The tagged
-  // bars are pulled back out by the same amount; their width is left auto so
-  // the negative margin alone restretches them across the window, which no
-  // padding or border on the bar itself can throw off.
-  style.textContent =
-    `body{box-sizing:border-box!important;padding-left:${inset}px!important}` +
-    `[${FULL_BLEED_ATTR}]{margin-left:-${inset}px!important;margin-right:0!important;` +
-    `width:auto!important;max-width:none!important}`
+  setStyle(body, 'box-sizing', 'border-box')
+  setStyle(body, 'padding-left', `${inset}px`)
+  for (const [bar, margin] of fullBleed) {
+    setStyle(bar, 'margin-left', `${margin - shift}px`)
+    setStyle(bar, 'margin-right', '0px')
+    setStyle(bar, 'width', 'auto')
+    setStyle(bar, 'max-width', 'none')
+  }
 }
 
-export function clearReservation(): void {
-  document.getElementById(STYLE_ID)?.remove()
-  clearFullBleedChrome()
+/** Where the page is drawn now, partway through a move or not. */
+function drawnInset(): number {
+  return parseFloat(getComputedStyle(document.body).paddingLeft) || 0
+}
+
+/**
+ * Starts a move from where the page is drawn now. Reading the computed style
+ * commits that position; without it, Firefox starts the move a little behind.
+ */
+function moveReservation(from: number, to: number): void {
+  document.body.setAttribute(MOVING_ATTR, '')
+  writeReservation(from, false)
+  drawnInset()
+  writeReservation(to, true)
+  window.clearTimeout(moveEnd)
+  moveEnd = window.setTimeout(endMove, MOVE_MS)
+}
+
+function endMove(): void {
+  window.clearTimeout(moveEnd)
+  moveEnd = undefined
+  document.body.removeAttribute(MOVING_ATTR)
+  if (isReserved) {
+    restoreStyle(document.body, 'transition')
+    for (const bar of fullBleed.keys()) restoreStyle(bar, 'transition')
+  } else {
+    restoreStyle(document.body)
+    clearFullBleedChrome()
+  }
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/**
+ * Gives the page its space back. With `move`, the page eases back across on
+ * the panel spring first.
+ */
+export function clearReservation({ move = false }: { move?: boolean } = {}): void {
+  isReserved = false
+  if (move && !prefersReducedMotion()) {
+    const drawn = drawnInset()
+    if (Math.round(drawn) !== Math.round(basePadding)) {
+      moveReservation(drawn, basePadding)
+      return
+    }
+  }
+  endMove()
 }
 
 export interface Reservation {
@@ -282,7 +407,8 @@ export interface Reservation {
 }
 
 /**
- * Makes the page's own content start clear of the panel's right edge.
+ * Makes the page's own content start clear of the panel's right edge. With
+ * `move`, the page eases there on the panel spring from wherever it is drawn.
  *
  * The whole target is reserved rather than just the shortfall. Padding body
  * moves every box on the page by exactly that much, so reserving the target is
@@ -299,21 +425,33 @@ export interface Reservation {
  * Reading a box forces layout, so the page is measured bare and restored
  * without ever being painted that way.
  */
-export function reserveGutter(target: number): Reservation {
-  const style = reservationStyle()
+export function reserveGutter(
+  target: number,
+  { move = false }: { move?: boolean } = {},
+): Reservation {
+  const moving = move && !prefersReducedMotion()
+  const drawn = moving ? drawnInset() : 0
 
-  writeReservation(style, 0)
+  window.clearTimeout(moveEnd)
+  document.body.removeAttribute(MOVING_ATTR)
+  restoreStyle(document.body)
+  clearFullBleedChrome()
   const contentTop = measureContentTop()
+  basePadding = drawnInset()
   const bare = measureGutter(contentTop)
 
   const reserved =
     bare >= target ? 0 : Math.min(target, window.innerWidth * MAX_PUSH_RATIO)
+  isReserved = reserved > 0
+  const goal = isReserved ? reserved : basePadding
+  const moves = moving && Math.round(drawn) !== Math.round(goal)
 
   // Still measured bare here, which is the only state the tagging can trust.
-  if (reserved > 0) markFullBleedChrome()
-  else clearFullBleedChrome()
+  // A page moving back from a reservation needs its bars held too.
+  if (isReserved || moves) markFullBleedChrome()
 
-  writeReservation(style, reserved)
+  if (moves) moveReservation(drawn, goal)
+  else if (isReserved) writeReservation(reserved, false)
 
   return { contentTop, reserved }
 }

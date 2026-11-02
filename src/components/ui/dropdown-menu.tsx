@@ -3,7 +3,7 @@ import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
 import { CheckIcon, ChevronRightIcon } from '@primer/octicons-react'
 
 import { cn } from '@/lib/utils'
-import { usePortalContainer } from './portal-container'
+import { useOwnerPresent, usePortalContainer } from './portal-container'
 import { SubHoverContext, composeMousePointer, useSubmenuHover } from './submenu-hover'
 
 const DropdownMenu = ({
@@ -22,6 +22,8 @@ function DropdownMenuContent({
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   const container = usePortalContainer()
+  const ownerPresent = useOwnerPresent()
+  if (!ownerPresent) return null
   return (
     <DropdownMenuPrimitive.Portal container={container ?? undefined}>
       <DropdownMenuPrimitive.Content
@@ -131,6 +133,8 @@ function DropdownMenuSubContent({
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
   const container = usePortalContainer()
   const hover = React.useContext(SubHoverContext)
+  const ownerPresent = useOwnerPresent()
+  if (!ownerPresent) return null
   return (
     <DropdownMenuPrimitive.Portal container={container ?? undefined}>
       <DropdownMenuPrimitive.SubContent

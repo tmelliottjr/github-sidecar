@@ -49,8 +49,6 @@
    */
   --color-conflict: oklch(0.62 0.19 45);
 
-  --radius-window: 0.875rem;
-
   /*
    * Checks can sit pending for many minutes, so the default one-second spin
    * reads as far more urgency than the status carries.
@@ -72,6 +70,8 @@
    * is readable well before the motion has finished.
    */
   --animate-view-in: view-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Rows held back while the panel grows fade in once it has landed. */
+  --animate-list-in: view-in 240ms ease-out;
   --animate-row-in: row-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-launcher-in: launcher-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
 
@@ -230,6 +230,7 @@
    * dropped outright rather than shortened.
    */
   .animate-view-in,
+  .animate-list-in,
   .animate-row-in,
   .animate-launcher-in {
     animation: none;

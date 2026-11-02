@@ -3,7 +3,7 @@ import * as ContextMenuPrimitive from '@radix-ui/react-context-menu'
 import { ChevronRightIcon } from '@primer/octicons-react'
 
 import { cn } from '@/lib/utils'
-import { usePortalContainer } from './portal-container'
+import { useOwnerPresent, usePortalContainer } from './portal-container'
 import { SubHoverContext, composeMousePointer, useSubmenuHover } from './submenu-hover'
 
 const ContextMenu = ({
@@ -37,6 +37,8 @@ function ContextMenuContent({
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
   const container = usePortalContainer()
+  const ownerPresent = useOwnerPresent()
+  if (!ownerPresent) return null
   return (
     <ContextMenuPrimitive.Portal container={container ?? undefined}>
       <ContextMenuPrimitive.Content
@@ -102,6 +104,8 @@ function ContextMenuSubContent({
 }: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) {
   const container = usePortalContainer()
   const hover = React.useContext(SubHoverContext)
+  const ownerPresent = useOwnerPresent()
+  if (!ownerPresent) return null
   return (
     <ContextMenuPrimitive.Portal container={container ?? undefined}>
       <ContextMenuPrimitive.SubContent

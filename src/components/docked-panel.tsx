@@ -1,5 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, type ReactNode } from 'react'
+import { motion, useIsPresent } from 'motion/react'
 
+import { MorphSettled, useMorph, useMorphContent } from '@/components/morph'
 import { DOCK_INSET } from '@/content/page-layout'
 import { cn, clamp } from '@/lib/utils'
 
@@ -31,6 +33,8 @@ interface Props {
  */
 export function DockedPanel({ width, top, onWidthChange, header, children }: Props) {
   const nodeRef = useRef<HTMLDivElement | null>(null)
+  const { props: morph, settled } = useMorph(nodeRef, 'panel')
+  const isPresent = useIsPresent()
   const widthRef = useRef(clampDockWidth(width))
 
   useLayoutEffect(() => {
@@ -70,14 +74,16 @@ export function DockedPanel({ width, top, onWidthChange, header, children }: Pro
   )
 
   return (
-    <div
-      ref={nodeRef}
+    <motion.div
+      {...morph}
       role="complementary"
       aria-label="GitHub Sidecar"
       data-docked=""
       className={cn(
-        'fixed z-[2147483646] flex flex-col overflow-hidden',
-        'rounded-window border border-border bg-background text-foreground shadow-window',
+        'fixed flex flex-col overflow-hidden',
+        // Below the launcher it is turning into.
+        isPresent ? 'z-[2147483646]' : 'z-[2147483645]',
+        'border border-border bg-background text-foreground shadow-window',
         'data-[gesture=active]:select-none',
       )}
       style={{
@@ -85,17 +91,24 @@ export function DockedPanel({ width, top, onWidthChange, header, children }: Pro
         left: DOCK_INSET,
         bottom: DOCK_INSET,
         width: widthRef.current,
+        // In `style` rather than a class, so Motion can blend it with the launcher corners.
+        borderRadius: 14,
       }}
     >
-      {header}
+      {/* Uncovered as the panel grows, rather than squashed into it. */}
+      <motion.div {...useMorphContent()} className="flex min-h-0 flex-1 flex-col">
+        <MorphSettled settled={settled}>
+          {header}
 
-      <div className="min-h-0 flex-1">{children}</div>
+          <div className="min-h-0 flex-1">{children}</div>
+        </MorphSettled>
+      </motion.div>
 
       <div
         onPointerDown={startResize}
         className="absolute inset-y-3 right-0 z-10 w-1.5 cursor-ew-resize touch-none"
         aria-hidden
       />
-    </div>
+    </motion.div>
   )
 }
