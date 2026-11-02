@@ -13,7 +13,7 @@ import {
   type ReminderChoice,
   type ReminderOverrides,
 } from '@/lib/attention'
-import type { SearchItem } from '@/lib/github/types'
+import type { SearchItem, Stack } from '@/lib/github/types'
 import { collapseRows, type ListRow } from '@/lib/list-view'
 import type { FeatureFlags } from '@/lib/storage'
 import { cn } from '@/lib/utils'
@@ -40,6 +40,7 @@ interface Props {
   onOpen: (item: SearchItem, event: React.MouseEvent) => void
   onOpenUrl: (url: string, event: React.MouseEvent) => void
   onRefreshItem: (item: SearchItem) => Promise<void>
+  onLoadStack: (id: string) => Promise<Stack>
   onTogglePin: (item: SearchItem) => void
   onMarkSeen: (item: SearchItem) => void
   onRemind: (item: SearchItem, choice: ReminderChoice) => void
@@ -97,6 +98,7 @@ export function ItemList({
   onOpen,
   onOpenUrl,
   onRefreshItem,
+  onLoadStack,
   onTogglePin,
   onMarkSeen,
   onRemind,
@@ -396,6 +398,7 @@ export function ItemList({
                         onRefresh={onRefreshItem}
                         onTogglePin={onTogglePin}
                         onToggleStack={toggleStack}
+                        onLoadStack={onLoadStack}
                         onToggleChecks={toggleChecks}
                         onMarkSeen={onMarkSeen}
                         onRemind={onRemind}

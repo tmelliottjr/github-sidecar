@@ -52,6 +52,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Hint } from '@/components/ui/tooltip'
+import { useStack } from '@/hooks/use-stacks'
 import { copyLink, copyText } from '@/lib/clipboard'
 import { itemMarkdown, stackMarkdown, stackUrls } from '@/lib/links'
 import {
@@ -65,7 +66,7 @@ import {
   type ReminderOverrides,
   type ReminderState,
 } from '@/lib/attention'
-import type { SearchItem } from '@/lib/github/types'
+import type { SearchItem, Stack } from '@/lib/github/types'
 import { cn, relativeTime } from '@/lib/utils'
 
 /** Row padding (10px) plus the state disc (28px) and the gap after it (10px). */
@@ -110,6 +111,8 @@ interface Props {
   onRefresh: (item: SearchItem) => Promise<void>
   onTogglePin: (item: SearchItem) => void
   onToggleStack: (item: SearchItem) => void
+  /** Loads the whole stack by id, from the worker cache when it can. */
+  onLoadStack: (id: string) => Promise<Stack>
   onToggleChecks: (item: SearchItem) => void
   onMarkSeen: (item: SearchItem) => void
   onRemind: (item: SearchItem, choice: ReminderChoice) => void
@@ -141,6 +144,7 @@ function ItemRowImpl({
   onRefresh,
   onTogglePin,
   onToggleStack,
+  onLoadStack,
   onToggleChecks,
   onMarkSeen,
   onRemind,
@@ -154,6 +158,16 @@ function ItemRowImpl({
   const [hasQuickActions, setHasQuickActions] = useState(false)
   const showQuickActions = useCallback(() => setHasQuickActions(true), [])
   const stack = item.stack
+  const stackId = stack?.id ?? null
+  const whole = useStack(stackId)
+
+  // The drawer shows the failure; the log keeps the cause.
+  const loadStack = useCallback(() => {
+    if (!stackId) return
+    void onLoadStack(stackId).catch((error: unknown) =>
+      console.warn('[github-sidecar] could not load the stack', error),
+    )
+  }, [onLoadStack, stackId])
 
   const refreshItem = useCallback(() => {
     setRefresh({ status: 'loading' })
@@ -168,7 +182,10 @@ function ItemRowImpl({
   }, [item, onRefresh])
 
   const togglePin = useCallback(() => onTogglePin(item), [item, onTogglePin])
-  const toggleStack = useCallback(() => onToggleStack(item), [item, onToggleStack])
+  const toggleStack = useCallback(() => {
+    if (!isStackOpen) loadStack()
+    onToggleStack(item)
+  }, [isStackOpen, item, loadStack, onToggleStack])
   const toggleChecks = useCallback(() => onToggleChecks(item), [item, onToggleChecks])
 
   // A failed copy is reported where a failed refresh is not: it changes
@@ -185,12 +202,16 @@ function ItemRowImpl({
   )
   const copyItemTitle = useCallback(() => copy(copyText(item.title)), [copy, item.title])
   const copyItemMarkdown = useCallback(() => copy(copyText(itemMarkdown(item))), [copy, item])
-  const copyStackLinks = useCallback(() => {
-    if (stack) copy(copyText(stackUrls(stack)))
-  }, [copy, stack])
-  const copyStackMarkdown = useCallback(() => {
-    if (stack) copy(copyText(stackMarkdown(stack)))
-  }, [copy, stack])
+  const copyStack = useCallback(
+    (format: (whole: Stack) => string) => {
+      if (!stackId) return
+      const ready = whole.stack ? Promise.resolve(whole.stack) : onLoadStack(stackId)
+      copy(ready.then((loaded) => copyText(format(loaded))))
+    },
+    [copy, onLoadStack, stackId, whole.stack],
+  )
+  const copyStackLinks = useCallback(() => copyStack(stackUrls), [copyStack])
+  const copyStackMarkdown = useCallback(() => copyStack(stackMarkdown), [copyStack])
   const branch = item.kind === 'pull-request' ? item.headRefName : null
   const copyBranch = useCallback(() => {
     if (branch) copy(copyText(branch))
@@ -398,6 +419,7 @@ function ItemRowImpl({
                     stack={stack}
                     isOpen={isStackOpen}
                     onToggle={toggleStack}
+                    onIntent={loadStack}
                   />
                 )}
                 {reminder !== 'none' && reminderDetail && (
@@ -460,10 +482,14 @@ function ItemRowImpl({
             >
               <div className="overflow-hidden">
                 <StackSection
-                  stack={stack}
+                  membership={stack}
+                  stack={whole.stack}
+                  isLoading={whole.isLoading}
+                  isFailed={whole.isFailed}
                   currentId={item.id}
                   onOpen={onOpenUrl}
                   onCollapse={toggleStack}
+                  onRetry={loadStack}
                 />
               </div>
             </div>

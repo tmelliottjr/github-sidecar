@@ -110,48 +110,47 @@ const items = Array.from({ length: 40 }, (_, index) => ({
   // Row 1 is the middle layer of a three-deep stack; every other row is on
   // its own, so the list has to cope with both.
   stack: index === 1
-    ? {
-        id: 'STACK_4',
-        number: 4,
-        size: 3,
-        baseRefName: 'main',
-        position: 2,
-        entries: [
-          {
-            id: 'stack_1',
-            number: 101,
-            title: 'Groundwork for the feature',
-            url: 'https://github.com/acme/app/pull/101',
-            repository: 'acme/app',
-            state: 'open',
-            reviewDecision: 'APPROVED',
-            position: 1,
-          },
-          {
-            id: 'item_1',
-            number: 2,
-            title: 'Item number 1 with a reasonably long title to wrap',
-            url: 'https://github.com/acme/app/pull/2',
-            repository: 'acme/app',
-            state: 'draft',
-            reviewDecision: 'CHANGES_REQUESTED',
-            position: 2,
-          },
-          {
-            id: 'stack_3',
-            number: 103,
-            title: 'The last layer',
-            url: 'https://github.com/acme/app/pull/103',
-            repository: 'acme/app',
-            state: 'open',
-            reviewDecision: null,
-            position: 3,
-          },
-        ],
-      }
+    ? { id: 'STACK_4', number: 4, size: 3, baseRefName: 'main', position: 2, entries: [] }
     : null,
 }));
 window.__items = items;
+// The whole stack behind row 1, as the worker answers a stacks message.
+window.__stacks = [{
+  id: 'STACK_4',
+  number: 4,
+  size: 3,
+  baseRefName: 'main',
+  fetchedAt: Date.now(),
+  layers: [
+    {
+      id: 'stack_1',
+      number: 101,
+      title: 'Groundwork for the feature',
+      url: 'https://github.com/acme/app/pull/101',
+      repository: 'acme/app',
+      state: 'open',
+      position: 1,
+    },
+    {
+      id: 'item_1',
+      number: 2,
+      title: 'Item number 1 with a reasonably long title to wrap',
+      url: 'https://github.com/acme/app/pull/2',
+      repository: 'acme/app',
+      state: 'draft',
+      position: 2,
+    },
+    {
+      id: 'stack_3',
+      number: 103,
+      title: 'The last layer',
+      url: 'https://github.com/acme/app/pull/103',
+      repository: 'acme/app',
+      state: 'open',
+      position: 3,
+    },
+  ],
+}];
 window.chrome = {
   runtime: {
     id: 'stub',
@@ -175,6 +174,17 @@ window.chrome = {
         };
         setTimeout(() => window.__broadcast({ type: 'item-updated', item: fresh }), 0);
         return { ok: true, data: fresh };
+      }
+      if (message.type === 'stacks') {
+        const wanted = new Set(message.rows.map((row) => row.stack.id));
+        const stacks = window.__failStacks
+          ? []
+          : window.__stacks.filter((stack) => wanted.has(stack.id));
+        const found = new Set(stacks.map((stack) => stack.id));
+        return {
+          ok: true,
+          data: { stacks, failedIds: [...wanted].filter((id) => !found.has(id)) },
+        };
       }
       if (message.type === 'search') {
         return {
@@ -1223,6 +1233,39 @@ describe('row context menu', { concurrency: false, skip }, () => {
     assert.equal(expanders, 0)
   })
 
+  const stackLayers = () =>
+    menuPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return [...shadow.querySelectorAll('[data-index="1"] [data-stack] li > button')].map(
+        (node) => node.textContent?.trim() ?? '',
+      )
+    })
+
+  it('loads the whole stack once its badge is focused', async () => {
+    await menuPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const badge = shadow.querySelector('[data-index="1"] [aria-label="Show the stack"]')
+      ;(badge as HTMLElement).focus()
+    })
+
+    await menuPage.waitForFunction(() =>
+      (window as unknown as { __sentMessages: Array<{ type: string }> }).__sentMessages.some(
+        (message) => message.type === 'stacks',
+      ),
+    )
+    const request = await menuPage.evaluate(() =>
+      (window as unknown as { __sentMessages: Array<Record<string, unknown>> }).__sentMessages.find(
+        (message) => message.type === 'stacks',
+      ),
+    )
+    assert.deepEqual(
+      (request!.rows as Array<{ id: string; stack: { id: string; position: number } }>).map(
+        (row) => [row.id, row.stack.id, row.stack.position],
+      ),
+      [['item_1', 'STACK_4', 2]],
+    )
+  })
+
   it('expands to the rest of the stack, top layer first', async () => {
     await menuPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
@@ -1239,17 +1282,16 @@ describe('row context menu', { concurrency: false, skip }, () => {
       const region = shadow.querySelector(
         '[data-index="1"] [data-stack="open"]',
       ) as HTMLElement | null
-      return Boolean(region) && region!.getBoundingClientRect().height > 0
+      return (
+        Boolean(region) &&
+        region!.getBoundingClientRect().height > 0 &&
+        region!.querySelectorAll('li button').length === 3
+      )
     })
 
     assert.match(await stackRow(), /Groundwork for the feature/)
 
-    const layers = await menuPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      return [...shadow.querySelectorAll('[data-index="1"] [data-stack] li button')].map((node) =>
-        node.textContent?.trim(),
-      )
-    })
+    const layers = await stackLayers()
 
     assert.equal(layers.length, 3)
     assert.match(layers[0]!, /#103 The last layer/)
@@ -1286,6 +1328,54 @@ describe('row context menu', { concurrency: false, skip }, () => {
       url: 'https://github.com/acme/app/pull/103',
       target: 'window',
     })
+  })
+
+  it('keeps the layers and offers a retry when the stack cannot be reloaded', async () => {
+    const clickInRow = (selector: string) =>
+      menuPage.evaluate((target) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        ;(shadow.querySelector(`[data-index="1"] ${target}`) as HTMLButtonElement).click()
+      }, selector)
+    const failure = () =>
+      menuPage.evaluate(() => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        return Boolean(
+          [...shadow.querySelectorAll('[data-index="1"] [data-stack] p')].find((node) =>
+            node.textContent?.includes('Couldn’t load the stack.'),
+          ),
+        )
+      })
+
+    await menuPage.evaluate(() => {
+      ;(window as unknown as { __failStacks: boolean }).__failStacks = true
+    })
+    await clickInRow('[data-stack] [aria-label="Hide the stack"]')
+    await clickInRow('[aria-label="Show the stack"]')
+    await menuPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return [...shadow.querySelectorAll('[data-index="1"] [data-stack] p')].some((node) =>
+        node.textContent?.includes('Couldn’t load the stack.'),
+      )
+    })
+    assert.equal((await stackLayers()).length, 3)
+
+    await menuPage.evaluate(() => {
+      ;(window as unknown as { __failStacks: boolean }).__failStacks = false
+    })
+    await menuPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const retry = [...shadow.querySelectorAll('[data-index="1"] [data-stack] button')].find(
+        (node) => node.textContent === 'Try again',
+      ) as HTMLButtonElement
+      retry.click()
+    })
+    await menuPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return ![...shadow.querySelectorAll('[data-index="1"] [data-stack] p')].some((node) =>
+        node.textContent?.includes('Couldn’t load the stack.'),
+      )
+    })
+    assert.equal(await failure(), false)
   })
 
   it('shuts the stack again from the chevron along its top edge', async () => {

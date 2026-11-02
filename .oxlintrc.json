@@ -23,6 +23,7 @@
           "__broadcast",
           "__copied",
           "__failRefresh",
+          "__failStacks",
           "__items",
           "__heard",
           "__played",

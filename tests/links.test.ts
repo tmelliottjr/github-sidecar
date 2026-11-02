@@ -2,16 +2,16 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { itemMarkdown, markdownLink, stackMarkdown, stackUrls } from '../src/lib/links.ts'
-import type { SearchItem, StackInfo } from '../src/lib/github/types.ts'
+import type { SearchItem, Stack } from '../src/lib/github/types.ts'
 
-function stack(overrides: Partial<StackInfo> = {}): StackInfo {
+function stack(overrides: Partial<Stack> = {}): Stack {
   return {
     id: 'STACK_4',
     number: 4,
     size: 3,
     baseRefName: 'main',
-    position: 2,
-    entries: [
+    fetchedAt: 1000,
+    layers: [
       {
         id: 'a',
         number: 101,
@@ -19,7 +19,6 @@ function stack(overrides: Partial<StackInfo> = {}): StackInfo {
         url: 'https://github.com/acme/app/pull/101',
         repository: 'acme/app',
         state: 'open',
-        reviewDecision: null,
         position: 1,
       },
       {
@@ -29,7 +28,6 @@ function stack(overrides: Partial<StackInfo> = {}): StackInfo {
         url: 'https://github.com/acme/app/pull/102',
         repository: 'acme/app',
         state: 'open',
-        reviewDecision: null,
         position: 2,
       },
       {
@@ -39,7 +37,6 @@ function stack(overrides: Partial<StackInfo> = {}): StackInfo {
         url: 'https://github.com/acme/app/pull/103',
         repository: 'acme/app',
         state: 'open',
-        reviewDecision: null,
         position: 3,
       },
     ],
@@ -115,7 +112,11 @@ describe('one row as Markdown', () => {
   it('says which layer, where the row is one of several', () => {
     // The difference between "the fix" and "the third part of the fix".
     assert.equal(
-      itemMarkdown(item({ stack: stack() })),
+      itemMarkdown(
+        item({
+          stack: { id: 'STACK_4', number: 4, size: 3, baseRefName: 'main', position: 2, entries: [] },
+        }),
+      ),
       '[The middle <2/3>](https://github.com/acme/app/pull/102)',
     )
   })
@@ -147,7 +148,7 @@ describe('a whole stack', () => {
   it('counts against the stack’s real size, not the layers it could read', () => {
     // GitHub reports how deep the stack is even when it hands back fewer
     // layers than that, and a list saying 1/2 of a five-deep stack would lie.
-    const partial = stack({ size: 5, entries: stack().entries.slice(0, 2) })
+    const partial = stack({ size: 5, layers: stack().layers.slice(0, 2) })
 
     assert.equal(
       stackMarkdown(partial),

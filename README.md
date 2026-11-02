@@ -636,9 +636,12 @@ Membership arrives with the search, so the badge shows with the row. A search
 that times out while asking for it is asked again without it, and that query
 skips membership until the worker restarts.
 
-Only the first 20 layers of a stack are read per row, but `size` comes from
-GitHub, so a deeper stack still reports its real size and says how many layers
-it is not showing.
+The whole stack loads when the badge is hovered or focused, when the stack is
+opened, or when its links are copied. The worker reads it by id, a hundred
+layers per request with no cap, keeps it in IndexedDB for every tab, and reads
+it again once it is older than the refresh window or disagrees with a loaded
+row. A stack that fails to load keeps whatever the panel already showed and
+offers a retry in the slide-out.
 
 ##### Pinned rows
 

@@ -1,11 +1,15 @@
-import { StackIcon } from '@primer/octicons-react'
+import { createContext, useContext } from 'react'
+import { AlertIcon, StackIcon, SyncIcon } from '@primer/octicons-react'
 
 import { Drawer } from '@/components/drawer'
 import { ReviewIndicator, StateIcon } from '@/components/status-icons'
 import { ClampedTitle } from '@/components/ui/clamped-title'
 import { Hint } from '@/components/ui/tooltip'
-import type { StackEntry, StackInfo } from '@/lib/github/types'
+import type { ReviewDecision, Stack, StackLayer, StackMembership } from '@/lib/github/types'
 import { cn } from '@/lib/utils'
+
+/** Review decisions for stack layers, by pull request id. Missing means not read yet. */
+export const LayerReviews = createContext<ReadonlyMap<string, ReviewDecision | null>>(new Map())
 
 /**
  * Where a row sits in its stack, as `layer / size`, and the control that opens
@@ -16,10 +20,13 @@ export function StackBadge({
   stack,
   isOpen,
   onToggle,
+  onIntent,
 }: {
-  stack: StackInfo
+  stack: StackMembership
   isOpen: boolean
   onToggle: () => void
+  /** Handler that is called when the badge is hovered or focused, ahead of a click. */
+  onIntent: () => void
 }) {
   return (
     <Hint
@@ -28,6 +35,8 @@ export function StackBadge({
       <button
         type="button"
         onClick={onToggle}
+        onPointerEnter={onIntent}
+        onFocus={onIntent}
         aria-expanded={isOpen}
         aria-label={isOpen ? 'Hide the stack' : 'Show the stack'}
         className={cn(
@@ -48,11 +57,16 @@ export function StackBadge({
 }
 
 interface Props {
-  stack: StackInfo
+  membership: StackMembership
+  /** The whole stack, once it has loaded. */
+  stack: Stack | undefined
+  isLoading: boolean
+  isFailed: boolean
   /** Node id of the row this stack was expanded from, so it can be marked. */
   currentId: string
   onOpen: (url: string, event: React.MouseEvent) => void
   onCollapse: () => void
+  onRetry: () => void
 }
 
 /**
@@ -60,19 +74,28 @@ interface Props {
  * way the branches are built. The row it was expanded from stays in the list
  * rather than being filtered out, because a stack is only legible as a whole.
  */
-export function StackSection({ stack, currentId, onOpen, onCollapse }: Props) {
-  const hidden = stack.size - stack.entries.length
-  const layers = stack.entries.toReversed()
+export function StackSection({
+  membership,
+  stack,
+  isLoading,
+  isFailed,
+  currentId,
+  onOpen,
+  onCollapse,
+  onRetry,
+}: Props) {
+  const size = stack?.size ?? membership.size
+  const layers = stack?.layers.toReversed() ?? []
 
   return (
     <Drawer
       icon={<StackIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
-      caption={`Stack #${stack.number}`}
+      caption={`Stack #${membership.number}`}
       meta={
         <>
-          {stack.size} {stack.size === 1 ? 'layer' : 'layers'} onto{' '}
+          {size} {size === 1 ? 'layer' : 'layers'} onto{' '}
           <code className="rounded-md bg-muted px-1 py-px font-mono text-[10.5px] text-foreground">
-            {stack.baseRefName}
+            {stack?.baseRefName ?? membership.baseRefName}
           </code>
         </>
       }
@@ -80,9 +103,9 @@ export function StackSection({ stack, currentId, onOpen, onCollapse }: Props) {
       onClose={onCollapse}
     >
       <ul className="flex flex-col gap-0.5">
-        {layers.map((entry, index) => (
+        {layers.map((layer, index) => (
           <li
-            key={entry.id}
+            key={layer.id}
             className={cn(
               'relative isolate',
               // Joins this step to the next, under the row fills and focus rings:
@@ -91,17 +114,18 @@ export function StackSection({ stack, currentId, onOpen, onCollapse }: Props) {
                 "after:absolute after:-z-10 after:left-[14px] after:top-[25px] after:h-2 after:w-0.5 after:rounded-full after:bg-border after:content-['']",
             )}
           >
-            <StackRow
-              entry={entry}
-              isCurrent={entry.id === currentId}
-              onOpen={onOpen}
-            />
+            <StackLayerRow layer={layer} isCurrent={layer.id === currentId} onOpen={onOpen} />
           </li>
         ))}
 
-        {hidden > 0 && (
-          <li className="py-1 pl-8 text-[11px] text-muted-foreground">
-            and {hidden} more {hidden === 1 ? 'layer' : 'layers'}
+        {!stack && isLoading && (
+          <li>
+            <StackLoading />
+          </li>
+        )}
+        {isFailed && !isLoading && (
+          <li>
+            <StackFailed onRetry={onRetry} />
           </li>
         )}
       </ul>
@@ -109,19 +133,49 @@ export function StackSection({ stack, currentId, onOpen, onCollapse }: Props) {
   )
 }
 
-function StackRow({
-  entry,
+/** Stands in for the layers while the stack loads. */
+export function StackLoading() {
+  return (
+    <p className="flex h-7 items-center gap-2 px-1.5 text-[12px] text-muted-foreground">
+      <SyncIcon className="size-3.5 animate-spin" aria-hidden />
+      Loading the stack
+    </p>
+  )
+}
+
+/** Says the stack could not be loaded, and offers to try again. */
+export function StackFailed({ onRetry }: { onRetry: () => void }) {
+  return (
+    <p className="flex h-7 items-center gap-2 px-1.5 text-[12px] text-muted-foreground">
+      <AlertIcon className="size-3.5 shrink-0 text-attention" aria-hidden />
+      Couldn’t load the stack.
+      <button
+        type="button"
+        onClick={onRetry}
+        className="font-semibold text-foreground underline underline-offset-2 hover:text-attention focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        Try again
+      </button>
+    </p>
+  )
+}
+
+/** One layer of a stack as a single line: its position, state, title, and review. */
+export function StackLayerRow({
+  layer,
   isCurrent,
   onOpen,
 }: {
-  entry: StackEntry
+  layer: StackLayer
   isCurrent: boolean
   onOpen: (url: string, event: React.MouseEvent) => void
 }) {
+  const review = useContext(LayerReviews).get(layer.id) ?? null
+
   return (
     <button
       type="button"
-      onClick={(event) => onOpen(entry.url, event)}
+      onClick={(event) => onOpen(layer.url, event)}
       aria-current={isCurrent || undefined}
       className={cn(
         'flex h-7 w-full items-center gap-2 rounded-lg px-1.5 text-left transition-colors',
@@ -136,21 +190,21 @@ function StackRow({
             : 'text-muted-foreground ring-1 ring-inset ring-border',
         )}
       >
-        {entry.position}
+        {layer.position}
       </span>
-      <StateIcon item={{ kind: 'pull-request', state: entry.state, stateReason: null }} />
+      <StateIcon item={{ kind: 'pull-request', state: layer.state, stateReason: null }} />
       <ClampedTitle
-        title={entry.title}
+        title={layer.title}
         className={cn(
           'truncate text-[12px] text-foreground',
           isCurrent && 'font-semibold',
         )}
       >
-        <span className="font-normal text-muted-foreground tabular-nums">#{entry.number}</span>{' '}
-        {entry.title}
+        <span className="font-normal text-muted-foreground tabular-nums">#{layer.number}</span>{' '}
+        {layer.title}
       </ClampedTitle>
       <span className="ml-auto flex shrink-0 items-center">
-        <ReviewIndicator decision={entry.reviewDecision} />
+        <ReviewIndicator decision={review} />
       </span>
     </button>
   )
