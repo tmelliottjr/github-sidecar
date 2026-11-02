@@ -109,6 +109,15 @@ export interface Stack {
   fetchedAt: number
 }
 
+/** A loaded row in a stack, which a cached copy of that stack has to agree with. */
+export interface StackedRow {
+  /** Pull request node id. */
+  id: string
+  stack: StackMembership
+  /** When the page holding the row was read. */
+  fetchedAt: number
+}
+
 /**
  * How far a row has got in the second of the two requests that build it.
  *

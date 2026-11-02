@@ -2,6 +2,7 @@ import {
   GitHubApiError,
   enrichItems,
   fetchItem,
+  fetchStacks,
   fetchViewer,
   observeApiCalls,
   searchIssues,
@@ -31,6 +32,7 @@ import { clearApiLog, readApiLog, recordApiCall } from './api-log'
 import { playNotificationSound } from './audio'
 import { indexedDbStackStore, indexedDbStore } from './cache'
 import { createSearchService, freshnessWindow, MAX_CACHE_AGE_MS } from './search-service'
+import { createStackService } from './stack-service'
 import { startDevReload } from './dev-reload'
 
 const POPUP_WIDTH = 1100
@@ -411,6 +413,13 @@ const searchService = createSearchService({
   onError: (error) => console.warn('[github-sidecar] revalidation failed', error),
 })
 
+const stackService = createStackService({
+  store: indexedDbStackStore,
+  fetchStacks: async (ids) => fetchStacks(await requireToken(), ids),
+  broadcast: (update) => void broadcastToGitHubTabs(update),
+  onError: (error) => console.warn('[github-sidecar] could not read stacks', error),
+})
+
 /** Drops cached pages and stacks older than a day. */
 function pruneCaches(): void {
   void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
@@ -472,6 +481,13 @@ async function handle(
       await broadcastToGitHubTabs({ type: 'item-updated', item })
       scheduleAttention()
       return item
+    }
+    case 'stacks': {
+      const { pollIntervalMs } = await readStorage('settings')
+      return stackService.stacks({
+        rows: message.rows,
+        freshMs: freshnessWindow(pollIntervalMs),
+      })
     }
     case 'lookup-items': {
       // Best-effort: rows the cache has dropped simply do not come back, and
