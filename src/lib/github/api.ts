@@ -5,6 +5,7 @@ import type {
   ItemEnrichment,
   ItemState,
   Label,
+  LayerReview,
   MergeState,
   ReviewDecision,
   SearchItem,
@@ -345,6 +346,19 @@ export const STACKS_QUERY = /* GraphQL */ `
   }
 `
 
+/** Reads review decisions of stack layers that are not loaded rows, by node id. */
+export const LAYER_REVIEWS_QUERY = /* GraphQL */ `
+  query SidebarLayerReviews($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequest {
+        id
+        reviewDecision
+      }
+    }
+  }
+`
+
 /** Reads the next page of layers of one stack. */
 export const STACK_ENTRIES_QUERY = /* GraphQL */ `
   query SidebarStackEntries($id: ID!, $after: String!) {
@@ -462,6 +476,17 @@ interface StackNode {
 
 interface StacksResponse {
   data?: { nodes: Array<StackNode | Record<string, never> | null> | null } | null
+  errors?: GraphQLError[]
+}
+
+interface LayerReviewsResponse {
+  data?: {
+    nodes: Array<
+      | { __typename: 'PullRequest'; id: string; reviewDecision: ReviewDecision | null }
+      | Record<string, never>
+      | null
+    > | null
+  } | null
   errors?: GraphQLError[]
 }
 
@@ -832,7 +857,7 @@ export interface GraphQLPayload {
 }
 
 /** Which of the panel's questions a request was asking. */
-export type ApiOperation = 'search' | 'enrich' | 'item' | 'stacks'
+export type ApiOperation = 'search' | 'enrich' | 'item' | 'stacks' | 'layer-reviews'
 
 /**
  * One request, as it went.
@@ -1158,6 +1183,51 @@ export async function enrichItems(
         ? describeGraphQLErrors(errors)
         : failedIds.length > 0
           ? 'GitHub did not answer for every row.'
+          : null,
+  }
+}
+
+export interface LayerReviewsResult {
+  reviews: LayerReview[]
+  /** Pull requests GitHub would not answer for. */
+  failedIds: string[]
+  error: string | null
+}
+
+/**
+ * Reads the review decision of each pull request by node id. Each review
+ * carries the time this call started. Throws only where the request failed.
+ */
+export async function fetchLayerReviews(
+  token: string,
+  ids: readonly string[],
+): Promise<LayerReviewsResult> {
+  if (ids.length === 0) return { reviews: [], failedIds: [], error: null }
+
+  const fetchedAt = Date.now()
+  const body = await post<LayerReviewsResponse>(
+    token,
+    { query: LAYER_REVIEWS_QUERY, variables: { ids: [...ids] } },
+    { operation: 'layer-reviews', detail: `${ids.length} layers` },
+  )
+
+  const reviews: LayerReview[] = []
+  for (const node of body.data?.nodes ?? []) {
+    if (!node || !('__typename' in node) || node.__typename !== 'PullRequest') continue
+    reviews.push({ id: node.id, reviewDecision: node.reviewDecision ?? null, fetchedAt })
+  }
+  const answered = new Set(reviews.map((review) => review.id))
+  const failedIds = ids.filter((id) => !answered.has(id))
+  const errors = body.errors ?? []
+
+  return {
+    reviews,
+    failedIds,
+    error:
+      errors.length > 0
+        ? describeGraphQLErrors(errors)
+        : failedIds.length > 0
+          ? 'GitHub did not answer for every layer.'
           : null,
   }
 }

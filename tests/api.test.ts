@@ -5,9 +5,11 @@ import {
   ENRICH_QUERY,
   GitHubApiError,
   SEARCH_QUERY,
+  LAYER_REVIEWS_QUERY,
   STACKS_QUERY,
   enrichItems,
   fetchItem,
+  fetchLayerReviews,
   fetchStacks,
   resetPreviewSupport,
   searchIssues,
@@ -691,6 +693,30 @@ describe('stacked pull requests', () => {
     assert.deepEqual(result.stacks, [])
     assert.deepEqual(result.failedIds, ['STACK_7'])
     assert.match(result.error!, /took too long/)
+  })
+
+  it('reads layer reviews by id, keeping no decision apart from no answer', async () => {
+    assert.match(LAYER_REVIEWS_QUERY, /\.\.\. on PullRequest \{\s*id\s+reviewDecision\s*\}/)
+    stubResponses(
+      json(
+        nodesPayload([
+          { __typename: 'PullRequest', id: 'PR_1', reviewDecision: 'APPROVED' },
+          { __typename: 'PullRequest', id: 'PR_2', reviewDecision: null },
+          null,
+        ]),
+      ),
+    )
+
+    const result = await fetchLayerReviews('token', ['PR_1', 'PR_2', 'PR_hidden'])
+
+    assert.deepEqual(
+      result.reviews.map((review) => [review.id, review.reviewDecision]),
+      [
+        ['PR_1', 'APPROVED'],
+        ['PR_2', null],
+      ],
+    )
+    assert.deepEqual(result.failedIds, ['PR_hidden'])
   })
 
   it('reports a stack the token cannot read as failed', async () => {

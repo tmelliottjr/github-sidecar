@@ -88,6 +88,16 @@ export interface Stack {
   fetchedAt: number
 }
 
+/** The review decision of a stack layer that is not one of the loaded rows. */
+export interface LayerReview {
+  /** Pull request node id. */
+  id: string
+  /** Null where the pull request has no review decision. */
+  reviewDecision: ReviewDecision | null
+  /** When the request that read it started. A newer read replaces an older one. */
+  fetchedAt: number
+}
+
 /** A loaded row in a stack, which a cached copy of that stack has to agree with. */
 export interface StackedRow {
   /** Pull request node id. */

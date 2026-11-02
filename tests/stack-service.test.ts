@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import type { StackStore } from '../src/background/cache.ts'
-import { createStackService } from '../src/background/stack-service.ts'
-import type { StacksResult } from '../src/lib/github/api.ts'
-import type { Stack, StackedRow } from '../src/lib/github/types.ts'
-import type { StacksUpdate } from '../src/lib/messages.ts'
+import type { KeyedStore } from '../src/background/cache.ts'
+import { createLayerReviewService, createStackService } from '../src/background/stack-service.ts'
+import type { LayerReviewsResult, StacksResult } from '../src/lib/github/api.ts'
+import type { LayerReview, Stack, StackedRow } from '../src/lib/github/types.ts'
+import type { LayerReviewsUpdate, StacksUpdate } from '../src/lib/messages.ts'
 
 function stack(overrides: Partial<Stack> = {}): Stack {
   return {
@@ -31,21 +31,21 @@ function row(overrides: Partial<StackedRow> = {}, membership: Partial<StackedRow
 }
 
 /** Keeps the newer of two copies, like the IndexedDB store does in one transaction. */
-function createMemoryStore(seed: Stack[] = []) {
-  const stacks = new Map(seed.map((entry) => [entry.id, entry]))
-  const store: StackStore & { stacks: Map<string, Stack> } = {
-    stacks,
+function createMemoryStore<T extends { id: string; fetchedAt: number }>(seed: T[] = []) {
+  const records = new Map(seed.map((entry) => [entry.id, entry]))
+  const store: KeyedStore<T> & { records: Map<string, T> } = {
+    records,
     async read(ids) {
       return ids.flatMap((id) => {
-        const found = stacks.get(id)
+        const found = records.get(id)
         return found ? [found] : []
       })
     },
     async write(incoming) {
       return incoming.map((next) => {
-        const current = stacks.get(next.id)
+        const current = records.get(next.id)
         if (current && current.fetchedAt >= next.fetchedAt) return current
-        stacks.set(next.id, next)
+        records.set(next.id, next)
         return next
       })
     },
@@ -64,7 +64,7 @@ function createHarness(
   const calls: string[][] = []
   const broadcasts: StacksUpdate[] = []
   const errors: unknown[] = []
-  const store = createMemoryStore(options.seed)
+  const store = createMemoryStore<Stack>(options.seed)
 
   const service = createStackService({
     store,
@@ -97,7 +97,7 @@ describe('stack service', () => {
     assert.deepEqual(calls, [['STACK_1']])
     assert.equal(answer.stacks[0].fetchedAt, 9000)
     assert.deepEqual(answer.failedIds, [])
-    assert.equal(store.stacks.get('STACK_1')?.fetchedAt, 9000)
+    assert.equal(store.records.get('STACK_1')?.fetchedAt, 9000)
     assert.deepEqual(broadcasts.map((update) => update.stacks.map((entry) => entry.id)), [
       ['STACK_1'],
     ])
@@ -169,7 +169,7 @@ describe('stack service', () => {
     const answer = await service.stacks({ rows: [row()], freshMs: FRESH_MS })
 
     assert.equal(answer.stacks[0].number, 70)
-    assert.equal(store.stacks.get('STACK_1')?.fetchedAt, 8000)
+    assert.equal(store.records.get('STACK_1')?.fetchedAt, 8000)
   })
 
   it('writes nothing for a stack GitHub would not answer for in full', async () => {
@@ -182,7 +182,7 @@ describe('stack service', () => {
     const answer = await service.stacks({ rows: [row()], freshMs: FRESH_MS })
 
     assert.deepEqual(answer, { stacks: [], failedIds: ['STACK_1'] })
-    assert.equal(store.stacks.get('STACK_1')?.fetchedAt, 1000)
+    assert.equal(store.records.get('STACK_1')?.fetchedAt, 1000)
     assert.deepEqual(broadcasts[0].failedIds, ['STACK_1'])
     assert.equal(errors.length, 1)
   })
@@ -198,5 +198,63 @@ describe('stack service', () => {
 
     assert.deepEqual(answer.failedIds, ['STACK_1'])
     assert.equal((errors[0] as Error).message, 'offline')
+  })
+})
+
+describe('layer review service', () => {
+  const review = (id: string, fetchedAt: number): LayerReview => ({
+    id,
+    reviewDecision: 'APPROVED',
+    fetchedAt,
+  })
+
+  function createReviewHarness(
+    seed: LayerReview[] = [],
+    fetch: (ids: readonly string[]) => Promise<LayerReviewsResult> = async (ids) => ({
+      reviews: ids.map((id) => review(id, 9000)),
+      failedIds: [],
+      error: null,
+    }),
+  ) {
+    const calls: string[][] = []
+    const broadcasts: LayerReviewsUpdate[] = []
+    const store = createMemoryStore<LayerReview>(seed)
+    const service = createLayerReviewService({
+      store,
+      fetchReviews: async (ids) => {
+        calls.push([...ids])
+        return fetch(ids)
+      },
+      broadcast: (update) => broadcasts.push(update),
+      now: () => 10_000,
+    })
+    return { service, store, calls, broadcasts }
+  }
+
+  it('reads only the reviews it does not hold fresh, and stores them', async () => {
+    const { service, store, calls, broadcasts } = createReviewHarness([
+      review('PR_fresh', 9500),
+      review('PR_old', 10_000 - FRESH_MS),
+    ])
+
+    const answer = await service.reviews({ ids: ['PR_fresh', 'PR_old', 'PR_new'], freshMs: FRESH_MS })
+
+    assert.deepEqual(calls, [['PR_old', 'PR_new']])
+    assert.deepEqual(answer.reviews.map((entry) => entry.id).toSorted(), ['PR_fresh', 'PR_new', 'PR_old'])
+    assert.equal(store.records.get('PR_new')?.fetchedAt, 9000)
+    assert.deepEqual(broadcasts[0].reviews.map((entry) => entry.id), ['PR_old', 'PR_new'])
+  })
+
+  it('reports reviews GitHub would not answer for, and stores nothing for them', async () => {
+    const { service, store } = createReviewHarness([], async (ids) => ({
+      reviews: [],
+      failedIds: [...ids],
+      error: 'GitHub did not answer for every layer.',
+    }))
+
+    const answer = await service.reviews({ ids: ['PR_1'], freshMs: FRESH_MS })
+
+    assert.deepEqual(answer, { reviews: [], failedIds: ['PR_1'] })
+    assert.equal(store.records.size, 0)
   })
 })

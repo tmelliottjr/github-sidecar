@@ -2,6 +2,7 @@ import {
   GitHubApiError,
   enrichItems,
   fetchItem,
+  fetchLayerReviews,
   fetchStacks,
   fetchViewer,
   observeApiCalls,
@@ -30,9 +31,9 @@ import { readStorage, writeStorage, type SoundSettings } from '@/lib/storage'
 import { browser, can, browserName } from '@/lib/browser'
 import { clearApiLog, readApiLog, recordApiCall } from './api-log'
 import { playNotificationSound } from './audio'
-import { indexedDbStackStore, indexedDbStore } from './cache'
+import { indexedDbLayerReviewStore, indexedDbStackStore, indexedDbStore } from './cache'
 import { createSearchService, freshnessWindow, MAX_CACHE_AGE_MS } from './search-service'
-import { createStackService } from './stack-service'
+import { createLayerReviewService, createStackService } from './stack-service'
 import { startDevReload } from './dev-reload'
 
 const POPUP_WIDTH = 1100
@@ -420,10 +421,18 @@ const stackService = createStackService({
   onError: (error) => console.warn('[github-sidecar] could not read stacks', error),
 })
 
-/** Drops cached pages and stacks older than a day. */
+const layerReviewService = createLayerReviewService({
+  store: indexedDbLayerReviewStore,
+  fetchReviews: async (ids) => fetchLayerReviews(await requireToken(), ids),
+  broadcast: (update) => void broadcastToGitHubTabs(update),
+  onError: (error) => console.warn('[github-sidecar] could not read layer reviews', error),
+})
+
+/** Drops cached pages, stacks, and layer reviews older than a day. */
 function pruneCaches(): void {
   void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
   void indexedDbStackStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+  void indexedDbLayerReviewStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
 }
 
 async function openItem(url: string, target: 'window' | 'tab'): Promise<void> {
@@ -486,6 +495,13 @@ async function handle(
       const { pollIntervalMs } = await readStorage('settings')
       return stackService.stacks({
         rows: message.rows,
+        freshMs: freshnessWindow(pollIntervalMs),
+      })
+    }
+    case 'layer-reviews': {
+      const { pollIntervalMs } = await readStorage('settings')
+      return layerReviewService.reviews({
+        ids: message.ids,
         freshMs: freshnessWindow(pollIntervalMs),
       })
     }
