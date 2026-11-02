@@ -26,6 +26,7 @@
           "__failStacks",
           "__stacks",
           "__items",
+          "__layerReviews",
           "__heard",
           "__played",
           "__contexts",

@@ -115,6 +115,8 @@ interface Props {
   onToggleStack: (item: SearchItem) => void
   /** Loads the whole stack by id, from the worker cache when it can. */
   onLoadStack: (id: string) => Promise<Stack>
+  /** Loads the whole stack, then review state for layers that are not loaded rows. */
+  onOpenStack: (id: string) => Promise<void>
   onToggleChecks: (item: SearchItem) => void
   onMarkSeen: (item: SearchItem) => void
   onRemind: (item: SearchItem, choice: ReminderChoice) => void
@@ -148,6 +150,7 @@ function ItemRowImpl({
   onTogglePin,
   onToggleStack,
   onLoadStack,
+  onOpenStack,
   onToggleChecks,
   onMarkSeen,
   onRemind,
@@ -185,10 +188,16 @@ function ItemRowImpl({
   }, [item, onRefresh])
 
   const togglePin = useCallback(() => onTogglePin(item), [item, onTogglePin])
+  const openStack = useCallback(() => {
+    if (!stackId) return
+    void onOpenStack(stackId).catch((error: unknown) =>
+      console.warn('[github-sidecar] could not load the stack', error),
+    )
+  }, [onOpenStack, stackId])
   const toggleStack = useCallback(() => {
-    if (!isStackOpen) loadStack()
+    if (!isStackOpen) openStack()
     onToggleStack(item)
-  }, [isStackOpen, item, loadStack, onToggleStack])
+  }, [isStackOpen, item, onToggleStack, openStack])
   const toggleChecks = useCallback(() => onToggleChecks(item), [item, onToggleChecks])
 
   // A failed copy is reported where a failed refresh is not: it changes
@@ -492,7 +501,7 @@ function ItemRowImpl({
                   currentId={item.id}
                   onOpen={onOpenUrl}
                   onCollapse={toggleStack}
-                  onRetry={loadStack}
+                  onRetry={openStack}
                 />
               </div>
             </div>

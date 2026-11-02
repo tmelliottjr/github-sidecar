@@ -27,7 +27,7 @@ import { useItemMemory } from '@/hooks/use-item-memory'
 import { useIssueSearch } from '@/hooks/use-issue-search'
 import { useRefreshActivity } from '@/hooks/use-refresh-activity'
 import { useSearchUpdates } from '@/hooks/use-search-updates'
-import { useLoadStack } from '@/hooks/use-stacks'
+import { useLayerReviews, useLoadLayerReviews, useLoadStack } from '@/hooks/use-stacks'
 import { useStorageValue } from '@/hooks/use-storage-value'
 import { useTabOpen } from '@/hooks/use-tab-open'
 import { changesSince, isHidden, isWhole, nextReminderAt } from '@/lib/attention'
@@ -251,16 +251,36 @@ export function Sidebar() {
     [loadStackRows],
   )
 
-  // Review decisions of loaded pull requests, for the same pull requests listed as stack layers.
+  // Opening a stack also reads the review state of layers that are not loaded rows.
+  const loadedIdsRef = useRef<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    loadedIdsRef.current = new Set(items.map((item) => item.id))
+  }, [items])
+  const loadLayerReviews = useLoadLayerReviews()
+  const openStack = useCallback(
+    async (id: string) => {
+      const stack = await loadStack(id)
+      const loaded = loadedIdsRef.current
+      const compact = stack.layers.filter((layer) => !loaded.has(layer.id))
+      await loadLayerReviews(compact.map((layer) => layer.id))
+    },
+    [loadLayerReviews, loadStack],
+  )
+
+  // Review decisions for stack layers. Loaded rows win, since enrichment keeps them current.
+  const fetchedReviews = useLayerReviews()
   const layerReviews = useMemo(() => {
     const reviews = new Map<string, ReviewDecision | null>()
+    for (const review of Object.values(fetchedReviews ?? {})) {
+      reviews.set(review.id, review.reviewDecision)
+    }
     for (const item of items) {
       if (item.kind === 'pull-request' && item.enrichment !== 'pending') {
         reviews.set(item.id, item.reviewDecision)
       }
     }
     return reviews
-  }, [items])
+  }, [fetchedReviews, items])
 
   // The merge-state switch hides merge marks on the rows, so it hides merge choices too.
   const facets = useMemo(
@@ -697,6 +717,7 @@ export function Sidebar() {
             onOpenUrl={openUrl}
             onRefreshItem={refreshItem}
             onLoadStack={loadStack}
+            onOpenStack={openStack}
             onTogglePin={togglePin}
             onMarkSeen={markItemSeen}
             onRemind={remind}

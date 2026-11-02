@@ -8,11 +8,32 @@ import {
   type QueryObserverResult,
 } from '@tanstack/react-query'
 
-import type { Stack, StackedRow } from '@/lib/github/types'
+import type { LayerReview, Stack, StackedRow } from '@/lib/github/types'
 import type { StackView } from '@/lib/list-view'
 import { sendMessage } from '@/lib/messages'
 
 const STACK_KEY = ['stack'] as const
+const LAYER_REVIEWS_KEY = ['layer-reviews'] as const
+
+/** Layer reviews by pull request id. An id that is missing has not been read yet. */
+export type LayerReviewMap = Readonly<Record<string, LayerReview>>
+
+/** Keeps the later read of each review. Answers and broadcasts can land in either order. */
+export function mergeLayerReviews(
+  current: LayerReviewMap | undefined,
+  incoming: readonly LayerReview[],
+): LayerReviewMap {
+  const next: Record<string, LayerReview> = { ...current }
+  for (const review of incoming) {
+    const held = next[review.id]
+    if (!held || held.fetchedAt < review.fetchedAt) next[review.id] = review
+  }
+  return next
+}
+
+export function layerReviewsKey() {
+  return LAYER_REVIEWS_KEY
+}
 
 export function stackKey(id: string) {
   return [...STACK_KEY, id] as const
@@ -107,4 +128,27 @@ export function useStackViews(ids: readonly string[]): ReadonlyMap<string, Stack
       [ids],
     ),
   })
+}
+
+/**
+ * Loads review decisions for stack layers through the worker, which answers
+ * from its cache unless a review is older than the refresh window.
+ */
+export function useLoadLayerReviews() {
+  const queryClient = useQueryClient()
+  return useCallback(
+    async (ids: readonly string[]) => {
+      if (ids.length === 0) return
+      const { reviews } = await sendMessage({ type: 'layer-reviews', ids: [...ids] })
+      queryClient.setQueryData<LayerReviewMap>(LAYER_REVIEWS_KEY, (current) =>
+        mergeLayerReviews(current, reviews),
+      )
+    },
+    [queryClient],
+  )
+}
+
+/** Every layer review the panel holds. Never starts a read. */
+export function useLayerReviews(): LayerReviewMap | undefined {
+  return useQuery<LayerReviewMap>({ queryKey: LAYER_REVIEWS_KEY, queryFn: skipToken }).data
 }

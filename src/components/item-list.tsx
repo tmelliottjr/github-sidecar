@@ -44,6 +44,8 @@ interface Props {
   onOpenUrl: (url: string, event: React.MouseEvent) => void
   onRefreshItem: (item: SearchItem) => Promise<void>
   onLoadStack: (id: string) => Promise<Stack>
+  /** Loads the whole stack, then review state for layers that are not loaded rows. */
+  onOpenStack: (id: string) => Promise<void>
   onTogglePin: (item: SearchItem) => void
   onMarkSeen: (item: SearchItem) => void
   onRemind: (item: SearchItem, choice: ReminderChoice) => void
@@ -120,6 +122,7 @@ export function ItemList({
   onOpenUrl,
   onRefreshItem,
   onLoadStack,
+  onOpenStack,
   onTogglePin,
   onMarkSeen,
   onRemind,
@@ -149,21 +152,21 @@ export function ItemList({
   const expandedIds = useMemo(() => [...expandedStacks], [expandedStacks])
   const stackViews = useStackViews(expandedIds)
 
-  const loadStack = useCallback(
+  const openStack = useCallback(
     (id: string) => {
-      void onLoadStack(id).catch((error: unknown) =>
+      void onOpenStack(id).catch((error: unknown) =>
         console.warn('[github-sidecar] could not load the stack', error),
       )
     },
-    [onLoadStack],
+    [onOpenStack],
   )
 
   const toggleStackRow = useCallback(
     (id: string) => {
-      if (!expandedStacks.has(id)) loadStack(id)
+      if (!expandedStacks.has(id)) openStack(id)
       setExpandedStacks((current) => toggled(current, id))
     },
-    [expandedStacks, loadStack],
+    [expandedStacks, openStack],
   )
 
   // Which rows have their failing checks open, held here for the same reason
@@ -474,6 +477,7 @@ export function ItemList({
                 onTogglePin={onTogglePin}
                 onToggleStack={toggleStack}
                 onLoadStack={onLoadStack}
+                onOpenStack={onOpenStack}
                 onToggleChecks={toggleChecks}
                 onMarkSeen={onMarkSeen}
                 onRemind={onRemind}
@@ -545,7 +549,7 @@ export function ItemList({
                         onOpen={onOpenUrl}
                       />
                     ) : row.type === 'stack-status' && row.status === 'failed' ? (
-                      <StackFailed onRetry={() => loadStack(nesting.stackId)} />
+                      <StackFailed onRetry={() => openStack(nesting.stackId)} />
                     ) : (
                       <StackLoading />
                     )}

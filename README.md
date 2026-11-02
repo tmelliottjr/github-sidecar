@@ -225,6 +225,14 @@ Three things follow from the split, and all three are deliberate:
 Refreshing a single row is unaffected: one row is cheap however costly its
 fields are, so that request still reads all of it at once.
 
+Whole stacks are not part of either request. A stack loads by id when the
+reader goes to open one: hovering or focusing its row or badge, opening it, or
+copying its links. Opening a stack also reads the review decision of each layer
+that is not a loaded row, since loaded rows already have theirs. Both are
+cached in the worker and read again once older than the refresh window. A layer
+whose review has not been read shows no review mark, which is kept apart from a
+layer with no review decision.
+
 #### Refreshing a single row
 
 Polling refreshes a whole query on an interval. That is the wrong tool for
@@ -656,12 +664,14 @@ Membership arrives with the search, so the badge shows with the row. A search
 that times out while asking for it is asked again without it, and that query
 skips membership until the worker restarts.
 
-The whole stack loads when the badge is hovered or focused, when the stack is
-opened, or when its links are copied. The worker reads it by id, a hundred
-layers per request with no cap, keeps it in IndexedDB for every tab, and reads
-it again once it is older than the refresh window or disagrees with a loaded
-row. A stack that fails to load keeps whatever the panel already showed and
-offers a retry in the slide-out.
+The whole stack loads when its row or badge is hovered or focused, when the
+stack is opened, or when its links are copied. The worker reads it by id, a
+hundred layers per request with no cap, keeps it in IndexedDB for every tab,
+and reads it again once it is older than the refresh window or disagrees with
+a loaded row. Review decisions for layers that are not loaded rows load when
+the stack opens, without the review field on the stack request, which made it
+three to five times slower. A stack that fails to load keeps whatever the panel
+already showed and offers a retry.
 
 ##### Pinned rows
 
@@ -720,6 +730,9 @@ The pieces that make that work:
 - **The refresh button always wins.** It drops the cached pages for that query
   first, so it is a true forced refresh. Entries older than a day are pruned on
   startup.
+- **Stacks are cached too.** Whole stacks and the review decisions of their
+  layers sit in their own stores, keyed by node id, stamped with when their
+  request started so a slower, older answer never replaces a newer one.
 - **A half-filled page is finished off.** The second half of each row is written
   to the cache as it lands, so a tab that opens later gets whole rows without
   asking again. The worker is shut down between messages and can be stopped part

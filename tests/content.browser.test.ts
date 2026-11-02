@@ -175,6 +175,15 @@ window.chrome = {
         setTimeout(() => window.__broadcast({ type: 'item-updated', item: fresh }), 0);
         return { ok: true, data: fresh };
       }
+      if (message.type === 'layer-reviews') {
+        const decisions = window.__layerReviews ?? {};
+        const reviews = message.ids.map((id) => ({
+          id,
+          reviewDecision: decisions[id] ?? null,
+          fetchedAt: Date.now(),
+        }));
+        return { ok: true, data: { reviews, failedIds: [] } };
+      }
       if (message.type === 'stacks') {
         const wanted = new Set(message.rows.map((row) => row.stack.id));
         const stacks = window.__failStacks
@@ -1767,7 +1776,9 @@ describe('stacks folded into one row', { concurrency: false, skip }, () => {
         __items: Array<Record<string, unknown>>
         __stacks: Array<Record<string, unknown>>
         __searchPages: Record<string, unknown>
+        __layerReviews: Record<string, string>
       }
+      scope.__layerReviews = { stack9_4: 'APPROVED' }
       const layer = (item: Record<string, unknown>, position: number, title: string) => ({
         ...item,
         kind: 'pull-request',
@@ -1914,6 +1925,20 @@ describe('stacks folded into one row', { concurrency: false, skip }, () => {
       ],
     )
     assert.match(layers[0].text, /#904 Fourth layer/)
+
+    // Only the layer that is not a loaded row has its review read.
+    await stackPage.waitForFunction(() =>
+      document
+        .getElementById('github-sidecar-root')!
+        .shadowRoot!.querySelector('[data-stack-layer="4"]')
+        ?.textContent?.includes('Approved'),
+    )
+    const reviewRequest = await stackPage.evaluate(() =>
+      (window as unknown as { __sentMessages: Array<Record<string, unknown>> }).__sentMessages.findLast(
+        (message) => message.type === 'layer-reviews',
+      ),
+    )
+    assert.deepEqual(reviewRequest!.ids, ['stack9_4'])
 
     // Open, the stack is no longer the page: its layer 3 is.
     await stackPage.waitForFunction(() =>
