@@ -232,11 +232,10 @@ export function Sidebar() {
     const byStack = new Map<string, StackedRow[]>()
     for (const item of items) {
       if (!item.stack) continue
-      const { id, number, size, baseRefName, position } = item.stack
-      const row = { id: item.id, stack: { id, number, size, baseRefName, position } }
-      const group = byStack.get(id)
+      const row = { id: item.id, stack: item.stack }
+      const group = byStack.get(item.stack.id)
       if (group) group.push(row)
-      else byStack.set(id, [row])
+      else byStack.set(item.stack.id, [row])
     }
     return byStack
   }, [items])

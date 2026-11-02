@@ -1,4 +1,4 @@
-import type { ItemEnrichment, SearchItem, SearchPage, StackInfo } from './types'
+import type { ItemEnrichment, SearchItem, SearchPage } from './types'
 
 /**
  * Merging the two halves of a row.
@@ -34,7 +34,6 @@ export function applyEnrichment(item: SearchItem, enrichment: ItemEnrichment): S
     // `mergeable` reached the row with the search and may already have found a
     // conflict; this is the fuller answer and replaces it outright.
     mergeState: enrichment.mergeState,
-    stack: enrichment.stack,
     enrichment: 'ready',
   }
 }
@@ -83,13 +82,7 @@ function costlyHalf(item: SearchItem): ItemEnrichment {
     checkCount: item.checkCount,
     checksRead: item.checksRead,
     mergeState: item.mergeState,
-    stack: item.stack,
   }
-}
-
-/** Keeps fresh membership from the search, with the layers last read for the same stack. */
-function carryLayers(fresh: StackInfo | null, previous: StackInfo | null): StackInfo | null {
-  return fresh && previous?.id === fresh.id ? { ...fresh, entries: previous.entries } : fresh
 }
 
 /**
@@ -120,11 +113,7 @@ export function carryEnrichment(fresh: SearchPage, previous: SearchPage | undefi
     items: fresh.items.map((item) => {
       const carried = known.get(item.id)
       if (!carried || item.enrichment !== 'pending') return item
-      return {
-        ...applyEnrichment(item, carried.half),
-        stack: carryLayers(item.stack, carried.half.stack),
-        enrichment: carried.state,
-      }
+      return { ...applyEnrichment(item, carried.half), enrichment: carried.state }
     }),
   }
 }

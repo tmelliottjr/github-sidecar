@@ -114,7 +114,7 @@ describe('one row as Markdown', () => {
     assert.equal(
       itemMarkdown(
         item({
-          stack: { id: 'STACK_4', number: 4, size: 3, baseRefName: 'main', position: 2, entries: [] },
+          stack: { id: 'STACK_4', number: 4, size: 3, baseRefName: 'main', position: 2 },
         }),
       ),
       '[The middle <2/3>](https://github.com/acme/app/pull/102)',

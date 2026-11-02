@@ -10,19 +10,11 @@ import type {
   SearchItem,
   SearchPage,
   Stack,
-  StackEntry,
-  StackInfo,
   StackLayer,
+  StackMembership,
 } from './types'
 
 const GITHUB_GRAPHQL_ENDPOINT = 'https://api.github.com/graphql'
-
-/**
- * How many layers of a stack are read per pull request. Stacks deeper than
- * this are rare, and `totalCount` still reports the real size, so the row can
- * say the list is partial rather than quietly lying about it.
- */
-const STACK_ENTRIES = 20
 
 /**
  * Avatars are drawn at 14px, so this is a 2× copy for the sharpest screens.
@@ -79,34 +71,6 @@ const STACK_MEMBERSHIP_FIELDS = /* GraphQL */ `
 `
 
 const PREVIEW_FIELDS = /* GraphQL */ `
-  stackEntry {
-    position
-  }
-  stack {
-    id
-    number
-    size
-    baseRefName
-    entries(first: ${STACK_ENTRIES}) {
-      totalCount
-      nodes {
-        position
-        pullRequest {
-          id
-          number
-          title
-          url
-          state
-          isDraft
-          isInMergeQueue
-          reviewDecision
-          repository {
-            nameWithOwner
-          }
-        }
-      }
-    }
-  }
   mergeStateStatus
 `
 
@@ -202,7 +166,7 @@ const pullRequestPrimaryFields = (withPreview: boolean) => /* GraphQL */ `
 
 /**
  * The half a search cannot afford. Measured against `org:` searches spanning
- * several repositories, these four fields cost roughly four times what every
+ * several repositories, these fields cost roughly four times what every
  * other field on a row costs put together, and `mergeStateStatus` alone is
  * enough to take a thirty-row page past GitHub's ten-second limit — which
  * arrives as a 502 from the proxy in front of it, not as a GraphQL error.
@@ -424,7 +388,6 @@ interface StackEntryNode {
     state: string
     isDraft?: boolean
     isInMergeQueue?: boolean
-    reviewDecision?: ReviewDecision | null
     repository: { nameWithOwner: string }
   } | null
 }
@@ -467,14 +430,7 @@ interface GraphQLNode {
     }> | null
   } | null
   stackEntry?: { position: number } | null
-  stack?: {
-    id: string
-    number: number
-    size: number
-    baseRefName: string
-    /** Only the second request reads these. */
-    entries?: { totalCount: number; nodes: Array<StackEntryNode | null> | null } | null
-  } | null
+  stack?: { id: string; number: number; size: number; baseRefName: string } | null
 }
 
 export interface GraphQLError {
@@ -537,8 +493,6 @@ type EnrichmentNode = Pick<
   | 'mergeStateStatus'
   | 'reviewDecision'
   | 'commits'
-  | 'stack'
-  | 'stackEntry'
 >
 
 interface EnrichResponse {
@@ -608,47 +562,17 @@ function toState(node: GraphQLNode): ItemState {
   return toPullRequestState(node)
 }
 
-/**
- * Flattens a pull request's stack membership. Position comes from the node's
- * own `stackEntry` rather than from its place in `entries`, so a truncated or
- * partially readable stack still reports where this row sits.
- */
-function toStack(node: Pick<GraphQLNode, 'stack' | 'stackEntry'>): StackInfo | null {
-  const stack = node.stack
+/** Flattens where a pull request sits in its stack. */
+function toMembership(node: Pick<GraphQLNode, 'stack' | 'stackEntry'>): StackMembership | null {
+  const { stack } = node
   const position = node.stackEntry?.position
   if (!stack || position === undefined) return null
-
-  const byPosition = new Map<number, StackEntry>()
-  for (const entry of stack.entries?.nodes ?? []) {
-    const pullRequest = entry?.pullRequest
-    if (!pullRequest) continue
-    byPosition.set(entry.position, {
-      id: pullRequest.id,
-      number: pullRequest.number,
-      title: pullRequest.title,
-      url: pullRequest.url,
-      repository: pullRequest.repository.nameWithOwner,
-      state: toPullRequestState(pullRequest),
-      reviewDecision: pullRequest.reviewDecision ?? null,
-      position: entry.position,
-    })
-  }
-
-  // Walked by position rather than by the order the nodes arrived in, so the
-  // list always reads from the base branch up.
-  const entries: StackEntry[] = []
-  for (let layer = 1; layer <= stack.size; layer += 1) {
-    const entry = byPosition.get(layer)
-    if (entry) entries.push(entry)
-  }
-
   return {
     id: stack.id,
     number: stack.number,
     size: stack.size,
     baseRefName: stack.baseRefName,
     position,
-    entries,
   }
 }
 
@@ -740,7 +664,6 @@ function toEnrichment(node: EnrichmentNode): ItemEnrichment {
     checkCount: rollup?.contexts?.totalCount ?? null,
     checksRead: rollup?.contexts?.nodes?.length ?? 0,
     mergeState: toMergeState(node),
-    stack: toStack(node),
   }
 }
 
@@ -780,7 +703,7 @@ function normalise(node: GraphQLNode, pending: boolean): SearchItem {
     // What was read, not what failed: the query keeps only the red ones, so
     // the failing list alone cannot say how much of the rollup was seen.
     checksRead: rollup?.contexts?.nodes?.length ?? 0,
-    stack: toStack(node),
+    stack: toMembership(node),
     // None of the costly fields exist on an issue, so there is nothing for a
     // second request to add and nothing to keep a space on screen for.
     enrichment: pending && node.__typename === 'PullRequest' ? 'pending' : 'ready',

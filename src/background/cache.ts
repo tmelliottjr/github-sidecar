@@ -18,7 +18,7 @@ const DB_NAME = 'github-sidecar'
  * crash the list. Dropping the store on upgrade costs one refetch and is the
  * only version of this that cannot be got wrong.
  */
-const DB_VERSION = 5
+const DB_VERSION = 6
 const STORE = 'search-pages'
 const QUERY_INDEX = 'query'
 const UPDATED_INDEX = 'updatedAt'

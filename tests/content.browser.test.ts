@@ -110,7 +110,7 @@ const items = Array.from({ length: 40 }, (_, index) => ({
   // Row 1 is the middle layer of a three-deep stack; every other row is on
   // its own, so the list has to cope with both.
   stack: index === 1
-    ? { id: 'STACK_4', number: 4, size: 3, baseRefName: 'main', position: 2, entries: [] }
+    ? { id: 'STACK_4', number: 4, size: 3, baseRefName: 'main', position: 2 }
     : null,
 }));
 window.__items = items;

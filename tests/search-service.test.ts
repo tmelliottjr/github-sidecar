@@ -175,7 +175,6 @@ function enrichmentFor(id: string): ItemEnrichment {
     checkCount: 2,
     checksRead: 2,
     mergeState: 'clean',
-    stack: null,
   }
 }
 

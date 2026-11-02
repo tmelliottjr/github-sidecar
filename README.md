@@ -188,13 +188,13 @@ author, assignees, labels, comments, the diff size, whether the branch
 conflicts, and where a pull request sits in its stack. That request is what has
 to be quick, and it is.
 
-The rest — the review decision, the CI rollup and its failing checks, the full
-merge state, and the layers of a stack — is read afterwards, five rows at a time, and
+The rest — the review decision, the CI rollup and its failing checks, and the
+full merge state — is read afterwards, five rows at a time, and
 merged field by field into the rows already on screen. Field by field because
 the row may have been refreshed in the seconds it took to answer, and swapping
 the whole row would put the older title back.
 
-Measured against an `org:`-wide search, those four fields cost several times
+Measured against an `org:`-wide search, those fields cost several times
 what everything else on a row costs put together, and `mergeStateStatus` on its
 own is enough to put a page over GitHub's limit.
 

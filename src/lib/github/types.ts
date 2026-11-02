@@ -46,19 +46,6 @@ export interface Assignee {
   avatarUrl: string | null
 }
 
-/** One layer of a stack, as much of it as a row needs to list its neighbours. */
-export interface StackEntry {
-  id: string
-  number: number
-  title: string
-  url: string
-  repository: string
-  state: ItemState
-  reviewDecision: ReviewDecision | null
-  /** 1 is the layer closest to the base branch. */
-  position: number
-}
-
 /**
  * Where a pull request sits in its stack: a chain of pull requests where each
  * one targets the branch of the pull request below it. Read with the search.
@@ -73,14 +60,6 @@ export interface StackMembership {
   baseRefName: string
   /** 1 is the layer closest to the base branch. */
   position: number
-}
-
-export interface StackInfo extends StackMembership {
-  /**
-   * Ordered from the base branch up. Empty until the second request lands, and
-   * can be shorter than `size`.
-   */
-  entries: StackEntry[]
 }
 
 /** One layer of a whole stack. */
@@ -119,7 +98,7 @@ export interface StackedRow {
 /**
  * How far a row has got in the second of the two requests that build it.
  *
- * The costly half of a row — review decision, CI rollup, merge state, stack —
+ * The costly half of a row — review decision, CI rollup, merge state —
  * is asked for separately, so a row exists on screen before those are known.
  * `failed` is kept apart from `ready` because a row that has no red mark and a
  * row whose checks could not be read look identical otherwise, and only one of
@@ -143,7 +122,6 @@ export interface ItemEnrichment {
   checkCount: number | null
   checksRead: number
   mergeState: MergeState | null
-  stack: StackInfo | null
 }
 
 export interface SearchItem {
@@ -183,7 +161,7 @@ export interface SearchItem {
   /** How many of them this query actually read; the rest are unknown. */
   checksRead: number
   /** Null for issues, and for pull requests that are not part of a stack. */
-  stack: StackInfo | null
+  stack: StackMembership | null
   /**
    * Whether the fields above it that come from the second request have
    * arrived. Issues are `ready` on sight: none of those fields apply to them.

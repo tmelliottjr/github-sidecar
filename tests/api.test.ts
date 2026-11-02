@@ -392,49 +392,41 @@ const stackedPullRequestNode = {
   id: 'PR_2',
   number: 35,
   stackEntry: { position: 2 },
-  stack: {
-    id: 'STACK_7',
-    number: 7,
-    size: 3,
-    baseRefName: 'main',
-    entries: {
-      totalCount: 3,
-      nodes: [
-        // Deliberately out of order: the reader is told where each layer sits,
-        // not which order GitHub happened to answer in.
-        {
-          position: 2,
-          pullRequest: {
-            id: 'PR_2',
-            number: 35,
-            title: 'Fix the thing',
-            url: 'https://github.com/acme/app/pull/35',
-            state: 'OPEN',
-            isDraft: true,
-            reviewDecision: 'CHANGES_REQUESTED',
-            repository: { nameWithOwner: 'acme/app' },
-          },
-        },
-        {
-          position: 1,
-          pullRequest: {
-            id: 'PR_1',
-            number: 34,
-            title: 'Groundwork',
-            url: 'https://github.com/acme/app/pull/34',
-            state: 'OPEN',
-            isDraft: false,
-            isInMergeQueue: true,
-            reviewDecision: 'APPROVED',
-            repository: { nameWithOwner: 'acme/app' },
-          },
-        },
-        // A layer the token cannot see comes back without its pull request.
-        { position: 3, pullRequest: null },
-      ],
+  stack: { id: 'STACK_7', number: 7, size: 3, baseRefName: 'main' },
+}
+
+/** The layers of stack 7, as `entries` lists them. */
+const stackEntryNodes = [
+  // Deliberately out of order: the reader is told where each layer sits,
+  // not which order GitHub happened to answer in.
+  {
+    position: 2,
+    pullRequest: {
+      id: 'PR_2',
+      number: 35,
+      title: 'Fix the thing',
+      url: 'https://github.com/acme/app/pull/35',
+      state: 'OPEN',
+      isDraft: true,
+      repository: { nameWithOwner: 'acme/app' },
     },
   },
-}
+  {
+    position: 1,
+    pullRequest: {
+      id: 'PR_1',
+      number: 34,
+      title: 'Groundwork',
+      url: 'https://github.com/acme/app/pull/34',
+      state: 'OPEN',
+      isDraft: false,
+      isInMergeQueue: true,
+      repository: { nameWithOwner: 'acme/app' },
+    },
+  },
+  // A layer the token cannot see comes back without its pull request.
+  { position: 3, pullRequest: null },
+]
 
 describe('stacked pull requests', () => {
   afterEach(() => {
@@ -442,16 +434,16 @@ describe('stacked pull requests', () => {
     resetPreviewSupport()
   })
 
-  it('asks for stack membership with the search, and the layers in the second request', () => {
+  it('asks for stack membership with the search, and nothing about stacks in enrichment', () => {
     assert.match(SEARCH_QUERY, /stackEntry\s*\{\s*position/)
     assert.match(SEARCH_QUERY, /stack\s*\{\s*id\s+number\s+size\s+baseRefName\s*\}/)
     assert.ok(!SEARCH_QUERY.includes('entries('))
-    assert.match(ENRICH_QUERY, /entries\(first:/)
+    assert.ok(!ENRICH_QUERY.includes('stack'))
+    assert.match(ENRICH_QUERY, /mergeStateStatus/)
   })
 
-  it('reports where a searched row sits in its stack before the layers arrive', async () => {
-    const { entries: _entries, ...membership } = stackedPullRequestNode.stack
-    stubFetch(searchPayload([{ ...stackedPullRequestNode, stack: membership }]))
+  it('reports where a searched row sits in its stack', async () => {
+    stubFetch(searchPayload([stackedPullRequestNode]))
 
     const page = await searchIssues('token', { q: 'is:pr', first: 30 })
 
@@ -461,39 +453,16 @@ describe('stacked pull requests', () => {
       size: 3,
       baseRefName: 'main',
       position: 2,
-      entries: [],
     })
   })
 
-  it('reports where a row sits in its stack', async () => {
-    stubFetch(nodesPayload([stackedPullRequestNode]))
+  it('reports where a refreshed row sits in its stack', async () => {
+    stubFetch({ data: { repository: { issueOrPullRequest: stackedPullRequestNode } } })
 
-    const { enrichments } = await enrichItems('token', ['PR_2'])
-    const { stack } = enrichments[0]
+    const item = await fetchItem('token', { repository: 'acme/app', number: 35 })
 
-    assert.ok(stack)
-    assert.equal(stack.id, 'STACK_7')
-    assert.equal(stack.number, 7)
-    assert.equal(stack.size, 3)
-    assert.equal(stack.position, 2)
-    assert.equal(stack.baseRefName, 'main')
-  })
-
-  it('lists the stack from the base branch up, skipping layers it cannot read', async () => {
-    stubFetch(nodesPayload([stackedPullRequestNode]))
-
-    const { enrichments } = await enrichItems('token', ['PR_2'])
-    const entries = enrichments[0].stack!.entries
-
-    assert.deepEqual(
-      entries.map((entry) => entry.number),
-      [34, 35],
-    )
-    // Every layer is flattened exactly as a row of its own would be.
-    assert.equal(entries[0].state, 'queued')
-    assert.equal(entries[0].reviewDecision, 'APPROVED')
-    assert.equal(entries[1].state, 'draft')
-    assert.equal(entries[1].repository, 'acme/app')
+    assert.equal(item.stack?.id, 'STACK_7')
+    assert.equal(item.stack?.position, 2)
   })
 
   it('leaves unstacked pull requests and issues alone', async () => {
@@ -510,10 +479,10 @@ describe('stacked pull requests', () => {
     globalThis.fetch = (async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as { query: string }
       sent.push(body.query)
-      if (body.query.includes('stackEntry')) {
+      if (body.query.includes('mergeStateStatus')) {
         return new Response(
           JSON.stringify({
-            errors: [{ message: "Field 'stackEntry' doesn't exist on type 'PullRequest'" }],
+            errors: [{ message: "Field 'mergeStateStatus' doesn't exist on type 'PullRequest'" }],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
@@ -527,15 +496,14 @@ describe('stacked pull requests', () => {
     const first = await enrichItems('token', ['PR_1'])
 
     assert.equal(first.enrichments.length, 1)
-    assert.equal(first.enrichments[0].stack, null)
     assert.equal(first.failedIds.length, 0)
     assert.equal(sent.length, 2)
-    assert.ok(!sent[1].includes('stackEntry'))
+    assert.ok(!sent[1].includes('mergeStateStatus'))
 
     // Having been told once, it does not ask for them again.
     await enrichItems('token', ['PR_1'])
     assert.equal(sent.length, 3)
-    assert.ok(!sent[2].includes('stackEntry'))
+    assert.ok(!sent[2].includes('mergeStateStatus'))
   })
 
   /** Answers a query that asks for membership with `refusal`, and lists rows otherwise. */
@@ -645,7 +613,7 @@ describe('stacked pull requests', () => {
     baseRefName: 'main',
     entries: {
       pageInfo: { hasNextPage: false, endCursor: null },
-      nodes: stackedPullRequestNode.stack.entries.nodes,
+      nodes: stackEntryNodes,
       ...entries,
     },
   })
@@ -686,18 +654,18 @@ describe('stacked pull requests', () => {
   })
 
   it('reads every page of layers in a deep stack', async () => {
-    const [first, second] = stackedPullRequestNode.stack.entries.nodes
+    const [upper, lower] = stackEntryNodes
     const sent = stubResponses(
       json(
         nodesPayload([
-          stackNode({ pageInfo: { hasNextPage: true, endCursor: 'PAGE_1' }, nodes: [second] }),
+          stackNode({ pageInfo: { hasNextPage: true, endCursor: 'PAGE_1' }, nodes: [upper] }),
         ]),
       ),
       json({
         data: {
           node: {
             __typename: 'PullRequestStack',
-            entries: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [first] },
+            entries: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [lower] },
           },
         },
       }),
