@@ -29,7 +29,7 @@ import { readStorage, writeStorage, type SoundSettings } from '@/lib/storage'
 import { browser, can, browserName } from '@/lib/browser'
 import { clearApiLog, readApiLog, recordApiCall } from './api-log'
 import { playNotificationSound } from './audio'
-import { indexedDbStore } from './cache'
+import { indexedDbStackStore, indexedDbStore } from './cache'
 import { createSearchService, freshnessWindow, MAX_CACHE_AGE_MS } from './search-service'
 import { startDevReload } from './dev-reload'
 
@@ -411,6 +411,12 @@ const searchService = createSearchService({
   onError: (error) => console.warn('[github-sidecar] revalidation failed', error),
 })
 
+/** Drops cached pages and stacks older than a day. */
+function pruneCaches(): void {
+  void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+  void indexedDbStackStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+}
+
 async function openItem(url: string, target: 'window' | 'tab'): Promise<void> {
   if (target === 'tab') {
     await browser.tabs.create({ url, active: true })
@@ -579,14 +585,14 @@ browser.tabs.onRemoved.addListener((tabId) => {
 })
 
 browser.runtime.onInstalled.addListener(async ({ reason }) => {
-  void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+  pruneCaches()
   if (reason !== 'install') return
   const { token } = await readStorage('settings')
   if (!token) await browser.runtime.openOptionsPage()
 })
 
 browser.runtime.onStartup.addListener(() => {
-  void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+  pruneCaches()
   scheduleAttention()
 })
 

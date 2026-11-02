@@ -1,4 +1,4 @@
-import type { SearchItem, SearchPage } from '@/lib/github/types'
+import type { SearchItem, SearchPage, Stack } from '@/lib/github/types'
 
 /**
  * Persistent search cache.
@@ -10,17 +10,21 @@ import type { SearchItem, SearchPage } from '@/lib/github/types'
  */
 const DB_NAME = 'github-sidecar'
 /**
- * Bumped whenever a cached row gains a field the panel then reads.
+ * Bumped whenever a cached row gains a field the panel then reads, and whenever
+ * a store is added, since `onupgradeneeded` is the only place stores are made.
  *
  * A cache holds a *shape* as well as a value, and a row written before a field
  * existed is not a hit for a panel that expects it — it is a row that will
  * crash the list. Dropping the store on upgrade costs one refetch and is the
  * only version of this that cannot be got wrong.
  */
-const DB_VERSION = 4
+const DB_VERSION = 5
 const STORE = 'search-pages'
 const QUERY_INDEX = 'query'
 const UPDATED_INDEX = 'updatedAt'
+/** Whole stacks, keyed by stack id, so every tab shares them. */
+const STACK_STORE = 'stacks'
+const FETCHED_INDEX = 'fetchedAt'
 
 export interface CacheEntry {
   /** Built by the search service; see cacheKey there. */
@@ -49,6 +53,17 @@ export interface CacheStore {
   revisePages(revise: (page: SearchPage) => SearchPage | null): Promise<number>
   /** Looks rows up by node id, wherever they happen to be cached. */
   findItems(ids: readonly string[]): Promise<SearchItem[]>
+}
+
+export interface StackStore {
+  /** The cached stacks among `ids`, skipping any it does not hold. */
+  read(ids: readonly string[]): Promise<Stack[]>
+  /**
+   * Writes each stack unless the stored copy has a newer `fetchedAt`, all in one
+   * transaction. Returns the copy each id holds afterwards.
+   */
+  write(stacks: readonly Stack[]): Promise<Stack[]>
+  prune(maxAgeMs: number): Promise<void>
 }
 
 /** Swaps a refreshed row into a page, or returns null if it is not in it. */
@@ -82,6 +97,12 @@ function openDatabase(): Promise<IDBDatabase> {
       const store = database.createObjectStore(STORE, { keyPath: 'key' })
       store.createIndex(QUERY_INDEX, 'query', { unique: false })
       store.createIndex(UPDATED_INDEX, 'updatedAt', { unique: false })
+
+      if (database.objectStoreNames.contains(STACK_STORE)) {
+        database.deleteObjectStore(STACK_STORE)
+      }
+      const stacks = database.createObjectStore(STACK_STORE, { keyPath: 'id' })
+      stacks.createIndex(FETCHED_INDEX, 'fetchedAt', { unique: false })
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error)
@@ -97,10 +118,11 @@ function openDatabase(): Promise<IDBDatabase> {
 async function withStore<T>(
   mode: IDBTransactionMode,
   run: (store: IDBObjectStore) => Promise<T>,
+  name = STORE,
 ): Promise<T> {
   const database = await openDatabase()
-  const transaction = database.transaction(STORE, mode)
-  const result = await run(transaction.objectStore(STORE))
+  const transaction = database.transaction(name, mode)
+  const result = await run(transaction.objectStore(name))
 
   await new Promise<void>((resolve, reject) => {
     transaction.oncomplete = () => resolve()
@@ -199,5 +221,58 @@ export const indexedDbStore: CacheStore = {
       )
       await Promise.all(keys.map((key) => promisify(store.delete(key))))
     })
+  },
+}
+
+export const indexedDbStackStore: StackStore = {
+  async read(ids) {
+    return withStore(
+      'readonly',
+      async (store) => {
+        const found = await Promise.all(
+          ids.map((id) => promisify<Stack | undefined>(store.get(id))),
+        )
+        return found.filter((stack): stack is Stack => stack !== undefined)
+      },
+      STACK_STORE,
+    )
+  },
+
+  // Read and written in one transaction, so a slower, older read landing
+  // between the two cannot replace a newer stack.
+  async write(stacks) {
+    return withStore(
+      'readwrite',
+      async (store) => {
+        const stored = await Promise.all(
+          stacks.map((stack) => promisify<Stack | undefined>(store.get(stack.id))),
+        )
+        const kept = stacks.map((stack, index) => {
+          const current = stored[index]
+          return current && current.fetchedAt >= stack.fetchedAt ? current : stack
+        })
+        await Promise.all(
+          kept
+            .filter((stack, index) => stack === stacks[index])
+            .map((stack) => promisify(store.put(stack))),
+        )
+        return kept
+      },
+      STACK_STORE,
+    )
+  },
+
+  async prune(maxAgeMs) {
+    await withStore(
+      'readwrite',
+      async (store) => {
+        const cutoff = Date.now() - maxAgeMs
+        const keys = await promisify(
+          store.index(FETCHED_INDEX).getAllKeys(IDBKeyRange.upperBound(cutoff)),
+        )
+        await Promise.all(keys.map((key) => promisify(store.delete(key))))
+      },
+      STACK_STORE,
+    )
   },
 }
