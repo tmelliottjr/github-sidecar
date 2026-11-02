@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useIsPresent } from 'motion/react'
 
 /**
  * Radix portals default to document.body, which would escape the shadow root
@@ -23,4 +24,13 @@ export function PortalContainerProvider({
 
 export function usePortalContainer(): HTMLElement | null {
   return React.useContext(PortalContainerContext)
+}
+
+/**
+ * Whether the UI that opened a portal is still on screen. Portaled content
+ * sits outside its owner in the DOM, so a leaving panel's `inert` does not
+ * reach it. Menus and tooltips render nothing once their owner starts leaving.
+ */
+export function useOwnerPresent(): boolean {
+  return useIsPresent()
 }

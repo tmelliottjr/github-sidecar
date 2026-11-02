@@ -35,8 +35,8 @@ interface Props {
  * flowing with it.
  *
  * Everything it depends on can move without React hearing about it: the list
- * scrolls, the page scrolls under a docked panel, and a window drag writes its
- * transform straight to the DOM. Rather than model each of those, every source
+ * scrolls, the page scrolls under the panel, and resizing the panel writes its
+ * width straight to the DOM. Rather than model each of those, every source
  * of movement schedules the same measure-and-place on the next frame.
  */
 export function CurrentRowMarker({ row, viewportRef }: Props) {
@@ -49,12 +49,18 @@ export function CurrentRowMarker({ row, viewportRef }: Props) {
     const viewport = viewportRef.current
     if (!marker || !row || !viewport) return
 
+    const panel = row.closest('[role="complementary"]') ?? viewport
+    // The row moves and scales with the panel while it morphs.
+    if (panel.hasAttribute('data-morphing')) {
+      marker.style.visibility = 'hidden'
+      return
+    }
+
     // The item's own block, not the stack that may be hanging open below it:
     // the reader is on one pull request, not on the chain it belongs to.
     const body = row.querySelector('[data-item-body]') ?? row
     const rowRect = body.getBoundingClientRect()
     const listRect = viewport.getBoundingClientRect()
-    const panel = row.closest('[role="complementary"]') ?? viewport
     const panelRect = panel.getBoundingClientRect()
 
     // A row half way off the top of the list is marked half way: the band is
@@ -80,17 +86,24 @@ export function CurrentRowMarker({ row, viewportRef }: Props) {
     }
   }, [row, viewportRef])
 
+  // At most once a frame. Pushing a pending frame back on every call would
+  // never place the marker while a morph rewrites the panel style each frame.
   const schedule = useCallback(() => {
-    cancelAnimationFrame(frame.current)
-    frame.current = requestAnimationFrame(place)
+    if (frame.current !== 0) return
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0
+      place()
+    })
   }, [place])
 
   useLayoutEffect(() => {
     if (!row) return
-    place()
+    // Not placed straight away: a panel that has just mounted is only marked
+    // as morphing after this runs, and would show the marker for a frame.
+    schedule()
 
     // Capturing, because a scroll event does not bubble: this is what hears
-    // the list scrolling as well as the page under a docked panel.
+    // the list scrolling as well as the page under the panel.
     window.addEventListener('scroll', schedule, true)
     window.addEventListener('resize', schedule)
 
@@ -99,23 +112,24 @@ export function CurrentRowMarker({ row, viewportRef }: Props) {
     const viewport = viewportRef.current
     if (viewport) observer.observe(viewport)
 
-    // A drag or a resize writes the panel's geometry straight to its style
-    // attribute, frame by frame, without a render for either to be seen in.
+    // A resize writes the panel width straight to its style attribute, frame
+    // by frame, without a render to be seen in. So does a morph.
     const panel = row.closest('[role="complementary"]')
     const panelMoves = panel ? new MutationObserver(schedule) : null
     if (panel) {
-      panelMoves?.observe(panel, { attributeFilter: ['style', 'data-gesture'] })
+      panelMoves?.observe(panel, { attributeFilter: ['style', 'data-gesture', 'data-morphing'] })
       observer.observe(panel)
     }
 
     return () => {
       cancelAnimationFrame(frame.current)
+      frame.current = 0
       window.removeEventListener('scroll', schedule, true)
       window.removeEventListener('resize', schedule)
       observer.disconnect()
       panelMoves?.disconnect()
     }
-  }, [place, row, schedule, viewportRef])
+  }, [row, schedule, viewportRef])
 
   // The row can grow — a stack opening below it — between one frame and the
   // next without any of the above firing first.

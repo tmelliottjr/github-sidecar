@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 
 import puppeteer, { type Browser, type Page } from 'puppeteer-core'
 
+import { DOCK_INSET } from '../src/content/page-layout.ts'
+
 const CHROME_PATHS = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/Applications/Chromium.app/Contents/MacOS/Chromium',
@@ -44,10 +46,7 @@ const store = {
     activeQueryId: 'seeded',
   },
   savedQueries: [{ id: 'seeded', name: 'Needs my review', query: 'is:open is:pr' }],
-  windowState: {
-    x: 120, y: 60, width: 420, height: 520,
-    collapsed: false, locked: false,
-  },
+  windowState: { collapsed: false, dockWidth: 420 },
 };
 const items = Array.from({ length: 40 }, (_, index) => ({
   id: 'item_' + index,
@@ -210,6 +209,18 @@ window.chrome = {
 };
 `
 
+/**
+ * Waits for the launcher and the panel to finish morphing into each other, and
+ * for the page to finish moving with them. Motion drives the morph from
+ * JavaScript, so `getAnimations()` misses it.
+ */
+const settleMorph = (target: Page) =>
+  target.waitForFunction(
+    () =>
+      !document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector('[data-morphing]') &&
+      !document.body.hasAttribute('data-github-sidecar-moving'),
+  )
+
 let browser: Browser
 let page: Page
 const consoleErrors: string[] = []
@@ -306,6 +317,13 @@ describe('content script', { concurrency: false, skip }, () => {
     assert.match(counts.footer, /of 400/)
   })
 
+  it('shows its rows at once when the page loads with the panel open', async () => {
+    const fades = await page.evaluate(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('.animate-list-in')),
+    )
+    assert.equal(fades, false, 'expected no morph to wait for on page load')
+  })
+
   it('shows the author as an avatar and a handle', async () => {
     const author = await page.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
@@ -374,8 +392,8 @@ describe('content script', { concurrency: false, skip }, () => {
       const box = dot.getBoundingClientRect()
       const styles = getComputedStyle(dot)
 
-      // The label's colour put through the same mixer at full strength, so the
-      // fill can be compared with it in the space it was actually mixed in.
+      // The label's color put through the same mixer at full strength, so the
+      // edge can be compared with it in the space it was actually mixed in.
       const probe = document.createElement('span')
       probe.style.backgroundColor = 'color-mix(in oklab, #d73a4a 100%, transparent 0%)'
       dot.after(probe)
@@ -393,17 +411,17 @@ describe('content script', { concurrency: false, skip }, () => {
     })
 
     assert.ok(dots.width > 0 && dots.width <= 16, `saw a ${dots.width}px disc`)
-    // The label's own colour draws the disc.
-    assert.equal(dots.border, 'rgb(215, 58, 74)')
+    // The label's own color fills the disc.
+    assert.equal(dots.fill, 'rgb(215, 58, 74)')
     assert.doesNotMatch(dots.text, /bug/)
 
-    // The fill is that same colour taken back towards the surface: lighter
-    // than the label, and opaque, so overlapping discs stay legible.
-    assert.doesNotMatch(dots.fill, /\//, `expected an opaque fill, saw ${dots.fill}`)
-    const lightness = (colour: string) => Number(colour.match(/[\d.]+/)![0])
+    // The edge is that color taken toward the text color, which is dark in
+    // light mode, so even a pale label keeps a visible outline on white.
+    assert.doesNotMatch(dots.border, /\//, `expected an opaque edge, saw ${dots.border}`)
+    const lightness = (color: string) => Number(color.match(/[\d.]+/)![0])
     assert.ok(
-      lightness(dots.fill) > lightness(dots.pure),
-      `expected a lighter fill, saw ${dots.fill} against ${dots.pure}`,
+      lightness(dots.border) < lightness(dots.pure),
+      `expected a darker edge, saw ${dots.border} against ${dots.pure}`,
     )
   })
 
@@ -451,8 +469,9 @@ describe('content script', { concurrency: false, skip }, () => {
       )
     })
 
-    // Leave the row alone again so later tests see an unhovered list.
-    await page.mouse.move(0, 0)
+    // Leave the row alone again so later tests see an unhovered list. In steps,
+    // so Radix sees the pointer leave the tooltip grace area and closes it.
+    await page.mouse.move(0, 0, { steps: 8 })
   })
 
   it('offers the full title only when the row cannot show it', async () => {
@@ -557,124 +576,8 @@ describe('content script', { concurrency: false, skip }, () => {
     assert.match(String(openMessage.url), /github\.com/)
   })
 
-  it('collapses to the header without unmounting', async () => {
-    const height = await page.evaluate(async () => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const button = shadow.querySelector('[aria-label="Collapse"]') as HTMLButtonElement
-      button.click()
-      await new Promise((resolve) => setTimeout(resolve, 400))
-      const panel = shadow.querySelector('[role="complementary"]') as HTMLElement
-      return panel.getBoundingClientRect().height
-    })
-
-    assert.equal(height, 44)
-  })
-
   it('reports no console errors', () => {
     assert.deepEqual(consoleErrors, [])
-  })
-})
-
-describe('window geometry', { concurrency: false, skip }, () => {
-  let dragBrowser: Browser
-  let dragPage: Page
-
-  before(async () => {
-    dragBrowser = await puppeteer.launch({ executablePath, headless: true })
-    dragPage = await dragBrowser.newPage()
-    await dragPage.setViewport({ width: 1280, height: 800 })
-    await dragPage.setContent(
-      '<!doctype html><html data-color-mode="light"><body></body></html>',
-    )
-    await dragPage.evaluate(CHROME_STUB)
-
-    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
-    await dragPage.evaluate(bundle)
-    await dragPage.waitForSelector('#github-sidecar-root')
-  })
-
-  after(async () => {
-    await dragBrowser?.close()
-  })
-
-  /** Centre of the bare strip in the header that is reserved for dragging. */
-  const dragRegionCentre = () =>
-    dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const region = shadow.querySelector('[data-drag-region]') as HTMLElement
-      const box = region.getBoundingClientRect()
-      return { x: box.x + box.width / 2, y: box.y + box.height / 2, width: box.width }
-    })
-
-  const panelBox = () =>
-    dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const panel = shadow.querySelector('[role="complementary"]') as HTMLElement
-      const box = panel.getBoundingClientRect()
-      return { x: box.x, y: box.y, width: box.width, height: box.height }
-    })
-
-  it('exposes a usable drag region in the header', async () => {
-    const region = await dragRegionCentre()
-    assert.ok(region.width > 40, `drag region too narrow: ${region.width}px`)
-  })
-
-  it('moves the window when the header is dragged', async () => {
-    const start = await panelBox()
-    const handle = await dragRegionCentre()
-
-    await dragPage.mouse.move(handle.x, handle.y)
-    await dragPage.mouse.down()
-    await dragPage.mouse.move(handle.x - 60, handle.y + 90, { steps: 10 })
-    await dragPage.mouse.up()
-
-    const moved = await panelBox()
-    assert.equal(Math.round(moved.x - start.x), -60)
-    assert.equal(Math.round(moved.y - start.y), 90)
-    // Size must be untouched by a move.
-    assert.equal(moved.width, start.width)
-  })
-
-  it('persists the new position to storage', async () => {
-    const stored = await dragPage.evaluate(async () => {
-      const result = await chrome.storage.local.get('windowState')
-      return result.windowState as { x: number; y: number }
-    })
-    const box = await panelBox()
-
-    assert.equal(Math.round(stored.x), Math.round(box.x))
-    assert.equal(Math.round(stored.y), Math.round(box.y))
-  })
-
-  it('ignores drags once the position is locked', async () => {
-    await dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const lock = shadow.querySelector('[aria-label="Lock position"]') as HTMLButtonElement
-      lock.click()
-    })
-    await dragPage.waitForFunction(() => {
-      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
-      return Boolean(shadow?.querySelector('[aria-label="Unlock position"]'))
-    })
-
-    const start = await panelBox()
-    const handle = await dragRegionCentre()
-
-    await dragPage.mouse.move(handle.x, handle.y)
-    await dragPage.mouse.down()
-    await dragPage.mouse.move(handle.x - 120, handle.y + 40, { steps: 6 })
-    await dragPage.mouse.up()
-
-    const moved = await panelBox()
-    assert.deepEqual({ x: moved.x, y: moved.y }, { x: start.x, y: start.y })
-  })
-
-  it('hides resize handles while locked', async () => {
-    const handles = await dragPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      return shadow.querySelectorAll('[class*="cursor-nwse-resize"]').length
-    })
-    assert.equal(handles, 0)
   })
 })
 
@@ -700,7 +603,7 @@ const GITHUB_PAGE = `<!doctype html><html data-color-mode="light"><body style="m
 </main></div>
 </body></html>`
 
-describe('docked mode', { concurrency: false, skip }, () => {
+describe('docked into the page', { concurrency: false, skip }, () => {
   let dockBrowser: Browser
   let dockPage: Page
 
@@ -746,8 +649,9 @@ describe('docked mode', { concurrency: false, skip }, () => {
     assert.equal(fonts.panelFont, fonts.pageFont)
   })
 
-  const panel = () =>
-    dockPage.evaluate(() => {
+  const panel = async () => {
+    await settleMorph(dockPage)
+    return dockPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const node = shadow.querySelector('[role="complementary"]') as HTMLElement
       const box = node.getBoundingClientRect()
@@ -756,26 +660,33 @@ describe('docked mode', { concurrency: false, skip }, () => {
         docked: node.hasAttribute('data-docked'),
         x: box.x,
         y: box.y,
+        right: box.right,
         bottom: box.bottom,
         width: box.width,
+        borderLeft: styles.borderLeftWidth,
         borderRight: styles.borderRightWidth,
+        radius: parseFloat(styles.borderTopLeftRadius),
         boxShadow: styles.boxShadow,
+        transform: styles.transform,
       }
     })
+  }
 
   /** Where the page itself starts drawing, and what we took to get it there. */
   const host = () =>
     dockPage.evaluate(() => {
       const chrome = document.querySelector('.AppHeader')!.getBoundingClientRect()
+      const nav = document.querySelector('.js-header-wrapper')!.getBoundingClientRect()
       return {
         bodyPadding: parseFloat(getComputedStyle(document.body).paddingLeft),
         headingLeft: document.getElementById('heading')!.getBoundingClientRect().left,
         chromeLeft: chrome.left,
         chromeWidth: chrome.width,
+        chromeBottom: nav.bottom,
       }
     })
 
-  const clickDock = async (label: string) => {
+  const clickControl = async (label: string) => {
     await dockPage.evaluate((selector) => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       ;(shadow.querySelector(selector) as HTMLButtonElement).click()
@@ -784,25 +695,20 @@ describe('docked mode', { concurrency: false, skip }, () => {
     await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
   }
 
-  it('starts floating, leaving the page untouched', async () => {
-    assert.equal((await panel()).docked, false)
-    assert.equal((await host()).bodyPadding, 0)
-  })
-
-  it('docks into the page gutter, below the header and nav', async () => {
-    await clickDock('Dock to the page')
+  it('sits in the page gutter, below the header and nav', async () => {
     const box = await panel()
 
     assert.equal(box.docked, true)
-    assert.equal(box.x, 0)
-    // 64px header plus a 48px nav row, and it must not cover them.
-    assert.ok(box.y >= 112, `expected the panel below the chrome, saw y=${box.y}`)
-    assert.equal(box.bottom, 900)
+    assert.equal(box.x, DOCK_INSET)
+    assert.equal(box.y, (await host()).chromeBottom + DOCK_INSET)
+    assert.equal(box.bottom, 900 - DOCK_INSET)
   })
 
-  it('carries an edge so it reads against a white page', async () => {
+  it('floats as a rounded card with an edge on every side', async () => {
     const box = await panel()
+    assert.equal(box.borderLeft, '1px')
     assert.equal(box.borderRight, '1px')
+    assert.ok(box.radius > 0, 'expected rounded corners')
     assert.match(box.boxShadow, /oklch/)
   })
 
@@ -813,8 +719,8 @@ describe('docked mode', { concurrency: false, skip }, () => {
     assert.equal(hostPage.bodyPadding, 0)
     assert.equal(hostPage.chromeLeft, 0)
     assert.ok(
-      hostPage.headingLeft > box.width,
-      `expected the page clear of the panel, saw ${hostPage.headingLeft} vs ${box.width}`,
+      hostPage.headingLeft > box.right,
+      `expected the page clear of the panel, saw ${hostPage.headingLeft} vs ${box.right}`,
     )
   })
 
@@ -826,7 +732,7 @@ describe('docked mode', { concurrency: false, skip }, () => {
     const box = await panel()
 
     assert.ok(hostPage.bodyPadding > 0, 'expected the page to be pushed across')
-    assert.ok(hostPage.headingLeft >= box.width, 'expected the content clear of the panel')
+    assert.ok(hostPage.headingLeft >= box.right, 'expected the content clear of the panel')
     // Only the page body moves. The header keeps spanning the window, and the
     // panel hangs below it rather than beside it, so the page still reads as
     // github.com with a drawer open.
@@ -885,60 +791,66 @@ describe('docked mode', { concurrency: false, skip }, () => {
     )
   })
 
-  it('collapses to a rail that asks the page for far less room', async () => {
+  it('follows the nav as it scrolls away, rather than springing after it', async () => {
+    await dockPage.evaluate(() => window.scrollTo(0, 0))
+    await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
+    const unscrolled = await panel()
+
+    await dockPage.evaluate(() => window.scrollTo(0, 30))
+    // The top is remeasured on the frame after the scroll, then rendered.
+    await dockPage.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    )
+    const scrolled = await panel()
+
+    assert.equal(scrolled.y, unscrolled.y - 30)
+    assert.equal(scrolled.transform, 'none')
+  })
+
+  /** The launcher tab, measured once it settles, or null when it is not showing. */
+  const launcher = async () => {
+    await settleMorph(dockPage)
+    return dockPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
+      const node = shadow.querySelector('[data-launcher]') as HTMLElement | null
+      if (!node) return null
+      const box = shadow.querySelector('[data-launcher-capsule]')!.getBoundingClientRect()
+      return {
+        x: box.x,
+        middle: box.top + box.height / 2,
+        height: box.height,
+        chip: shadow.querySelector('[data-launcher-chip]')?.textContent ?? null,
+        panelGone: !shadow.querySelector('[data-docked]'),
+      }
+    })
+  }
+
+  it('collapses to the launcher and gives the page its space back', async () => {
     await dockPage.evaluate(() => window.scrollTo(0, 0))
     await dockPage.setViewport({ width: NARROW, height: 900 })
     await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
 
-    const expandedPush = (await host()).bodyPadding
-    assert.ok(expandedPush > 0, 'expected the open panel to need the page moved')
+    assert.ok((await host()).bodyPadding > 0, 'expected the open panel to need the page moved')
 
-    await clickDock('Collapse')
+    await clickControl('Collapse')
+    const pill = await launcher()
 
-    const rail = await dockPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const node = shadow.querySelector('[aria-label^="Expand"]') as HTMLElement | null
-      if (!node) return null
-      const box = node.getBoundingClientRect()
-      return {
-        x: box.x,
-        width: box.width,
-        bottom: box.bottom,
-        expanded: node.getAttribute('aria-expanded'),
-        panelGone: !shadow.querySelector('[data-docked]'),
-      }
-    })
-
-    assert.ok(rail, 'expected a rail once collapsed')
-    assert.equal(rail.panelGone, true)
-    assert.equal(rail.x, 0)
-    assert.equal(rail.expanded, 'false')
-    assert.ok(rail.width <= 48, `expected a narrow rail, saw ${rail.width}px`)
-    assert.equal(rail.bottom, 900)
-
-    // A rail fits where the panel could not, so the page gets most of its
-    // layout back even on a viewport this narrow.
-    const collapsedPush = (await host()).bodyPadding
-    assert.ok(
-      collapsedPush < expandedPush,
-      `expected less room taken, ${collapsedPush} vs ${expandedPush}`,
+    assert.ok(pill, 'expected the launcher once collapsed')
+    assert.equal(pill.panelGone, true)
+    // Against the left edge, halfway down the viewport.
+    assert.equal(pill.x, 0)
+    assert.equal(Math.round(pill.middle), 450)
+    assert.equal((await host()).bodyPadding, 0)
+    assert.equal(
+      await dockPage.evaluate(() => document.body.style.getPropertyValue('padding-left')),
+      '',
     )
-    assert.ok(collapsedPush <= rail.width + 16, `rail took ${collapsedPush}px`)
   })
 
-  it('keeps taking results while collapsed', async () => {
-    const countOn = () =>
-      dockPage.evaluate(() => {
-        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-        return shadow.querySelector('[aria-label^="Expand"]')?.textContent?.trim()
-      })
-
-    // The seeded query reports 400 matches, which the rail caps for width.
-    assert.equal(await countOn(), '99+')
-
-    // A refresh landing while collapsed has to reach the rail, otherwise the
-    // count it is showing is decoration rather than status.
-    await dockPage.evaluate(() => {
+  /** Sends the launcher a refreshed total, as the worker does after a poll. */
+  const refreshTotal = async (totalCount: number) => {
+    await dockPage.evaluate((total) => {
       const broadcast = (window as unknown as { __broadcast: (m: unknown) => void })
         .__broadcast
       broadcast({
@@ -947,44 +859,144 @@ describe('docked mode', { concurrency: false, skip }, () => {
         after: null,
         page: {
           items: [],
-          totalCount: 7,
+          totalCount: total,
           endCursor: null,
           hasNextPage: false,
           fetchedAt: Date.now(),
         },
       })
-    })
+    }, totalCount)
     await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)))
+  }
 
-    assert.equal(await countOn(), '7')
+  it('keeps taking results while collapsed', async () => {
+    assert.equal((await launcher())!.chip, '400')
+
+    // A refresh landing while collapsed has to reach the launcher, otherwise
+    // the count it is showing is decoration rather than status.
+    await refreshTotal(4321)
+    assert.equal((await launcher())!.chip, '999+', 'expected the circle to cap the count')
+
+    await refreshTotal(7)
+    assert.equal((await launcher())!.chip, '7')
   })
 
-  it('expands again from the rail alone', async () => {
-    await dockPage.evaluate(() => {
+  it('announces the query name with the count', async () => {
+    const description = await dockPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      ;(shadow.querySelector('[aria-label^="Expand"]') as HTMLButtonElement).click()
+      const open = shadow.querySelector('[aria-label="Open GitHub Sidecar"]')!
+      return shadow.getElementById(open.getAttribute('aria-describedby')!)?.textContent
     })
-    await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)))
+    assert.equal(description, 'Needs my review, 7 results')
+  })
+
+  it('opens again from the launcher, scrolled past the sticky header', async () => {
+    await dockPage.evaluate(() => window.scrollTo(0, 800))
+    await dockPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
+    await clickControl('Open GitHub Sidecar')
 
     const box = await panel()
     assert.equal(box.docked, true)
     assert.ok(box.width > 100, `expected the panel back, saw ${box.width}px`)
+
+    // The pinned header still ends above the page, even though <main> has
+    // scrolled up past it, so it has to stay full-bleed.
+    const hostPage = await host()
+    assert.ok(hostPage.bodyPadding > 0, 'expected the page to be pushed across')
+    assert.equal(hostPage.chromeLeft, 0)
+    assert.equal(hostPage.chromeWidth, NARROW)
+  })
+})
+
+/**
+ * The shell github.com serves its newer pages from: a staff bar and a header
+ * with none of the older class names, side by side above `<main>`, and a
+ * fixed two-pixel progress bar across the top of the viewport.
+ */
+const NEWER_GITHUB_PAGE = `<!doctype html><html data-color-mode="light"><body style="margin:0">
+<span class="progress-pjax-loader" style="position:fixed;top:0;left:0;width:100%;height:2px"></span>
+<div><div>
+  <aside id="staffbar" aria-label="Staffbar" style="height:32px;background:#1f2328"></aside>
+  <header id="global-nav" class="GlobalNav" aria-label="Global navigation menu">
+    <div style="height:52px"></div>
+    <nav aria-label="Repository" style="height:48px;border-bottom:1px solid #d1d9e0"></nav>
+  </header>
+  <main>
+    <div style="max-width:1280px;margin:0 auto;padding:24px">
+      <h1 id="heading" style="margin:0">A repository</h1>
+      <div style="height:2400px;background:#f6f8fa"></div>
+    </div>
+  </main>
+</div></div>
+</body></html>`
+
+describe('docked on a page from the newer frontend', { concurrency: false, skip }, () => {
+  let newerBrowser: Browser
+  let newerPage: Page
+
+  const NARROW = 1100
+
+  before(async () => {
+    newerBrowser = await puppeteer.launch({ executablePath, headless: true })
+    newerPage = await newerBrowser.newPage()
+    await newerPage.setViewport({ width: NARROW, height: 900 })
+    await newerPage.setContent(NEWER_GITHUB_PAGE)
+    await newerPage.evaluate(CHROME_STUB)
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await newerPage.evaluate(bundle)
+    await newerPage.waitForSelector('#github-sidecar-root')
+    await newerPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
   })
 
-  it('gives the page its space back when undocked', async () => {
-    await dockPage.evaluate(() => window.scrollTo(0, 0))
-    await dockPage.setViewport({ width: WIDE, height: 900 })
-    await clickDock('Float the window')
+  after(async () => {
+    await newerBrowser?.close()
+  })
 
-    const box = await panel()
-    assert.equal(box.docked, false)
-    assert.equal((await host()).bodyPadding, 0)
-    assert.equal(
-      await dockPage.evaluate(() =>
-        Boolean(document.getElementById('github-sidecar-dock-style')),
-      ),
-      false,
+  const layout = () =>
+    newerPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const panel = shadow.querySelector('[data-docked]')!.getBoundingClientRect()
+      const box = (id: string) => {
+        const rect = document.getElementById(id)!.getBoundingClientRect()
+        return { left: rect.left, width: rect.width, bottom: rect.bottom }
+      }
+      return {
+        panelTop: panel.top,
+        panelRight: panel.right,
+        staffbar: box('staffbar'),
+        header: box('global-nav'),
+        heading: box('heading'),
+      }
+    })
+
+  it('moves the page clear of the panel, but not the header or staff bar', async () => {
+    const boxes = await layout()
+
+    assert.ok(boxes.heading.left >= boxes.panelRight, 'expected the content clear of the panel')
+    assert.deepEqual(
+      { left: boxes.staffbar.left, width: boxes.staffbar.width },
+      { left: 0, width: NARROW },
     )
+    assert.deepEqual(
+      { left: boxes.header.left, width: boxes.header.width },
+      { left: 0, width: NARROW },
+    )
+  })
+
+  it('starts the panel below the header', async () => {
+    const boxes = await layout()
+    assert.ok(
+      boxes.panelTop >= boxes.header.bottom,
+      `expected the panel below ${boxes.header.bottom}, saw ${boxes.panelTop}`,
+    )
+  })
+
+  it('moves up to the top once the header scrolls away, past the progress bar', async () => {
+    await newerPage.evaluate(() => window.scrollTo(0, 600))
+    await newerPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)))
+
+    assert.equal((await layout()).panelTop, DOCK_INSET)
   })
 })
 
@@ -1121,7 +1133,13 @@ describe('row context menu', { concurrency: false, skip }, () => {
       const dot = shadow.querySelector('[data-check] svg.octicon-dot-fill')
       if (!dot) return null
       const styles = getComputedStyle(dot)
-      return { animationName: styles.animationName, colour: styles.color }
+      // The token as the browser resolves it, so the minified source spelling does not matter.
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--color-attention)'
+      dot.parentElement!.append(probe)
+      const attention = getComputedStyle(probe).color
+      probe.remove()
+      return { animationName: styles.animationName, colour: styles.color, attention }
     })
 
     assert.ok(mark, 'expected a pending checks mark to be rendered')
@@ -1129,7 +1147,7 @@ describe('row context menu', { concurrency: false, skip }, () => {
     // rotationally symmetric, so the slow spin it used to carry was motion
     // nobody could have seen.
     assert.equal(mark.animationName, 'none')
-    assert.equal(mark.colour, 'oklch(0.72 0.16 70.7)')
+    assert.equal(mark.colour, mark.attention)
   })
 
   const firstRowText = () =>
@@ -1194,15 +1212,17 @@ describe('row context menu', { concurrency: false, skip }, () => {
 
   it('marks a stacked row with its position in the stack', async () => {
     assert.match(await stackRow(), /2\/3/)
-    // An unstacked row says nothing about stacks and offers no expander.
+    // An unstacked row says nothing about stacks and offers no expander. Menu
+    // buttons report `aria-expanded` too, so they are left out of the count.
     const expanders = await menuPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      return shadow.querySelectorAll('[data-index="0"] [aria-expanded]').length
+      return shadow.querySelectorAll('[data-index="0"] [aria-expanded]:not([aria-haspopup])')
+        .length
     })
     assert.equal(expanders, 0)
   })
 
-  it('expands to the rest of the stack, base branch first', async () => {
+  it('expands to the rest of the stack, top layer first', async () => {
     await menuPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       const toggle = shadow.querySelector(
@@ -1231,8 +1251,8 @@ describe('row context menu', { concurrency: false, skip }, () => {
     })
 
     assert.equal(layers.length, 3)
-    assert.match(layers[0]!, /#101 Groundwork for the feature/)
-    assert.match(layers[2]!, /#103 The last layer/)
+    assert.match(layers[0]!, /#103 The last layer/)
+    assert.match(layers[2]!, /#101 Groundwork for the feature/)
     // The stack says where it lands, not just what is in it.
     assert.match(await stackRow(), /onto main/)
 
@@ -1633,6 +1653,390 @@ describe('row context menu', { concurrency: false, skip }, () => {
   })
 })
 
+describe('quick actions on a row', { concurrency: false, skip }, () => {
+  let quickBrowser: Browser
+  let quickPage: Page
+
+  before(async () => {
+    quickBrowser = await puppeteer.launch({ executablePath, headless: true })
+    quickPage = await quickBrowser.newPage()
+    await quickPage.setViewport({ width: 1280, height: 900 })
+    await quickPage.setContent('<!doctype html><html data-color-mode="light"><body></body></html>')
+    await quickPage.evaluate(CHROME_STUB)
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await quickPage.evaluate(bundle)
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+  })
+
+  after(async () => {
+    await quickBrowser?.close()
+  })
+
+  /** The quick actions on one row: their names, and how visible the group is. */
+  const actionsOn = (index: number) =>
+    quickPage.evaluate((rowIndex) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const group = shadow.querySelector(
+        `[data-index="${rowIndex}"] [data-quick-actions]`,
+      ) as HTMLElement | null
+      return {
+        labels: group
+          ? [...group.querySelectorAll('button')].map((node) => node.getAttribute('aria-label'))
+          : [],
+        opacity: group ? getComputedStyle(group).opacity : null,
+      }
+    }, index)
+
+  const waitForActionsShown = (index: number) =>
+    quickPage.waitForFunction((rowIndex) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const group = shadow.querySelector(`[data-index="${rowIndex}"] [data-quick-actions]`)
+      return Boolean(group) && getComputedStyle(group!).opacity === '1'
+    }, {}, index)
+
+  const hoverRow = async (index: number) => {
+    const point = await quickPage.evaluate((rowIndex) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = shadow.querySelector(`[data-index="${rowIndex}"] button`)!.getBoundingClientRect()
+      return { x: box.x + 40, y: box.y + 12 }
+    }, index)
+    await quickPage.mouse.move(point.x, point.y, { steps: 4 })
+  }
+
+  const clickAction = (index: number, label: string) =>
+    quickPage.evaluate(
+      ({ rowIndex, name }) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const button = shadow.querySelector(
+          `[data-index="${rowIndex}"] [data-quick-actions] [aria-label="${name}"]`,
+        ) as HTMLElement
+        button.click()
+      },
+      { rowIndex: index, name: label },
+    )
+
+  const pinnedIds = async () =>
+    (await quickPage.evaluate(() => chrome.storage.local.get('pinnedIds'))).pinnedIds as string[]
+
+  const focusedLabel = () =>
+    quickPage.evaluate(
+      () =>
+        document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement?.getAttribute(
+          'aria-label',
+        ) ?? null,
+    )
+
+  /** Waits for a menu entry by its exact text, then picks it. */
+  const pickMenuItem = async (label: string) => {
+    await quickPage.waitForFunction(
+      (text: string) =>
+        [
+          ...document
+            .getElementById('github-sidecar-root')!
+            .shadowRoot!.querySelectorAll('[role="menuitem"]'),
+        ].some((node) => node.textContent?.trim() === text),
+      {},
+      label,
+    )
+    await quickPage.evaluate((text) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[role="menuitem"]')].find(
+        (node) => node.textContent?.trim() === text,
+      )
+      ;(entry as HTMLElement).click()
+    }, label)
+  }
+
+  it('stays out of sight until the row is hovered, and moves nothing when it shows', async () => {
+    /** Every box in the row apart from the quick actions themselves. */
+    const layout = () =>
+      quickPage.evaluate(() => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const row = shadow.querySelector('[data-index="1"]')!
+        const boxes = [row, ...row.querySelectorAll('*')]
+          .filter((node) => !node.closest('[data-quick-actions]'))
+          .map((node) => {
+            const box = node.getBoundingClientRect()
+            return [box.x, box.y, box.width, box.height].join(',')
+          })
+        return boxes
+      })
+
+    // Not built at all until the row is first hovered or focused.
+    assert.equal((await actionsOn(1)).opacity, null)
+    const atRest = await layout()
+
+    await hoverRow(1)
+    await waitForActionsShown(1)
+    assert.deepEqual(await layout(), atRest)
+
+    // Laid over the row's own corner, not hanging outside it.
+    const inside = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const body = shadow.querySelector('[data-index="1"] [data-item-body]')!.getBoundingClientRect()
+      const group = shadow
+        .querySelector('[data-index="1"] [data-quick-actions]')!
+        .getBoundingClientRect()
+      return (
+        group.left >= body.left &&
+        group.right <= body.right &&
+        group.top >= body.top &&
+        group.bottom <= body.bottom
+      )
+    })
+    assert.equal(inside, true)
+
+    // Once built, it hides again as the pointer leaves.
+    await quickPage.mouse.move(0, 0, { steps: 4 })
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const group = shadow.querySelector('[data-index="1"] [data-quick-actions]')
+      return Boolean(group) && getComputedStyle(group!).opacity === '0'
+    })
+  })
+
+  it('is reached from the keyboard right after the row, and pins it as the menu does', async () => {
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('.scrollbar-slim') as HTMLElement).focus()
+    })
+    await quickPage.keyboard.press('j')
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return shadow.activeElement === shadow.querySelector('[data-index="0"] button')
+    })
+
+    // A row that holds keyboard focus shows its actions without a pointer.
+    await waitForActionsShown(0)
+
+    await quickPage.keyboard.press('Tab')
+    assert.equal(await focusedLabel(), 'Pin item')
+
+    await quickPage.keyboard.press('Enter')
+    await quickPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="0"][data-pinned], [data-index="0"] [data-pinned]'),
+      ),
+    )
+    assert.deepEqual(await pinnedIds(), ['item_0'])
+    assert.deepEqual((await actionsOn(0)).labels, ['Unpin item', 'Remind me', 'Copy link'])
+
+    await clickAction(0, 'Unpin item')
+    await quickPage.waitForFunction(
+      () =>
+        !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-pinned]'),
+    )
+    assert.deepEqual(await pinnedIds(), [])
+  })
+
+  it('copies the same link the menu copies, and says it did', async () => {
+    await quickPage.evaluate(() => {
+      const scope = window as unknown as {
+        __copied: Array<Record<string, string>>
+        ClipboardItem: unknown
+      }
+      scope.__copied = []
+      scope.ClipboardItem = class {
+        readonly flavours: Record<string, Blob>
+        constructor(flavours: Record<string, Blob>) {
+          this.flavours = flavours
+        }
+        get types() {
+          return Object.keys(this.flavours)
+        }
+        async getType(type: string) {
+          return this.flavours[type]
+        }
+      }
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          write: async (items: ClipboardItem[]) => {
+            const flavours = items.flatMap((item) =>
+              item.types.map(async (type) => [type, await (await item.getType(type)).text()]),
+            )
+            scope.__copied.push(Object.fromEntries(await Promise.all(flavours)))
+          },
+        },
+      })
+    })
+    const copies = () =>
+      quickPage.evaluate(
+        () => (window as unknown as { __copied: Array<Record<string, string>> }).__copied,
+      )
+
+    await clickAction(1, 'Copy link')
+    await quickPage.waitForFunction(
+      () => (window as unknown as { __copied: unknown[] }).__copied.length === 1,
+    )
+    assert.ok((await actionsOn(1)).labels.includes('Copied'))
+
+    // The same row, copied through the context menu instead.
+    const point = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = shadow.querySelector('[data-index="1"] button')!.getBoundingClientRect()
+      return { x: box.x + 40, y: box.y + 20 }
+    })
+    await quickPage.mouse.click(point.x, point.y, { button: 'right' })
+    await pickMenuItem('Copy')
+    await pickMenuItem('Link')
+    await quickPage.waitForFunction(
+      () => (window as unknown as { __copied: unknown[] }).__copied.length === 2,
+    )
+
+    const [quick, menu] = await copies()
+    assert.equal(quick['text/plain'], 'https://github.com/acme/app/pull/2')
+    assert.deepEqual(quick, menu)
+  })
+
+  it('marks a changed row as seen, as the menu does', async () => {
+    // Pushed as a poll would push it, then left in the seed so a refetch agrees.
+    await quickPage.evaluate(() => {
+      const scope = window as unknown as {
+        __items: Array<Record<string, unknown>>
+        __broadcast: (message: unknown) => void
+      }
+      const item = { ...scope.__items[0], commentCount: 25 }
+      scope.__broadcast({ type: 'item-updated', item })
+      scope.__items[0] = item
+    })
+    await quickPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="0"] [data-change]'),
+      ),
+    )
+    assert.deepEqual((await actionsOn(0)).labels, [
+      'Mark as seen',
+      'Pin item',
+      'Remind me',
+      'Copy link',
+    ])
+
+    // From the keyboard: the row, then the first of its actions.
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[data-index="0"] button') as HTMLElement).focus()
+    })
+    await quickPage.keyboard.press('Tab')
+    assert.equal(await focusedLabel(), 'Mark as seen')
+    await quickPage.keyboard.press('Enter')
+
+    await quickPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="0"] [data-change]'),
+    )
+    assert.deepEqual((await actionsOn(0)).labels, ['Pin item', 'Remind me', 'Copy link'])
+    // The button it was on is gone, so focus moves along rather than off the panel.
+    assert.equal(await focusedLabel(), 'Pin item')
+  })
+
+  it('keeps keys pressed in its reminder menu inside the menu', async () => {
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[data-index="3"] button') as HTMLElement).focus()
+    })
+    await quickPage.keyboard.press('Tab')
+    await quickPage.keyboard.press('Tab')
+    assert.equal(await focusedLabel(), 'Remind me')
+
+    await quickPage.keyboard.press('Enter')
+    await quickPage.waitForFunction(
+      () => document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement?.getAttribute('role') === 'menuitem',
+    )
+
+    // The list's own keys: neither moves to a row nor pins one from inside the menu.
+    await quickPage.keyboard.press('ArrowDown')
+    await quickPage.keyboard.press('p')
+    const state = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return {
+        role: shadow.activeElement?.getAttribute('role') ?? null,
+        menus: shadow.querySelectorAll('[role="menu"]').length,
+      }
+    })
+    assert.deepEqual(state, { role: 'menuitem', menus: 1 })
+    assert.deepEqual(await pinnedIds(), [])
+
+    await quickPage.keyboard.press('Escape')
+    await quickPage.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[role="menu"]'),
+    )
+    // Radix hands focus back to the trigger once the menu has unmounted.
+    await quickPage.waitForFunction(
+      () =>
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.activeElement?.getAttribute('aria-label') === 'Remind me',
+    )
+  })
+
+  it('sets a reminder from its own menu, as the context menu does', async () => {
+    await hoverRow(2)
+    await waitForActionsShown(2)
+
+    // A Radix trigger opens only on a real pointer, so click it where it is.
+    const trigger = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = shadow
+        .querySelector('[data-index="2"] [data-quick-actions] [aria-label="Remind me"]')!
+        .getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+    await quickPage.mouse.click(trigger.x, trigger.y)
+    await quickPage.waitForFunction(() =>
+      [
+        ...document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelectorAll('[role="menuitem"]'),
+      ].some((node) => node.textContent?.trim() === 'When it changes'),
+    )
+
+    // Off the row and onto the menu: the actions stay up behind it.
+    const entry = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const node = [...shadow.querySelectorAll('[role="menuitem"]')].find(
+        (candidate) => candidate.textContent?.trim() === 'When it changes',
+      )!
+      const box = node.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+    await quickPage.mouse.move(entry.x, entry.y, { steps: 6 })
+    const hovered = await quickPage.evaluate(
+      () => document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-index="2"]')!.matches(':hover'),
+    )
+    assert.equal(hovered, false)
+    assert.equal((await actionsOn(2)).opacity, '1')
+
+    await pickMenuItem('When it changes')
+
+    await quickPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-index="2"] [data-reminder="waiting"]'),
+      ),
+    )
+    const reminder = await quickPage.evaluate(
+      async () =>
+        (await chrome.storage.local.get('itemMemory')).itemMemory?.item_2?.reminder ?? null,
+    )
+    assert.equal(reminder?.dueAt, null)
+    assert.deepEqual((await actionsOn(2)).labels, ['Pin item', 'Remind me instead', 'Copy link'])
+
+    await quickPage.mouse.move(0, 0, { steps: 4 })
+  })
+})
+
 describe('a tab that was never asked', { concurrency: false, skip }, () => {
   let quietBrowser: Browser
   let quietPage: Page
@@ -1666,21 +2070,39 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
           .__sentMessages,
     )
 
-  const launcher = () =>
-    quietPage.evaluate(() => {
+  const launcher = async () => {
+    await settleMorph(quietPage)
+    return quietPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidecar"]'))
     })
+  }
 
-  it('starts closed, showing only the launcher', async () => {
+  it('starts closed, showing only the launcher on the left edge', async () => {
     await quietPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
 
     assert.equal(await launcher(), true)
-    const panel = await quietPage.evaluate(() => {
+    const layout = await quietPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      return Boolean(shadow.querySelector('[role="complementary"]'))
+      await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
+      const box = shadow.querySelector('[data-launcher-capsule]')!.getBoundingClientRect()
+      return {
+        panel: Boolean(shadow.querySelector('[role="complementary"]')),
+        left: box.left,
+        middle: box.top + box.height / 2,
+        // The tab draws no name, so the query is only in what screen readers announce.
+        description: shadow.getElementById(
+          shadow.querySelector('[aria-label="Open GitHub Sidecar"]')!.getAttribute('aria-describedby')!,
+        )?.textContent,
+        chip: Boolean(shadow.querySelector('[data-launcher-chip]')),
+      }
     })
-    assert.equal(panel, false)
+    assert.equal(layout.panel, false)
+    assert.equal(layout.left, 0)
+    assert.equal(Math.round(layout.middle), 400)
+    assert.equal(layout.description, 'Needs my review')
+    // Nothing has loaded in a closed tab, so there is no count to show yet.
+    assert.equal(layout.chip, false)
   })
 
   it('asks GitHub for nothing until it is opened', async () => {
@@ -1712,96 +2134,149 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
   })
 })
 
-describe('a docked tab that was never asked', { concurrency: false, skip }, () => {
-  let railBrowser: Browser
-  let railPage: Page
+describe('a github.com tab that was never asked', { concurrency: false, skip }, () => {
+  let closedBrowser: Browser
+  let closedPage: Page
 
   before(async () => {
-    railBrowser = await puppeteer.launch({ executablePath, headless: true })
-    railPage = await railBrowser.newPage()
-    await railPage.setViewport({ width: 1280, height: 800 })
-    await railPage.setContent(GITHUB_PAGE)
-    await railPage.evaluate(CHROME_STUB)
-    // A fresh tab, for someone who left the panel docked in the last one.
-    await railPage.evaluate(async () => {
+    closedBrowser = await puppeteer.launch({ executablePath, headless: true })
+    closedPage = await closedBrowser.newPage()
+    await closedPage.setViewport({ width: 1280, height: 800 })
+    await closedPage.setContent(GITHUB_PAGE)
+    await closedPage.evaluate(CHROME_STUB)
+    await closedPage.evaluate(() => {
       ;(window as unknown as { __tabOpen: boolean }).__tabOpen = false
-      const stored = await chrome.storage.local.get('windowState')
-      await chrome.storage.local.set({
-        windowState: { ...stored.windowState, docked: true, collapsed: false },
-      })
     })
 
     const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
-    await railPage.evaluate(bundle)
-    await railPage.waitForSelector('#github-sidecar-root')
-    await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
+    await closedPage.evaluate(bundle)
+    await closedPage.waitForSelector('#github-sidecar-root')
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
   })
 
   after(async () => {
-    await railBrowser?.close()
+    await closedBrowser?.close()
   })
 
-  const rail = () =>
-    railPage.evaluate(() => {
+  const pill = async () => {
+    await settleMorph(closedPage)
+    return closedPage.evaluate(async () => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const node = shadow.querySelector('[aria-label^="Expand"]') as HTMLElement | null
-      if (!node) return null
-      const box = node.getBoundingClientRect()
-      return { x: box.x, y: box.y, width: box.width, bottom: box.bottom }
+      await Promise.allSettled(shadow.getAnimations().map((animation) => animation.finished))
+      return Boolean(shadow.querySelector('[data-launcher]'))
     })
-
-  const clickRail = async () => {
-    await railPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      ;(shadow.querySelector('[aria-label^="Expand"]') as HTMLButtonElement).click()
-    })
-    await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
   }
 
-  const panelShowing = () =>
-    railPage.evaluate(() => {
+  const clickLauncher = async () => {
+    await closedPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(
+        shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLButtonElement
+      ).click()
+    })
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
+  }
+
+  const panelShowing = async () => {
+    await settleMorph(closedPage)
+    return closedPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
       return Boolean(shadow.querySelector('[data-docked]'))
     })
+  }
 
-  it('shows the rail rather than nothing at all', async () => {
-    const box = await rail()
-
-    assert.ok(box, 'expected a docked tab to leave its rail on screen')
-    assert.equal(box.x, 0)
-    assert.equal(box.bottom, 800)
-    assert.ok(box.width <= 48, `expected a narrow rail, saw ${box.width}px`)
-    // Below github.com's own chrome, exactly where the panel would have been.
-    assert.ok(box.y >= 112, `expected the rail below the chrome, saw y=${box.y}`)
+  it('leaves the page where it is until the panel opens', async () => {
+    assert.equal(await pill(), true)
     assert.equal(await panelShowing(), false)
+    const layout = await closedPage.evaluate(() => ({
+      bodyPadding: parseFloat(getComputedStyle(document.body).paddingLeft),
+      reserved: Boolean(document.body.style.getPropertyValue('padding-left')),
+    }))
+    assert.deepEqual(layout, { bodyPadding: 0, reserved: false })
   })
 
-  it('leaves the corner launcher to floating mode', async () => {
-    const corner = await railPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      return Boolean(shadow.querySelector('[aria-label="Open GitHub Sidecar"]'))
-    })
-    assert.equal(corner, false)
-  })
+  /**
+   * Clicks a control, or the toolbar button, then follows the element taking
+   * over frame by frame until the morph ends and the element it replaced is gone.
+   */
+  const morphOn = (label: string | 'toolbar', from: string, to: string) =>
+    closedPage.evaluate(
+      async (control, fromSelector, toSelector) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const box = (element: Element) => {
+          const rect = element.getBoundingClientRect()
+          return [rect.left, rect.top, rect.width, rect.height].map(Math.round)
+        }
+        const present = (selector: string) =>
+          [...shadow.querySelectorAll<HTMLElement>(selector)].find((element) => !element.inert)
 
-  it('still asks GitHub for nothing until it is opened', async () => {
-    const sent = await railPage.evaluate(
-      () =>
-        (window as unknown as { __sentMessages: Array<{ type?: string }> })
-          .__sentMessages,
+        const start = box(shadow.querySelector(fromSelector)!)
+        if (control === 'toolbar') {
+          ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
+            type: 'toggle-sidebar',
+          })
+        } else {
+          ;(shadow.querySelector(`[aria-label="${control}"]`) as HTMLElement).click()
+        }
+
+        const seen = {
+          first: null as number[] | null,
+          last: null as number[] | null,
+          oldStayed: false,
+          frames: 0,
+        }
+        const follow = (): Promise<void> =>
+          new Promise((resolve) => requestAnimationFrame(resolve)).then(() => {
+            seen.frames += 1
+            if (shadow.querySelector<HTMLElement>(fromSelector)?.inert) seen.oldStayed = true
+            const target = present(toSelector)
+            if (target && getComputedStyle(target).transform !== 'none') {
+              seen.first ??= box(target)
+              seen.last = box(target)
+            }
+            const done =
+              target && !target.hasAttribute('data-morphing') && !shadow.querySelector(fromSelector)
+            return done || seen.frames >= 120 ? undefined : follow()
+          })
+        await follow()
+
+        const target = present(toSelector)!
+        return { ...seen, start, end: box(target), opacity: getComputedStyle(target).opacity }
+      },
+      label,
+      from,
+      to,
     )
-    assert.deepEqual(
-      sent.filter((message) => message.type === 'search'),
-      [],
-      'a rail is not an open panel; it must not cost a request',
-    )
-  })
 
-  it('opens from the rail alone', async () => {
-    await clickRail()
+  /** Whether every edge of a box is within `slack` pixels of another box. */
+  const near = (actual: number[] | null, expected: number[], slack: number) =>
+    actual !== null && actual.every((value, index) => Math.abs(value - expected[index]) <= slack)
+
+  /**
+   * Whether the first frame drawn is still close to where the morph starts.
+   * Motion skips up to 40ms of an animation whose first frame is late, and
+   * opening renders the whole panel before that frame.
+   */
+  const startsOn = ({ first, start, end }: { first: number[] | null; start: number[]; end: number[] }) =>
+    first !== null &&
+    first.every((value, index) => Math.abs(value - start[index]) <= 0.15 * Math.abs(end[index] - start[index]) + 1)
+
+  it('opens from the launcher alone, growing the pill into the panel', async () => {
+    const morph = await morphOn(
+      'Open GitHub Sidecar',
+      '[data-launcher-capsule]',
+      '[role="complementary"]',
+    )
+
+    assert.ok(startsOn(morph), `expected it to start on the pill at ${morph.start}, saw ${morph.first}`)
+    assert.ok(morph.oldStayed, 'expected the pill to stay, inert, while it fades')
+    // A tab that was never opened has not measured the page yet, so a stale
+    // dock position would show as a jump on the last frame.
+    assert.ok(near(morph.last, morph.end, 3), `expected it to land on ${morph.end}, saw ${morph.last}`)
+    assert.equal(morph.opacity, '1')
 
     assert.equal(await panelShowing(), true)
-    const opened = await railPage.evaluate(() =>
+    const opened = await closedPage.evaluate(() =>
       (
         window as unknown as { __sentMessages: Array<{ type?: string; open?: boolean }> }
       ).__sentMessages.filter((message) => message.type === 'set-tab-open'),
@@ -1809,27 +2284,398 @@ describe('a docked tab that was never asked', { concurrency: false, skip }, () =
     assert.deepEqual(opened, [{ type: 'set-tab-open', open: true }])
   })
 
-  it('takes one click to come back from hidden and collapsed at once', async () => {
-    await railPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      ;(shadow.querySelector('[aria-label="Collapse"]') as HTMLButtonElement).click()
-    })
-    await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
-    assert.ok(await rail(), 'expected collapsing to leave the rail')
-
-    // The toolbar button hides the panel in this tab, so a collapsed dock can
-    // also be a hidden one. Both reasons for a rail are now set at once, and
-    // one click has to clear both or expanding would just redraw the rail.
-    await railPage.evaluate(() => {
+  /** The message the worker sends when the toolbar icon is clicked in this tab. */
+  const clickToolbar = async () => {
+    await closedPage.evaluate(() => {
       ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
         type: 'toggle-sidebar',
       })
     })
-    await railPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
-    assert.ok(await rail(), 'expected the rail to survive being hidden')
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
+  }
 
-    await clickRail()
+  it('comes back from collapsed with one toolbar click, and hides with the next', async () => {
+    await closedPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Collapse"]') as HTMLButtonElement).click()
+    })
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)))
+    assert.ok(await pill(), 'expected collapsing to leave the launcher')
+
+    // Collapsed is shared across tabs and open is per tab, so opening has to
+    // clear both or the toolbar would only redraw the launcher.
+    await clickToolbar()
     assert.equal(await panelShowing(), true)
+
+    await clickToolbar()
+    assert.equal(await panelShowing(), false)
+    assert.ok(await pill(), 'expected hiding to leave the launcher')
+
+    await clickLauncher()
+    assert.equal(await panelShowing(), true)
+  })
+
+  it('shrinks the panel back into the pill when hidden', async () => {
+    const morph = await morphOn('Hide sidebar', '[role="complementary"]', '[data-launcher-capsule]')
+
+    assert.ok(startsOn(morph), `expected it to start on the panel at ${morph.start}, saw ${morph.first}`)
+    assert.ok(morph.oldStayed, 'expected the panel to stay, inert, while it fades')
+    assert.ok(near(morph.last, morph.end, 3), `expected it to land on ${morph.end}, saw ${morph.last}`)
+    assert.equal(morph.opacity, '1')
+  })
+
+  /** How opaque the launcher count looks, through every element above it. */
+  const chipOpacity = () =>
+    closedPage.evaluate(() => {
+      let opacity = 1
+      let node = document
+        .getElementById('github-sidecar-root')!
+        .shadowRoot!.querySelector('[data-launcher-chip]')
+      while (node instanceof Element) {
+        opacity *= parseFloat(getComputedStyle(node).opacity)
+        node = node.parentElement
+      }
+      return opacity
+    })
+
+  it('shows the whole pill again when the panel is hidden mid-morph', async () => {
+    await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const start = performance.now()
+      const until = (ms: number): Promise<void> =>
+        performance.now() - start >= ms
+          ? Promise.resolve()
+          : new Promise((resolve) => requestAnimationFrame(() => resolve(until(ms))))
+      ;(shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLElement).click()
+      // Past the fade of the pill contents, before the pill has gone.
+      await until(250)
+      ;(shadow.querySelector('[aria-label="Hide sidebar"]') as HTMLElement).click()
+    })
+    await settleMorph(closedPage)
+
+    assert.equal(await panelShowing(), false)
+    assert.equal(await chipOpacity(), 1)
+  })
+
+  it('keeps the panel fading out through a refresh that lands mid-morph', async () => {
+    await clickLauncher()
+    await settleMorph(closedPage)
+
+    const midway = await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const start = performance.now()
+      const until = (ms: number): Promise<void> =>
+        performance.now() - start >= ms
+          ? Promise.resolve()
+          : new Promise((resolve) => requestAnimationFrame(() => resolve(until(ms))))
+      ;(shadow.querySelector('[aria-label="Hide sidebar"]') as HTMLElement).click()
+      await until(50)
+      ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
+        type: 'search-updated',
+        query: 'is:open is:pr',
+        after: null,
+        page: {
+          items: (window as unknown as { __items: unknown[] }).__items,
+          totalCount: 12,
+          endCursor: null,
+          hasNextPage: false,
+          fetchedAt: Date.now(),
+        },
+      })
+      // Past the fade of the panel contents, before the panel has gone.
+      await until(250)
+      return {
+        chip: shadow.querySelector('[data-launcher-chip]')?.textContent,
+        panel: Boolean(shadow.querySelector('[data-docked]')),
+      }
+    })
+
+    assert.equal(midway.chip, '12', 'expected the refresh to re-render the launcher')
+    assert.equal(midway.panel, true, 'expected the panel to stay until it has faded')
+    assert.equal(await panelShowing(), false)
+  })
+
+  it('shows the edge of the pill again when the window is resized mid-morph', async () => {
+    await clickLauncher()
+    await settleMorph(closedPage)
+    await closedPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Hide sidebar"]') as HTMLElement).click()
+    })
+    await closedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
+
+    // Motion finishes the morph early when the width changes.
+    await closedPage.setViewport({ width: 1240, height: 800 })
+    try {
+      await closedPage.waitForFunction(
+        () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-morphing]'),
+        { timeout: 2000 },
+      )
+    } finally {
+      await closedPage.setViewport({ width: 1280, height: 800 })
+    }
+    assert.equal(await panelShowing(), false)
+  })
+
+  it('closes an open menu as soon as the panel starts to go', async () => {
+    await clickLauncher()
+    await settleMorph(closedPage)
+    const trigger = await closedPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const box = shadow.querySelector('[data-docked] [aria-haspopup="menu"]')!.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+    await closedPage.mouse.click(trigger.x, trigger.y)
+    await closedPage.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[role="menu"]')),
+    )
+
+    await closedPage.evaluate(() => {
+      ;(window as unknown as { __broadcast: (m: unknown) => void }).__broadcast({
+        type: 'toggle-sidebar',
+      })
+    })
+    await closedPage.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-docked][inert]')),
+    )
+    const menu = await closedPage.evaluate(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[role="menu"]')),
+    )
+
+    assert.equal(menu, false)
+    assert.equal(await panelShowing(), false)
+  })
+
+  /**
+   * Sets the motion preference, then waits for it to reach Motion, which reads
+   * it from a media query listener that hears about it a frame or so later.
+   */
+  const preferReducedMotion = async (reduce: boolean) => {
+    const changed = closedPage.evaluate(
+      () =>
+        new Promise((resolve) => {
+          matchMedia('(prefers-reduced-motion)').addEventListener('change', resolve, { once: true })
+        }),
+    )
+    await closedPage.emulateMediaFeatures(
+      reduce ? [{ name: 'prefers-reduced-motion', value: 'reduce' }] : [],
+    )
+    await changed
+  }
+
+  it('skips the morph for anyone who asks for reduced motion', async () => {
+    await preferReducedMotion(true)
+    try {
+      const morph = await morphOn(
+        'Open GitHub Sidecar',
+        '[data-launcher-capsule]',
+        '[role="complementary"]',
+      )
+      assert.equal(morph.first, null, 'expected the panel never to be scaled')
+      assert.equal(morph.opacity, '1')
+      assert.equal(
+        await closedPage.evaluate(() => document.body.style.getPropertyValue('transition')),
+        '',
+        'expected the page to move at once',
+      )
+    } finally {
+      await preferReducedMotion(false)
+    }
+  })
+
+  it('lands below the nav when the toolbar opens it on a scrolled page', async () => {
+    await clickToolbar()
+    assert.equal(await panelShowing(), false)
+    await closedPage.evaluate(() => window.scrollTo(0, 30))
+
+    // The page has scrolled since the panel last measured it.
+    const morph = await morphOn('toolbar', '[data-launcher-capsule]', '[role="complementary"]')
+    const navBottom = await closedPage.evaluate(
+      () => document.querySelector('.js-header-wrapper')!.getBoundingClientRect().bottom,
+    )
+
+    assert.equal(morph.end[1], navBottom + DOCK_INSET)
+    assert.ok(near(morph.last, morph.end, 3), `expected it to land on ${morph.end}, saw ${morph.last}`)
+  })
+
+  /**
+   * Clicks a control, then reads how far across the page is drawn, and where
+   * the header starts, on each frame until the panel and the page settle.
+   */
+  const pageMoveOn = (label: string) =>
+    closedPage.evaluate(async (control) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const header = document.querySelector('.AppHeader')!
+      const insets: number[] = []
+      const headerLefts: number[] = []
+      ;(shadow.querySelector(`[aria-label="${control}"]`) as HTMLElement).click()
+      const follow = (): Promise<void> =>
+        new Promise((resolve) => requestAnimationFrame(resolve)).then(() => {
+          insets.push(Math.round(parseFloat(getComputedStyle(document.body).paddingLeft)))
+          headerLefts.push(Math.round(header.getBoundingClientRect().left))
+          const settled =
+            !shadow.querySelector('[data-morphing]') &&
+            !document.body.hasAttribute('data-github-sidecar-moving')
+          return settled || insets.length >= 120 ? undefined : follow()
+        })
+      await follow()
+      return { insets, headerLefts, inline: document.body.style.cssText }
+    }, label)
+
+  /** Opens or hides the panel, then waits for it and the page to settle. */
+  const showPanel = async (open: boolean) => {
+    if ((await panelShowing()) !== open) {
+      await closedPage.evaluate((label) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        ;(shadow.querySelector(`[aria-label="${label}"]`) as HTMLElement).click()
+      }, open ? 'Open GitHub Sidecar' : 'Hide sidebar')
+    }
+    await settleMorph(closedPage)
+  }
+
+  it('moves the page back with the panel, and puts its own body styles back', async () => {
+    await closedPage.evaluate(() => window.scrollTo(0, 0))
+    await showPanel(true)
+    const open = await closedPage.evaluate(() =>
+      Math.round(parseFloat(getComputedStyle(document.body).paddingLeft)),
+    )
+    assert.ok(open > 0, 'expected the open panel to need the page moved')
+
+    const move = await pageMoveOn('Hide sidebar')
+
+    assert.ok(
+      move.insets.some((inset) => inset > 0 && inset < open),
+      `expected the page to pass through the space between, saw ${move.insets}`,
+    )
+    assert.equal(move.insets.at(-1), 0)
+    assert.ok(move.headerLefts.every((left) => left === 0), `expected the header to hold still, saw ${move.headerLefts}`)
+    // The fixture body carries its own inline margin, which must survive.
+    assert.equal(move.inline, 'margin: 0px;')
+  })
+
+  it('moves the page from where it is drawn when reopened partway through closing', async () => {
+    await showPanel(true)
+
+    const insets = await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const inset = () => Math.round(parseFloat(getComputedStyle(document.body).paddingLeft))
+      const start = performance.now()
+      const until = (ms: number): Promise<void> =>
+        performance.now() - start >= ms
+          ? Promise.resolve()
+          : new Promise((resolve) => requestAnimationFrame(() => resolve(until(ms))))
+      ;(shadow.querySelector('[aria-label="Hide sidebar"]') as HTMLElement).click()
+      await until(150)
+      const closing = inset()
+      ;(shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLElement).click()
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      return { closing, reopened: inset() }
+    })
+
+    assert.ok(insets.closing > 0, 'expected the page partway back')
+    // One frame of the spring moves the page far less than this.
+    assert.ok(
+      insets.reopened >= insets.closing - 2 && insets.reopened <= insets.closing + 40,
+      `expected the page to carry on from ${insets.closing}, saw ${insets.reopened}`,
+    )
+    await settleMorph(closedPage)
+  })
+
+  it('lands the page at once when a navigation interrupts the move back', async () => {
+    await showPanel(true)
+
+    const landed = await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Hide sidebar"]') as HTMLElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      // Turbo swaps in a fresh header, which the move back has not tagged.
+      const fresh = document.createElement('header')
+      fresh.className = 'AppHeader'
+      fresh.style.cssText = 'position:sticky;top:0;height:64px;background:#1f2328'
+      document.querySelector('.AppHeader')!.replaceWith(fresh)
+      document.dispatchEvent(new Event('turbo:load'))
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      return {
+        inset: parseFloat(getComputedStyle(document.body).paddingLeft),
+        headerLeft: fresh.getBoundingClientRect().left,
+        moving: document.body.hasAttribute('data-github-sidecar-moving'),
+      }
+    })
+
+    assert.deepEqual(landed, { inset: 0, headerLeft: 0, moving: false })
+    await settleMorph(closedPage)
+  })
+
+  it('moves the page back to the padding it had, with the header held still', async () => {
+    await showPanel(false)
+    await closedPage.evaluate(() => document.body.style.setProperty('padding-left', '24px'))
+    try {
+      await showPanel(true)
+      const move = await pageMoveOn('Hide sidebar')
+
+      assert.ok(Math.min(...move.insets) >= 23, `expected the page never to pass its padding, saw ${move.insets}`)
+      assert.equal(move.insets.at(-1), 24)
+      assert.ok(
+        move.headerLefts.every((left) => left === move.headerLefts[0]),
+        `expected the header to hold still, saw ${move.headerLefts}`,
+      )
+    } finally {
+      await closedPage.evaluate(() => document.body.style.removeProperty('padding-left'))
+    }
+  })
+
+  it('grows without its rows, then fades them in once it has landed', async () => {
+    await showPanel(false)
+
+    const seen = await closedPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLElement).click()
+      const start = performance.now()
+      const result = {
+        rowsEarly: 0,
+        heightWithRows: null as number | null,
+        height: 0,
+      }
+      const follow = (): Promise<void> =>
+        new Promise((resolve) => requestAnimationFrame(resolve)).then(() => {
+          const elapsed = performance.now() - start
+          const rows = shadow.querySelectorAll('[data-index]').length
+          const panel = shadow.querySelector<HTMLElement>('[data-docked]:not([inert])')
+          if (elapsed < 200) result.rowsEarly = Math.max(result.rowsEarly, rows)
+          if (rows > 0 && panel) result.heightWithRows ??= panel.getBoundingClientRect().height
+          const done = panel && !panel.hasAttribute('data-morphing') && rows > 0
+          if (done) result.height = panel.offsetHeight
+          return done || elapsed > 2000 ? undefined : follow()
+        })
+      await follow()
+      return {
+        ...result,
+        fades: Boolean(shadow.querySelector('[data-docked] .animate-list-in [data-index]')),
+      }
+    })
+
+    assert.equal(seen.rowsEarly, 0, 'expected no rows while the panel is still small')
+    // The panel is still when they arrive, rather than growing a little more after.
+    assert.ok(
+      seen.heightWithRows !== null && Math.abs(seen.heightWithRows - seen.height) <= 1,
+      `expected the rows on a panel already ${seen.height}px tall, saw ${seen.heightWithRows}`,
+    )
+    assert.equal(seen.fades, true)
+    await settleMorph(closedPage)
+  })
+
+  it('keeps an inline style github.com writes while the panel is open', async () => {
+    await showPanel(true)
+    await closedPage.evaluate(() => document.body.style.setProperty('padding-left', '33px'))
+    try {
+      await showPanel(false)
+      assert.equal(
+        await closedPage.evaluate(() => document.body.style.getPropertyValue('padding-left')),
+        '33px',
+      )
+    } finally {
+      await closedPage.evaluate(() => document.body.style.removeProperty('padding-left'))
+    }
   })
 })
 
@@ -2324,26 +3170,27 @@ describe('the page this tab is on', { concurrency: false, skip }, () => {
     })
   })
 
-  it('follows the panel as the window is dragged', async () => {
+  it('follows the panel edge as the panel is resized', async () => {
     const start = (await markerGeometry())!
 
+    // Low on the edge, clear of the marker that sits over it level with the row.
     const handle = await onPage.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      const region = shadow.querySelector('[data-drag-region]') as HTMLElement
-      const box = region.getBoundingClientRect()
-      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+      const edge = shadow.querySelector('[role="complementary"] > .cursor-ew-resize') as HTMLElement
+      const box = edge.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.bottom - 20 }
     })
 
     await onPage.mouse.move(handle.x, handle.y)
     await onPage.mouse.down()
-    await onPage.mouse.move(handle.x - 70, handle.y - 30, { steps: 8 })
+    await onPage.mouse.move(handle.x + 60, handle.y, { steps: 8 })
     await onPage.mouse.up()
 
     await onPage.waitForFunction(
       (left: number) => {
         const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
         const marker = shadow.querySelector('[data-current-marker]') as HTMLElement
-        return Math.abs(marker.getBoundingClientRect().left - (left - 70)) < 2
+        return Math.abs(marker.getBoundingClientRect().left - (left + 60)) < 2
       },
       {},
       start.left,
@@ -2355,6 +3202,53 @@ describe('the page this tab is on', { concurrency: false, skip }, () => {
       Math.round(moved.right - moved.panelRight),
       Math.round(start.right - start.panelRight),
     )
+  })
+
+  it('hides while the panel morphs, and points at the row again once it lands', async () => {
+    await onPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Collapse"]') as HTMLElement).click()
+    })
+    await onPage.waitForFunction(() =>
+      Boolean(document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-docked][inert]')),
+    )
+    const whileLeaving = await onPage.evaluate(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const marker = shadow.querySelector('[data-current-marker]')
+      return {
+        panel: Boolean(shadow.querySelector('[data-docked]')),
+        marker: marker ? getComputedStyle(marker).visibility : null,
+      }
+    })
+    assert.deepEqual(whileLeaving, { panel: true, marker: 'hidden' })
+    await settleMorph(onPage)
+
+    const shownWhileOpening = await onPage.evaluate(async () => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Open GitHub Sidecar"]') as HTMLElement).click()
+      let shown = false
+      const follow = (): Promise<void> =>
+        new Promise((resolve) => requestAnimationFrame(resolve)).then(() => {
+          const panel = shadow.querySelector('[data-docked]:not([inert])')
+          const marker = shadow.querySelector('[data-current-marker]')
+          const morphing = !panel || panel.hasAttribute('data-morphing')
+          if (morphing && marker && getComputedStyle(marker).visibility === 'visible') shown = true
+          return morphing ? follow() : undefined
+        })
+      await follow()
+      return shown
+    })
+    assert.equal(shownWhileOpening, false)
+
+    await onPage.waitForFunction(() => {
+      const marker = document
+        .getElementById('github-sidecar-root')!
+        .shadowRoot!.querySelector('[data-current-marker]')
+      return marker ? getComputedStyle(marker).visibility === 'visible' : false
+    })
+    const marker = (await markerGeometry())!
+    assert.equal(Math.round(marker.top), Math.round(marker.rowTop!))
   })
 
   it('marks nothing for an item this query does not hold', async () => {
@@ -2582,9 +3476,8 @@ describe('changes, reminders, hidden rows, and filtering', { concurrency: false,
     // one: clicking it would change nothing, so it is not made.
     await panel.evaluate(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      ;(shadow.querySelector('[aria-label="Filter these rows"]') as HTMLElement).click()
+      ;(shadow.querySelector('input[aria-label="Filter the rows already loaded"]') as HTMLElement).focus()
     })
-    await panel.waitForSelector('#github-sidecar-root')
     await panel.keyboard.type('regression')
     await panel.waitForFunction(
       () =>
@@ -2781,6 +3674,38 @@ describe('changes, reminders, hidden rows, and filtering', { concurrency: false,
     })
   })
 
+  it('lifts a row into a card only while a drawer lists something', async () => {
+    const settlesTo = (expected: boolean) =>
+      panel.waitForFunction((want) => {
+        const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+        const row = shadow.querySelector('[data-index="1"] [data-item-body]')!.parentElement!
+        return (getComputedStyle(row).boxShadow !== 'none') === want
+      }, {}, expected)
+
+    await settlesTo(false)
+
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[data-index="1"] [aria-label="Show the failing checks"]') as HTMLElement).click()
+    })
+    await settlesTo(true)
+
+    // The checks go green while the drawer is still open, so nothing is listed.
+    const failing = await panel.evaluate(
+      () => (window as unknown as { __items: Array<Record<string, unknown>> }).__items[1]!.failingChecks,
+    )
+    await changeItem(1, { failingChecks: [] })
+    await settlesTo(false)
+
+    await changeItem(1, { failingChecks: failing })
+    await settlesTo(true)
+    await panel.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[data-index="1"] [aria-label="Hide the failing checks"]') as HTMLElement).click()
+    })
+    await settlesTo(false)
+  })
+
   it('says why a red row cannot name a check, rather than looking arbitrary', async () => {
     // A rollup GitHub calls red while naming nothing red is the case that made
     // two rows with the same mark behave differently.
@@ -2821,12 +3746,10 @@ describe('changes, reminders, hidden rows, and filtering', { concurrency: false,
       ;(shadow.querySelector('[data-index="0"] button') as HTMLElement).focus()
     })
     await panel.keyboard.press('/')
-    await panel.waitForFunction(() =>
-      Boolean(
-        document
-          .getElementById('github-sidecar-root')!
-          .shadowRoot!.querySelector('input[aria-label="Filter the rows already loaded"]'),
-      ),
+    await panel.waitForFunction(
+      () =>
+        document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement?.getAttribute('aria-label') ===
+        'Filter the rows already loaded',
     )
 
     // A label only one row carries, so what is left is unambiguous. The rows
@@ -2846,16 +3769,23 @@ describe('changes, reminders, hidden rows, and filtering', { concurrency: false,
     // paging through the whole result set.
     assert.equal(await searches(), searchesBefore)
 
+    // Escape clears what was typed, and a second one leaves the box.
     await panel.keyboard.press('Escape')
     await panel.waitForFunction(() => {
       const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const input = shadow.querySelector<HTMLInputElement>('input[aria-label="Filter the rows already loaded"]')
       return (
-        !shadow.querySelector('input[aria-label="Filter the rows already loaded"]') &&
+        input?.value === '' &&
+        shadow.activeElement === input &&
         [...shadow.querySelectorAll('[data-index]')].some(
           (row) => !row.textContent?.includes('Item number 1 '),
         )
       )
     })
+    await panel.keyboard.press('Escape')
+    await panel.waitForFunction(
+      () => document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement === null,
+    )
   })
 
   it('survives a row cached before the newer fields existed', async () => {
@@ -3086,11 +4016,6 @@ describe('grouping the loaded rows', { concurrency: false, skip }, () => {
     // A flat list to begin with: no section headers.
     assert.equal(await groupHeaderCount(), 0)
 
-    // Reveal the filter bar (a plain button, so a synthetic click is enough).
-    await groupPage.evaluate(() => {
-      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
-      ;(shadow.querySelector('[aria-label="Filter these rows"]') as HTMLElement).click()
-    })
     await groupPage.waitForFunction(() =>
       Boolean(
         document
@@ -3153,5 +4078,256 @@ describe('grouping the loaded rows', { concurrency: false, skip }, () => {
     const stored = await savedQueries()
     assert.equal(stored[0]?.groupBy, 'status')
     assert.equal(stored[1]?.groupBy, undefined)
+  })
+})
+
+describe('quick filters', { concurrency: false, skip }, () => {
+  let quickBrowser: Browser
+  let quickPage: Page
+
+  before(async () => {
+    quickBrowser = await puppeteer.launch({ executablePath, headless: true })
+    quickPage = await quickBrowser.newPage()
+    await quickPage.setViewport({ width: 1280, height: 900 })
+    await quickPage.setContent('<!doctype html><html data-color-mode="light"><body></body></html>')
+    await quickPage.evaluate(CHROME_STUB)
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await quickPage.evaluate(bundle)
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      return (shadow?.querySelectorAll('[data-index]').length ?? 0) > 0
+    })
+  })
+
+  after(async () => {
+    await quickBrowser?.close()
+  })
+
+  const searches = () =>
+    quickPage.evaluate(
+      () =>
+        (window as unknown as { __sentMessages: Array<{ type?: string }> }).__sentMessages.filter(
+          (message) => message.type === 'search',
+        ).length,
+    )
+
+  /** The row titles on screen, without the loader row. */
+  const titles = () =>
+    quickPage.evaluate(() =>
+      [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[data-index]')]
+        .map((row) => row.querySelector('button')?.textContent ?? '')
+        .filter((text) => !text.includes('Loading more')),
+    )
+
+  /** Radix opens a trigger only on a real pointer, so click it by its coordinates. */
+  const openMenu = async () => {
+    const box = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const rect = shadow
+        .querySelector('[aria-label="Filter by status or person"]')!
+        .getBoundingClientRect()
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+    })
+    await quickPage.mouse.click(box.x, box.y)
+    await quickPage.waitForFunction(() =>
+      Boolean(
+        document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[role="menu"]'),
+      ),
+    )
+  }
+
+  // Radix hands focus back to the trigger on a timer after the menu closes;
+  // moving focus before that lands would have it taken away again.
+  const closeMenu = async () => {
+    await quickPage.keyboard.press('Escape')
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return (
+        !shadow.querySelector('[role="menu"]') &&
+        shadow.activeElement?.getAttribute('aria-label') === 'Filter by status or person'
+      )
+    })
+  }
+
+  const clickMenuEntry = (text: string) =>
+    quickPage.evaluate((label) => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[role="menuitemcheckbox"], [role="menuitem"]')].find(
+        (node) => node.textContent?.startsWith(label),
+      )
+      ;(entry as HTMLElement).click()
+    }, text)
+
+  it('is there from the start, without taking focus from the page', async () => {
+    const state = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return {
+        hasSearch: Boolean(shadow.querySelector('input[aria-label="Filter the rows already loaded"]')),
+        hasHeaderToggle: Boolean(shadow.querySelector('[aria-label="Filter these rows"]')),
+        focusedInPanel: shadow.activeElement !== null,
+      }
+    })
+    assert.deepEqual(state, { hasSearch: true, hasHeaderToggle: false, focusedInPanel: false })
+  })
+
+  it('narrows to the rows with a mark, keeps the menu open, and asks GitHub for nothing', async () => {
+    const searchesBefore = await searches()
+
+    await openMenu()
+    // Only row 1 conflicts and only row 3 has fallen behind.
+    const entries = await quickPage.evaluate(() =>
+      [
+        ...document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelectorAll('[role="menuitemcheckbox"]'),
+      ].map((node) => node.textContent),
+    )
+    assert.ok(entries.includes('Conflicts1'), `expected a Conflicts entry, got ${entries}`)
+    assert.ok(entries.includes('Behind1'), `expected a Behind entry, got ${entries}`)
+
+    await clickMenuEntry('Conflicts')
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const rows = [...shadow.querySelectorAll('[data-index]')].filter(
+        (row) => !row.textContent?.includes('Loading more'),
+      )
+      return rows.length > 0 && rows.every((row) => row.textContent?.includes('Item number 1 '))
+    })
+
+    const state = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const entry = [...shadow.querySelectorAll('[role="menuitemcheckbox"]')].find((node) =>
+        node.textContent?.startsWith('Conflicts'),
+      )
+      return {
+        menuOpen: Boolean(shadow.querySelector('[role="menu"]')),
+        checked: entry?.getAttribute('aria-checked'),
+        token: shadow.querySelector('[data-quick-filter="merge"]')?.textContent,
+      }
+    })
+    assert.equal(state.menuOpen, true, 'expected the menu to stay open for another choice')
+    assert.equal(state.checked, 'true')
+    assert.equal(state.token, 'MergeConflicts')
+    assert.equal(await searches(), searchesBefore)
+
+    await closeMenu()
+  })
+
+  it('picks a person from a submenu, and clears every choice at once', async () => {
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;([...shadow.querySelectorAll('button')].find((node) => node.textContent === 'Clear') as HTMLElement).click()
+    })
+    await quickPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-quick-filter]'),
+    )
+
+    await openMenu()
+    await clickMenuEntry('Assignee')
+    await quickPage.waitForFunction(() =>
+      [
+        ...document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelectorAll('[role="menuitemcheckbox"]'),
+      ].some((node) => node.textContent?.startsWith('hubot')),
+    )
+    await clickMenuEntry('hubot')
+
+    // Rows 1, 6, 11, … are assigned to hubot.
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const rows = [...shadow.querySelectorAll('[data-index] button')]
+        .map((node) => node.textContent ?? '')
+        .filter((text) => text.startsWith('Item number'))
+      return rows.length > 0 && rows.every((text) => Number(/Item number (\d+)/.exec(text)?.[1]) % 5 === 1)
+    })
+    const token = await quickPage.evaluate(
+      () =>
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-quick-filter="assignee"]')?.textContent,
+    )
+    assert.equal(token, 'Assigneehubot')
+
+    // One Escape closes the submenu and the menu under it.
+    await closeMenu()
+  })
+
+  it('clears the typed text on Escape, and keeps the chosen filters', async () => {
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('input[aria-label="Filter the rows already loaded"]') as HTMLElement).focus()
+    })
+    // A label only row 1 carries, and row 1 is one of hubot's.
+    await quickPage.keyboard.type('regression')
+    await quickPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const rows = [...shadow.querySelectorAll('[data-index] button')]
+        .map((node) => node.textContent ?? '')
+        .filter((text) => text.startsWith('Item number'))
+      return rows.length > 0 && rows.every((text) => text.includes('Item number 1 '))
+    })
+
+    await quickPage.keyboard.press('Escape')
+    await quickPage.waitForFunction(() =>
+      [...document.getElementById('github-sidecar-root')!.shadowRoot!.querySelectorAll('[data-index] button')].some(
+        (node) => node.textContent?.includes('Item number 6 '),
+      ),
+    )
+    const state = await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      return {
+        text: shadow.querySelector<HTMLInputElement>('input[aria-label="Filter the rows already loaded"]')?.value,
+        token: shadow.querySelector('[data-quick-filter="assignee"]')?.textContent,
+      }
+    })
+    assert.deepEqual(state, { text: '', token: 'Assigneehubot' })
+    assert.ok((await titles()).every((text) => Number(/Item number (\d+)/.exec(text)?.[1]) % 5 === 1))
+
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;([...shadow.querySelectorAll('button')].find((node) => node.textContent === 'Clear') as HTMLElement).click()
+    })
+    await quickPage.waitForFunction(
+      () => !document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('[data-quick-filter]'),
+    )
+  })
+
+  it('keeps focus in the bar as tokens are removed', async () => {
+    await openMenu()
+    await clickMenuEntry('Conflicts')
+    await clickMenuEntry('Draft')
+    await closeMenu()
+
+    const focused = () =>
+      quickPage.evaluate(() => {
+        const active = document.getElementById('github-sidecar-root')!.shadowRoot!.activeElement
+        return active?.getAttribute('aria-label') ?? null
+      })
+
+    await quickPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      ;(shadow.querySelector('[aria-label="Remove the merge filter"]') as HTMLElement).focus()
+    })
+    await quickPage.keyboard.press('Enter')
+    await quickPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-quick-filter="merge"]'),
+    )
+    assert.equal(await focused(), 'Remove the state filter')
+
+    await quickPage.keyboard.press('Enter')
+    await quickPage.waitForFunction(
+      () =>
+        !document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[data-quick-filter]'),
+    )
+    assert.equal(await focused(), 'Filter the rows already loaded')
   })
 })

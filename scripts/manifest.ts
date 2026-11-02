@@ -81,7 +81,7 @@ export async function manifestFor(
     name: dev ? 'GitHub Sidecar (dev)' : 'GitHub Sidecar',
     version,
     description:
-      'GitHub Sidecar — an omni-present, draggable sidebar for tracking the GitHub issues and pull requests you care about.',
+      'GitHub Sidecar — a sidebar docked beside github.com for tracking the GitHub issues and pull requests you care about.',
     ...(target === 'chrome' ? { minimum_chrome_version: MINIMUM_CHROME_VERSION } : {}),
     ...(target === 'firefox'
       ? {
@@ -127,6 +127,11 @@ export async function manifestFor(
     action: {
       default_title: 'Toggle GitHub Sidecar',
       default_icon: ICONS,
+    },
+    commands: {
+      // github.com binds Alt+Shift+A, C, N, P and R, and browsers bind most
+      // Ctrl/Cmd+Shift letters. Alt is Option on a Mac, so no `mac` key is needed.
+      _execute_action: { suggested_key: { default: 'Alt+Shift+G' } },
     },
     options_ui: {
       page: 'options.html',

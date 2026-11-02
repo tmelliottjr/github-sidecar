@@ -67,13 +67,13 @@ const FEATURES: Array<{
     key: 'keyboard',
     title: 'Keyboard navigation',
     description:
-      'j and k move through the list, Enter or o opens, p pins, h hides, r asks to be reminded when it changes, / filters.',
+      'j and k move through the list, Enter or o opens, p pins, h hides, r asks to be reminded when it changes, / jumps to the search box.',
   },
   {
     key: 'filter',
     title: 'Filter and reorder',
     description:
-      'Narrows the rows already loaded and reorders them. Costs no request, so it answers as fast as you can type.',
+      'Narrows the rows already loaded by text, status, or person, and reorders them. Costs no request, so it answers as fast as you can type.',
   },
   {
     key: 'badge',

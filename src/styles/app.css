@@ -23,7 +23,8 @@
   --color-foreground: oklch(0.21 0.006 285.9);
   --color-card: oklch(1 0 0);
   --color-muted: oklch(0.968 0.002 286);
-  --color-muted-foreground: oklch(0.552 0.014 285.9);
+  /* 4.5:1 on `muted` as well as on white, since rows turn `muted` on hover. */
+  --color-muted-foreground: oklch(0.52 0.014 285.9);
   --color-border: oklch(0.919 0.004 286.3);
   --color-input: oklch(0.919 0.004 286.3);
   --color-accent: oklch(0.968 0.002 286);
@@ -31,21 +32,22 @@
   --color-primary: oklch(0.21 0.006 285.9);
   --color-primary-foreground: oklch(0.985 0 0);
   --color-ring: oklch(0.62 0.19 259.8);
+  /* github.com's own accent blue, dark enough to pass 4.5:1 as text on white. */
+  --color-link: oklch(0.54 0.191 257.5);
 
-  --color-open: oklch(0.63 0.16 149.2);
-  --color-closed: oklch(0.58 0.22 27.3);
+  /* Status marks keep 3:1 against `muted` (WCAG 1.4.11), not only against white. */
+  --color-open: oklch(0.58 0.16 149);
+  --color-closed: oklch(0.54 0.22 27.3);
   --color-merged: oklch(0.55 0.22 302.3);
   --color-draft: oklch(0.552 0.014 285.9);
-  --color-attention: oklch(0.72 0.16 70.7);
+  --color-attention: oklch(0.62 0.15 68);
   /*
    * A conflict is a harder stop than a pending check, so it sits between the
    * amber that means "wait" and the red that means "failed" rather than
    * borrowing either. Sharing amber exactly would leave it and a stale branch
    * telling apart on glyph alone.
    */
-  --color-conflict: oklch(0.65 0.19 45);
-
-  --radius-window: 0.875rem;
+  --color-conflict: oklch(0.62 0.19 45);
 
   /*
    * Checks can sit pending for many minutes, so the default one-second spin
@@ -68,7 +70,10 @@
    * is readable well before the motion has finished.
    */
   --animate-view-in: view-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Rows held back while the panel grows fade in once it has landed. */
+  --animate-list-in: view-in 240ms ease-out;
   --animate-row-in: row-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-launcher-in: launcher-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Shared by the stack's slide so opening and closing feel like one gesture. */
   --ease-stack: cubic-bezier(0.16, 1, 0.3, 1);
@@ -77,13 +82,12 @@
     0 0 0 1px oklch(0 0 0 / 0.06), 0 12px 32px -8px oklch(0 0 0 / 0.18),
     0 4px 12px -4px oklch(0 0 0 / 0.1);
 
-  /*
-   * Docked, the panel sits flush against a page that is also white, so it
-   * needs its own edge. The shadow is thrown to the right only, away from the
-   * viewport edge, so it reads as a lifted panel rather than a stray blur.
-   */
-  --shadow-dock:
-    2px 0 8px -2px oklch(0 0 0 / 0.1), 8px 0 24px -8px oklch(0 0 0 / 0.12);
+  --shadow-launcher:
+    0 10px 28px -6px oklch(0 0 0 / 0.2), 0 2px 6px -1px oklch(0 0 0 / 0.08);
+
+  /* The launcher shadow, scaled down for a capsule that floats over a row. */
+  --shadow-capsule:
+    0 4px 12px -4px oklch(0 0 0 / 0.18), 0 1px 3px oklch(0 0 0 / 0.08);
 }
 
 .dark {
@@ -99,6 +103,7 @@
   --color-primary: oklch(0.96 0.002 286);
   --color-primary-foreground: oklch(0.21 0.006 285.9);
   --color-ring: oklch(0.68 0.16 259.8);
+  --color-link: oklch(0.663 0.169 255.9);
 
   --color-open: oklch(0.72 0.17 150);
   --color-closed: oklch(0.68 0.19 25);
@@ -111,8 +116,11 @@
     0 0 0 1px oklch(1 0 0 / 0.08), 0 16px 40px -8px oklch(0 0 0 / 0.6),
     0 4px 12px -4px oklch(0 0 0 / 0.4);
 
-  --shadow-dock:
-    2px 0 8px -2px oklch(0 0 0 / 0.5), 8px 0 24px -8px oklch(0 0 0 / 0.6);
+  --shadow-launcher:
+    0 10px 28px -6px oklch(0 0 0 / 0.6), 0 2px 6px -1px oklch(0 0 0 / 0.4);
+
+  --shadow-capsule:
+    0 4px 12px -4px oklch(0 0 0 / 0.55), 0 1px 3px oklch(0 0 0 / 0.35);
 }
 
 /*
@@ -168,6 +176,41 @@
   }
 }
 
+@keyframes launcher-in {
+  from {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+}
+
+/*
+ * A drop shadow follows the tab outline, fillets included, where a box shadow
+ * would draw a rectangle. Read from a variable, since theme shadow values are
+ * inlined into their utilities and a `.dark` override never reaches them.
+ */
+.gh-sidebar-root {
+  --tab-shadow: drop-shadow(1px 0 1px oklch(0 0 0 / 0.06))
+    drop-shadow(6px 0 16px oklch(0 0 0 / 0.12));
+  --lift-shadow: 0 0 0 1px oklch(0 0 0 / 0.08),
+    0 2px 4px -1px oklch(0 0 0 / 0.06), 0 10px 24px -8px oklch(0 0 0 / 0.16);
+}
+
+.gh-sidebar-root.dark {
+  --tab-shadow: drop-shadow(1px 0 1px oklch(0 0 0 / 0.35))
+    drop-shadow(6px 0 18px oklch(0 0 0 / 0.5));
+  --lift-shadow: 0 0 0 1px oklch(1 0 0 / 0.09),
+    0 2px 4px -1px oklch(0 0 0 / 0.4), 0 12px 28px -8px oklch(0 0 0 / 0.7);
+}
+
+@utility shadow-tab {
+  filter: var(--tab-shadow);
+}
+
+/* A row raised into a card while one of its drawers is open. */
+@utility shadow-lift {
+  box-shadow: var(--lift-shadow);
+}
+
 /*
  * An animation that loops until some network call comes back is precisely what
  * this preference is asking us not to run. Unlayered, so it outranks the
@@ -187,7 +230,9 @@
    * dropped outright rather than shortened.
    */
   .animate-view-in,
-  .animate-row-in {
+  .animate-list-in,
+  .animate-row-in,
+  .animate-launcher-in {
     animation: none;
   }
 }

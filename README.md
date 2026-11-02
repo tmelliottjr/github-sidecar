@@ -1,8 +1,7 @@
 # GitHub Sidecar
 
-GitHub Sidecar is a browser extension that keeps a small, draggable sidebar on
-every github.com page, showing the issues and pull requests you actually care
-about.
+GitHub Sidecar is a browser extension that docks a sidebar beside every
+github.com page, showing the issues and pull requests you actually care about.
 
 It runs on Chrome, Firefox, and Safari. See [Browser support](#browser-support)
 for the two places they differ.
@@ -29,28 +28,38 @@ dropped on `tabs.onRemoved`; otherwise the next tab to take that id would
 inherit a panel nobody opened.
 
 Out of the way is not the same as gone, though, so a tab that has not been
-asked still leaves something to ask with: floating, a launcher in the corner;
-docked, the rail, exactly where the panel would have been. Neither costs a
-request — a rail is not an open panel — but neither sends anyone to the
-browser's extensions menu to find a panel that is meant to be part of the page.
+asked still shows a launcher: a vertical tab on the left edge of the window,
+halfway down. It holds the GitHub mark, the result count in a circle once there
+is one (999+ past that), and a › to open it. The query name is left to screen
+readers, which hear it with the count. Its border curves into the window edge,
+so it looks attached to the side. It costs no request, since a launcher is not
+an open panel, and it sits over the page without moving it. Nobody has to go to
+the browser's extensions menu to find a panel that is meant to be part of the
+page.
+
+Opening grows the tab into the panel, and hiding or collapsing folds the panel
+back into the tab. The contents move with the shape as they fade out. Both are
+skipped when the system asks for reduced motion.
 
 Opening a panel for the first time does not mean going to the network. The
 request goes to the worker like any other, which answers from its shared
 IndexedDB cache and only refreshes if what it has has aged out.
 
-Everything else about the window — size, position, docked, collapsed, locked —
-stays shared, because those are preferences rather than per-tab facts.
+Everything else about the panel (its width and whether it is collapsed) stays
+shared, because those are preferences rather than per-tab facts.
 
 </details>
 
 <details>
-<summary><strong>Or docked into the page</strong> — one click drops it into the gutter github.com leaves empty, so nothing is covered.</summary>
+<summary><strong>Docked into the page</strong> — it sits in the gutter github.com leaves empty, so nothing is covered.</summary>
 
-#### Docked mode
+#### Docking
 
 github.com centres its pages in a max-width column, which on a wide display
-leaves a wide empty gutter down the left. Docked mode puts the panel there, so
-nothing is covered and the page needs no cooperation from us.
+leaves a wide empty gutter down the left. The panel goes there, so nothing is
+covered and the page needs no cooperation from us. The panel is a
+rounded card inset 12px from the viewport edges and from the header above it,
+so it reads as floating in the gutter.
 
 Finding that gutter means measuring a page we do not control. Reading it off a
 selector would break the first time github.com reorganised its markup, so
@@ -66,13 +75,20 @@ selector would break the first time github.com reorganised its markup, so
   header, always — beside it is where an overlay would sit, and the point is to
   read as part of the page. That is the lower of the bars currently pinned to
   the top of the viewport, found by hit-testing for sticky and fixed boxes, and
-  the header and nav rows in normal flow, which are not pinned yet at the top
-  of a page. Remeasured on scroll, so the panel follows the header as it pins
-  and unpins. Pinned bars stack — a pull request pins a mini header beneath the
+  the header rows in normal flow, which are not pinned yet at the top of a
+  page. Remeasured on scroll, so the panel follows the header as it pins and
+  unpins. Pinned bars stack — a pull request pins a mini header beneath the
   global one — so they are found by walking down from the top of the viewport
   for as long as each step is still covered, rather than by looking for one bar
   flush at the top. A bar also only has to be as wide as the page column, since
-  the mini header is not full-bleed.
+  the mini header is not full-bleed, but it has to be taller than a progress
+  bar.
+- **What counts as the header.** Everything full-width that ends above the
+  page's `<main>` landmark. github.com serves pages from more than one
+  frontend, and each names its header differently (`.js-header-wrapper` on
+  one, a bare `header.GlobalNav` beside a staff bar on another), but every one
+  puts its header before `<main>`. A sidebar laid out beside `<main>` does not
+  end above it, so it is never taken for a header.
 
 When the gutter is too narrow, the page is moved across by padding `<body>` —
 the one element Turbo navigation never replaces, so the reservation survives
@@ -81,37 +97,24 @@ the shortfall: padding moves every box by exactly that much, so anything less
 would leave the centred column's own inset absorbing part of it and the page
 still starting underneath us.
 
-The chrome at the top is then handed that space straight back. The header and
-the nav rows are tagged with an attribute while the page is measured bare — the
-outermost box of each nested stack, and nothing taken out of flow, so nothing
-moves twice or is moved that body's padding never touched — and a single rule
-pulls them back out with a negative margin and an `auto` width. They go on
-spanning the window as github.com drew them, and only the page body beneath is
-inset. A header stopping short of the window is the one thing that would give
-away that the page has been moved at all, and it is the part of github.com a
-reader is most likely to know by sight.
+The header is then handed that space straight back. Its rows are tagged with an
+attribute while the page is measured bare, and a single rule pulls them back
+out with a negative margin and an `auto` width. They go on spanning the window
+as github.com drew them, and only the page beneath is inset.
 
-##### Collapsing a dock
+##### Collapsing the panel
 
-A floating window collapses up into its own header. A docked one has nowhere to
-fold, so it collapses sideways into a rail down the edge of the gutter instead.
+Collapsing swaps the panel for the launcher in every browser tab and gives the
+page back whatever room the panel had taken.
 
-The rail is deliberately not a hidden edge: something has to stay on screen or
-there is nothing left to click to bring the panel back. At 44px it fits in the
-gutter of any page, so collapsing hands back whatever room had been taken from
-the layout, and the whole height of it is one button. It keeps showing the
-result count, which is the reason to leave it on screen rather than hide it.
+The launcher also stands in for a panel that is hidden in this tab, or that has
+never been opened in it. Two states, one launcher, and a click on it or on the
+toolbar icon clears both at once, so opening always ends with the panel and
+never with the launcher redrawn because the other flag was still set.
 
-The same rail stands in for a docked panel that is hidden in this tab, or that
-has never been opened in it. Two states, one mark, and a click clears both at
-once — expanding out of a rail always ends with the panel, never with the rail
-redrawn because the other flag was still set.
-
-Results therefore go on loading while a dock is collapsed — a count that stops
-updating is decoration, not status. That is the one place the two collapsed
-states differ: a collapsed floating window shows nothing, so it stops asking.
-A rail standing in for a hidden panel stops asking too; it is showing that the
-panel is there, not what is in it.
+Results go on loading while the panel is collapsed, because a count that stops
+updating is decoration, not status. A launcher standing in for a hidden panel
+stops asking; it is showing that the panel is there, not what is in it.
 
 </details>
 
@@ -125,11 +128,14 @@ panel is there, not what is in it.
 
 #### Row states
 
-The leading mark carries both what a row is and where it stands:
+Each row is a rounded tile. Its leading mark sits on a disc tinted in its own
+color, like the GitHub mark on the launcher, and carries both what a row is and
+where it stands. The colors are GitHub's own:
 
 | Mark                  | Meaning                                          |
 | --------------------- | ------------------------------------------------ |
-| Green circle / check  | Issue, open / closed                             |
+| Green circle          | Issue, open                                      |
+| Purple check          | Issue, closed as completed                       |
 | Grey slashed circle   | Issue closed as not planned                      |
 | Green pull request    | Pull request, open                               |
 | **Amber pull request**| **Queued to merge** (`isInMergeQueue`)           |
@@ -142,17 +148,24 @@ A queued pull request is still open, so GitHub reports it as `OPEN` with
 the reader any more — it is on its way in — which is worth telling apart at a
 glance from an open pull request that is still waiting on someone.
 
-The marks under the title say what is being asked of whom: the check rollup,
-the review decision, comments, labels, and — for a pull request that cannot go
-in — why not.
+The line under the title leads with a gray status pill: the check rollup, the
+review decision, and, for a pull request that cannot go in, why not. They are
+always in that order, so each sits in the same place on every row and can be
+read down the list. What changed, the stack badge, reminders, comments, and
+labels follow.
 
 | Mark                    | Meaning                                        |
 | ----------------------- | ---------------------------------------------- |
-| Red triangle            | Conflicts with the base branch                 |
+| Orange slashed square   | Conflicts with the base branch                 |
 | Amber sync              | Behind the base branch                         |
 | Red cross, then a count | How many checks are red; click it to list them |
 | Bell                    | A reminder waiting on this row                 |
 | Filled amber bell       | A reminder that has come round                 |
+
+Every status color keeps at least 3:1 contrast against the row, hovered or not,
+and every status also has its own glyph, so none of them depends on color
+alone. Label dots use the label color with an edge darkened toward the text, so
+pale labels stay visible on white.
 
 Merge state is flattened from two GitHub fields. `mergeable` is the older one
 and only knows about conflicts; `mergeStateStatus` knows why a mergeable branch
@@ -257,6 +270,23 @@ other route that still carries both flavours at once.
 </details>
 
 <details>
+<summary><strong>Quick actions</strong> — pin, remind, copy a link, or mark as seen without opening a menu.</summary>
+
+#### Acting on a row
+
+Hovering a row, or moving to it with `j` and `k`, shows a small capsule of
+buttons over its top-right corner: **Mark as seen** when the row has changed,
+**Pin**, **Remind me**, and **Copy link**. They do exactly what the matching
+context menu entries do, and the context menu still lists every action.
+
+The capsule sits over the row rather than in it, so showing it never moves the
+row. It comes right after the row in tab order, so Tab from a focused row
+reaches it. Each row builds its capsule the first time it is hovered or
+focused, which keeps scrolling through hundreds of rows cheap.
+
+</details>
+
+<details>
 <summary><strong>Knows where you are</strong> — the row for the issue or pull request you are reading marks itself.</summary>
 
 #### The row you are on
@@ -286,8 +316,8 @@ list takes its marker with it rather than leaving one pointing at whatever
 arrived next.
 
 Nothing it depends on moves under React's eye: the list scrolls, the page
-scrolls beneath a docked panel, and dragging the window writes a transform
-straight to the DOM. Each of those schedules the same measure-and-place on the
+scrolls beneath the panel, and resizing the panel writes its width straight to
+the DOM. Each of those schedules the same measure-and-place on the
 next frame, so one mechanism covers movement the panel never renders for.
 
 Knowing when the page changed is the harder half. github.com navigates without
@@ -313,6 +343,7 @@ Every row carries a signature: its state, review decision, check rollup,
 comment count and head commit. What the reader has seen is stored per row and
 shared across their tabs, and the difference between the two is what the row
 reports — "3 new comments", "Checks failed", "Merged" — loudest change first.
+A changed row also shows a blue dot on its state disc.
 
 `updatedAt` is deliberately not part of it. GitHub bumps that timestamp when a
 label moves or a description is edited, and a list that lit up for those would
@@ -391,8 +422,8 @@ panel and wakes the worker anyway.
 Hiding is the other half of the same problem, and deliberately not the same
 thing: a hidden row is one the reader does not want to see, rather than one
 they want back later. It leaves the list and stops counting, but not the
-records — the footer says how many are hidden and shows them on request, marked
-and dimmed, one menu entry away from coming back.
+records — the footer says how many are hidden and shows them on request, with a
+dashed disc and a muted title, one menu entry away from coming back.
 
 That count is of hidden rows *this view holds*, worked out after the filter
 rather than before it: an offer to reveal rows the current view would not show
@@ -428,7 +459,7 @@ follow along without the panel telling any of them directly.
 </details>
 
 <details>
-<summary><strong>Filter, reorder, and drive it from the keyboard</strong> — narrow loaded rows, order them, and move with <code>j</code>/<code>k</code>.</summary>
+<summary><strong>Filter, reorder, and drive it from the keyboard</strong> — narrow loaded rows by text, status, or person, order them, and move with <code>j</code>/<code>k</code>.</summary>
 
 #### Filtering, reordering, and the keyboard
 
@@ -443,12 +474,24 @@ a review queue loses first, or grouped by repository. A grouping is remembered
 with the query it was chosen on, so each saved query keeps its own way of being
 read while sharing the one filter box.
 
+The search box sits above the list whenever **Filter and reorder** is on in
+settings; switching it off gives that height back to the rows. The funnel
+beside it narrows the same rows by status and by person: review (needs review,
+approved, changes requested), failing checks, conflicts, behind, draft, author,
+and assignee. Its options come from the loaded rows, and each shows how many
+rows it would leave. Choices in one section add rows, so needs review and
+approved shows both. Sections narrow each other, so approved and an author
+shows that author's approved rows. Each section with a choice shows as a token
+under the search box. Escape clears the typed text and leaves the choices
+alone; their tokens and **Clear** remove them. Merge choices are only offered
+while merge state is switched on, since rows only show those marks then.
+
 `j` and `k` move through the list by moving the browser's own focus onto a
 row's button, so Enter opens it without a handler of the panel's own and a
 screen reader is told where it landed. `o` opens, `p` pins, `h` hides, `r` asks
-to be reminded when the row changes, `/` opens the filter, and Escape gives the
-focus back. The other reminder times are a choice, and a choice belongs in the
-menu that lists them.
+to be reminded when the row changes, `/` jumps to the search box, and Escape
+clears it, then gives the focus back. The other reminder times are a choice,
+and a choice belongs in the menu that lists them.
 
 </details>
 
@@ -573,11 +616,12 @@ gives this pull request's position, and `PullRequest.stack` gives the stack's
 number, size, base branch, and entries. Nothing is inferred from branch names.
 
 A stacked row carries a `layer/size` badge, and that badge is the control: it
-slides open a list of the whole stack, read from the base branch up. The row it
-was expanded from stays in that list and is marked with a chevron instead of
-being filtered out, because a stack is only legible as a whole. A chevron along
-the top edge of the slide-out shuts it again, since by then the badge that
-opened it may be several layers up the panel. Expansion is
+slides open a list of the whole stack, top layer first so layer 1 sits at the
+bottom, and lifts the row into a card that holds it. The row it was expanded
+from stays in that list with its step number filled in, instead of being
+filtered out, because a stack is only legible as a whole. The chevron in the
+slide-out's caption shuts it again, since by then the badge that opened it may
+be several layers up the panel. Expansion is
 deliberately not on the row itself: clicking a row still means "open this pull
 request".
 
@@ -747,35 +791,32 @@ neither, and no notification to play a sound alongside.
 
 | Action                | How                                             |
 | --------------------- | ----------------------------------------------- |
-| Move the window       | Drag the empty strip in the header               |
-| Resize                | Drag any edge or corner                          |
-| Dock / undock         | Panel button in the header                       |
-| Resize while docked   | Drag the panel's inner edge                      |
-| Lock / unlock         | Padlock button in the header                     |
-| Collapse / expand     | Chevron button in the header                     |
-| Collapse a dock       | Panel button in the header, then click the rail  |
-| Show / hide this tab  | The corner launcher or rail, the ✕ button, or the toolbar icon |
+| Resize                | Drag the panel's inner edge                      |
+| Collapse / expand     | Panel button in the header (hover the header to show it), then click the launcher tab |
+| Show / hide this tab  | The launcher tab, the ✕ button, the toolbar icon, or Alt+Shift+G (⌥⇧G on a Mac; change it in the browser's extension shortcut settings) |
 | Switch queries        | Click the query name in the header               |
 | Edit queries          | Query menu → **Manage queries**                  |
 | Open an item          | Click a row (⌘/Ctrl-click for a tab)             |
 | Refresh one row       | Right-click it → **Refresh this item**           |
-| Pin a row to the top  | Right-click it → **Pin item** (again to unpin)   |
+| Use a row's quick actions | Hover the row, or move to it with `j`/`k` and press Tab |
+| Pin a row to the top  | The pin in its quick actions, or right-click → **Pin item** (again to unpin) |
 | See a stack           | The `layer/size` badge on a stacked row, or right-click → **Show the stack** |
-| Shut a stack          | The chevron at the top of the slide-out, or the badge again      |
-| Copy a link           | Right-click a row → **Copy** → **Link** (rich text, titled; the URL as plain text) |
+| Shut a stack          | The chevron in the slide-out's caption, or the badge again      |
+| Copy a link           | The link button in a row's quick actions, or right-click → **Copy** → **Link** (rich text, titled; the URL as plain text) |
 | Copy it as Markdown   | **Copy** → **Link as Markdown**                  |
 | Copy a title          | **Copy** → **Title**                             |
 | Copy a branch         | **Copy** → **Branch** (pull requests)            |
 | Copy a whole stack    | **Copy** → **Stack links**, or **Stack links as Markdown** |
-| Clear a change mark   | Open the row, be on its page, or right-click → **Mark as seen** |
+| Clear a change mark   | Open the row, be on its page, the check in its quick actions, or right-click → **Mark as seen** |
 | Clear all of them     | Query menu → **Mark all as seen**                |
-| See the failing checks| Click the red checks mark on the row             |
-| Ask for a row again   | Right-click it → **Remind me…** (`r` for when it changes) |
-| Cancel that           | Right-click it → **Clear the reminder**          |
+| See the failing checks| Click the red count in the row's status pill     |
+| Ask for a row again   | The bell in its quick actions, or right-click → **Remind me…** (`r` for when it changes) |
+| Cancel that           | The bell in its quick actions, or right-click → **Clear the reminder** |
 | Hide a row            | Right-click it → **Hide this row** (`h`)         |
 | Review what is hidden | The count in the footer, then right-click → **Show it again** |
 | Manage all of it      | Settings → **Hidden rows** / **Reminders** / **Pinned rows** |
-| Filter the loaded rows| The funnel in the header, or `/`                 |
+| Filter the loaded rows| The search box above the list, or `/` to jump to it |
+| Narrow by status or person | The funnel in the filter bar; tokens under the box remove each choice |
 | Reorder them          | The sort control in the filter bar               |
 | Group them            | The grouping control in the filter bar (remembered per query) |
 | Move through the list | `j` and `k`, then Enter or `o` to open, `p` to pin |
@@ -794,8 +835,8 @@ src/
                 keyboard isolation, current-page tracking
   offscreen/    Chrome only: the document the sound is played in, since a
                 service worker cannot play audio
-  components/   Window chrome, list, rows, and shadcn-style primitives
-  hooks/        Storage sync, window geometry, dock layout, search, cache
+  components/   Panel chrome, launcher, list, rows, and shadcn-style primitives
+  hooks/        Storage sync, dock layout, search, cache
                 updates, current page
   lib/          GitHub GraphQL client, message protocol, storage schema,
                 change detection, list filtering, the extension API and what
@@ -849,10 +890,8 @@ A few decisions worth knowing:
   keys off what the token cannot do, never off the identity provider enforcing
   it, and the panel offers the settings page instead of a retry that would fail
   identically.
-- **Geometry is written straight to the DOM** during a drag and only committed
-  to storage on release, so dragging never re-renders the list. The window's
-  `style` prop is frozen at mount for the same reason: recomputing it would let
-  an unrelated re-render snap the window back mid-gesture.
+- **The panel width is written straight to the DOM** during a resize and only
+  committed to storage on release, so resizing never re-renders the list.
 - **`@property` does not work inside a shadow root.** Tailwind registers its
   internal custom properties that way, so in the shadow tree they have no
   initial value and every declaration built on one — `box-shadow`,
@@ -935,7 +974,7 @@ extension reload itself, so each change still needs a rebuild in Xcode.
 This is live reload, not hot module replacement. Two things rule HMR out: no
 browser picks up content script edits without reloading the whole extension, and
 github.com's CSP governs content script fetches, so the socket an HMR client
-needs would be blocked. In practice the difference is small — window position,
+needs would be blocked. In practice the difference is small — panel width,
 saved queries, and settings all live in extension storage, so they survive the
 reload.
 
@@ -954,8 +993,8 @@ Set `DEV_RELOAD_PORT` to use a different port.
 ### Tests
 
 The browser tests load the real `dist/chrome/content.js` into a headless Chrome
-with a stubbed extension API, and cover mounting, styling, virtualisation,
-dragging, locking, and collapsing. Docked mode is exercised against a stand-in
+with a stubbed extension API, and cover mounting, styling, virtualisation, the
+launcher, and collapsing. Docking is exercised against a stand-in
 for a github.com page — full-width chrome above a centred column — at a viewport
 wide enough for the gutter to hold the panel and at one that is not. The options
 page is tested against a served copy of `dist/chrome/`, and the IndexedDB store

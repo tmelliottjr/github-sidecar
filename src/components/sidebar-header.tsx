@@ -2,17 +2,11 @@ import {
   BeakerIcon,
   CheckIcon,
   ChevronDownIcon,
-  FilterIcon,
-  FoldDownIcon,
-  FoldUpIcon,
   GearIcon,
-  LockIcon,
   MarkGithubIcon,
-  ScreenNormalIcon,
   SidebarExpandIcon,
   SlidersIcon,
   SyncIcon,
-  UnlockIcon,
   XIcon,
 } from '@primer/octicons-react'
 
@@ -28,15 +22,15 @@ import {
 import { Hint } from '@/components/ui/tooltip'
 import { IndeterminateBar } from '@/components/ui/progress-bar'
 import { sendMessage } from '@/lib/messages'
-import type { SavedQuery, WindowState } from '@/lib/storage'
+import type { SavedQuery } from '@/lib/storage'
 import { cn } from '@/lib/utils'
 
 interface Props {
-  onPointerDown: (event: React.PointerEvent) => void
-  windowState: WindowState
   queries: SavedQuery[]
   activeQuery: SavedQuery | null
   isFetching: boolean
+  /** Total matches for the active query, or `null` while nothing has loaded. */
+  count: number | null
   /**
    * Any refresh at all, including the ones the worker runs on its own after
    * answering from cache. Broader than `isFetching`, which only covers this
@@ -44,87 +38,74 @@ interface Props {
    */
   isRefreshing: boolean
   canRefresh: boolean
-  /** Whether the filter is offered at all, and whether it is currently open. */
-  canFilter: boolean
-  isFiltering: boolean
   canMarkAllSeen: boolean
   /** Developer mode only: opens the part of settings that holds the log. */
   canInspect: boolean
   onSelectQuery: (id: string) => void
   onManageQueries: () => void
-  onToggleFilter: () => void
   onMarkAllSeen: () => void
   onRefresh: () => void
-  onPatchWindow: (patch: Partial<WindowState>) => void
-  onToggleDock: () => void
+  onCollapse: () => void
   onHide: () => void
 }
 
 export function SidebarHeader({
-  onPointerDown,
-  windowState,
   queries,
   activeQuery,
   isFetching,
+  count,
   isRefreshing,
   canRefresh,
-  canFilter,
-  isFiltering,
   canMarkAllSeen,
   canInspect,
   onSelectQuery,
   onManageQueries,
-  onToggleFilter,
   onMarkAllSeen,
   onRefresh,
-  onPatchWindow,
-  onToggleDock,
+  onCollapse,
   onHide,
 }: Props) {
-  const { docked } = windowState
-
-  // Controls sit inside the drag handle, so their pointer events must not
-  // bubble up and start a drag.
-  const stopDrag = (event: React.PointerEvent) => event.stopPropagation()
-
   return (
     <header
-      onPointerDown={docked ? undefined : onPointerDown}
       aria-busy={isRefreshing}
-      className={cn(
-        'relative flex h-11 shrink-0 items-center gap-1 border-b border-border px-2',
-        docked || windowState.locked
-          ? 'cursor-default'
-          : 'cursor-grab active:cursor-grabbing',
-      )}
+      className="group/header @container relative flex h-12 shrink-0 items-center gap-1 border-b border-border/70 px-2"
     >
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
-            size="sm"
-            className="min-w-0 max-w-[55%] shrink justify-start gap-1 px-1.5"
-            onPointerDown={stopDrag}
+            className="h-9 min-w-0 shrink justify-start gap-2 rounded-full py-1 pl-1 pr-2 data-[state=open]:bg-accent"
           >
-            <MarkGithubIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="truncate text-[13px] font-bold tracking-tight">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
+              <MarkGithubIcon className="size-4" />
+            </span>
+            <span className="truncate text-[13px] font-semibold">
               {activeQuery?.name ?? 'No query'}
             </span>
+            {/* The footer still has the count when the header is too narrow for it. */}
+            {count !== null && (
+              <span
+                data-header-count=""
+                className="hidden shrink-0 rounded-full bg-muted px-1.5 text-[11px] font-semibold leading-[18px] tabular-nums text-muted-foreground @xs:inline"
+              >
+                {count.toLocaleString()}
+              </span>
+            )}
             <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
           </Button>
         </DropdownMenuTrigger>
 
         <DropdownMenuContent align="start" className="min-w-56">
           <DropdownMenuLabel>Saved queries</DropdownMenuLabel>
-          {queries.map((query) => (
-            <DropdownMenuItem
-              key={query.id}
-              onSelect={() => onSelectQuery(query.id)}
-              className={cn(query.id === activeQuery?.id && 'bg-accent')}
-            >
-              <span className="truncate font-semibold">{query.name}</span>
-            </DropdownMenuItem>
-          ))}
+          {queries.map((query) => {
+            const isActive = query.id === activeQuery?.id
+            return (
+              <DropdownMenuItem key={query.id} onSelect={() => onSelectQuery(query.id)}>
+                <CheckIcon className={cn(!isActive && 'invisible')} />
+                <span className={cn('truncate', isActive && 'font-semibold')}>{query.name}</span>
+              </DropdownMenuItem>
+            )
+          })}
 
           <DropdownMenuSeparator />
           {canMarkAllSeen && (
@@ -144,119 +125,43 @@ export function SidebarHeader({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <div
-        data-drag-region
-        className="h-full flex-1 self-stretch"
-        aria-hidden
-      />
-
-      <div className="flex shrink-0 items-center gap-0.5" onPointerDown={stopDrag}>
-        {/*
-         * Leads the controls rather than sitting among them: it is not one of
-         * the things a reader does with the list, and it is only here at all
-         * while developer mode is on.
-         */}
-        {canInspect && (
-          <Hint label="What the panel has asked GitHub">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() =>
-                void sendMessage({ type: 'open-options', section: 'developer' })
-              }
-              aria-label="Open developer tools"
-            >
-              <BeakerIcon />
-            </Button>
-          </Hint>
-        )}
-
-        {canFilter && (
-          <Hint label="Filter these rows">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onToggleFilter}
-              aria-pressed={isFiltering}
-              aria-label="Filter these rows"
-            >
-              <FilterIcon className={cn(isFiltering && 'text-foreground')} />
-            </Button>
-          </Hint>
-        )}
-
-        <Hint label="Refresh">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onRefresh}
-            disabled={!canRefresh}
-            aria-label="Refresh results"
-          >
-            <SyncIcon className={cn(isFetching && 'animate-spin')} />
-          </Button>
-        </Hint>
-
-        <Hint label={docked ? 'Float the window' : 'Dock to the page'}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onToggleDock}
-            aria-pressed={docked}
-            aria-label={docked ? 'Float the window' : 'Dock to the page'}
-          >
-            {docked ? <ScreenNormalIcon /> : <SidebarExpandIcon />}
-          </Button>
-        </Hint>
-
-        {/* Docked, the panel has no free position to lock. */}
-        {!docked && (
-          <Hint label={windowState.locked ? 'Unlock position' : 'Lock position'}>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => onPatchWindow({ locked: !windowState.locked })}
-              aria-pressed={windowState.locked}
-              aria-label={windowState.locked ? 'Unlock position' : 'Lock position'}
-            >
-              {windowState.locked ? <LockIcon className="text-attention" /> : <UnlockIcon />}
-            </Button>
-          </Hint>
-        )}
-
-        {/*
-         * Collapsing folds a floating window up into its header and a docked
-         * one sideways into a rail, so the mark points the way it will go.
-         * Octicon's sidebar marks are named for a sidebar on the right, so the
-         * leftward arrow this needs is the one called `sidebar-expand`.
-         */}
-        <Hint label={windowState.collapsed ? 'Expand' : 'Collapse'}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => onPatchWindow({ collapsed: !windowState.collapsed })}
-            aria-label={windowState.collapsed ? 'Expand' : 'Collapse'}
-          >
-            {docked ? (
-              <SidebarExpandIcon />
-            ) : windowState.collapsed ? (
-              <FoldDownIcon />
-            ) : (
-              <FoldUpIcon />
+      <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        {/* Fold away until the header is hovered or focused, leaving the query name more room. */}
+        <span className={FOLD}>
+          <span className="flex min-w-0 items-center gap-0.5 overflow-hidden">
+            {canInspect && (
+              <HeaderButton
+                label="Open developer tools"
+                hint="What the panel has asked GitHub"
+                onClick={() => void sendMessage({ type: 'open-options', section: 'developer' })}
+              >
+                <BeakerIcon />
+              </HeaderButton>
             )}
-          </Button>
-        </Hint>
 
-        <Hint label="Hide sidebar">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onHide}
-            aria-label="Hide sidebar"
-          >
-            <XIcon />
-          </Button>
-        </Hint>
+            {/*
+             * Collapsing swaps the panel for the launcher on the left edge, so
+             * the mark points left. Octicon's sidebar marks are named for a
+             * sidebar on the right, so the leftward arrow is `sidebar-expand`.
+             */}
+            <HeaderButton label="Collapse" onClick={onCollapse}>
+              <SidebarExpandIcon />
+            </HeaderButton>
+          </span>
+        </span>
+
+        <HeaderButton
+          label="Refresh results"
+          hint="Refresh"
+          onClick={onRefresh}
+          disabled={!canRefresh}
+        >
+          <SyncIcon className={cn(isFetching && 'animate-spin')} />
+        </HeaderButton>
+
+        <HeaderButton label="Hide sidebar" onClick={onHide}>
+          <XIcon />
+        </HeaderButton>
       </div>
 
       {/*
@@ -272,5 +177,43 @@ export function SidebarHeader({
         />
       )}
     </header>
+  )
+}
+
+/**
+ * Hidden until the header is hovered or holds focus, matching the launcher's
+ * own controls. Grid tracks animate between 0fr and 1fr, which a width
+ * transition cannot do without a fixed width.
+ */
+const FOLD = cn(
+  'grid grid-cols-[0fr] opacity-0 transition-[grid-template-columns,opacity] duration-300 ease-stack',
+  'motion-reduce:transition-none',
+  'group-hover/header:grid-cols-[1fr] group-hover/header:opacity-100',
+  'group-focus-within/header:grid-cols-[1fr] group-focus-within/header:opacity-100',
+)
+
+function HeaderButton({
+  label,
+  hint = label,
+  className,
+  ...props
+}: React.ComponentProps<typeof Button> & {
+  label: string
+  /** Tooltip text, when it differs from the accessible name. */
+  hint?: string
+}) {
+  return (
+    <Hint label={hint}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={label}
+        className={cn(
+          'rounded-full text-muted-foreground hover:text-foreground focus-visible:ring-inset',
+          className,
+        )}
+        {...props}
+      />
+    </Hint>
   )
 }

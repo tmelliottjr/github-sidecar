@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { buildRows, collapseRows, filterItems, groupItems, groupKeysOf, sortItems } from '../src/lib/list-view.ts'
+import {
+  UNASSIGNED,
+  applyQuickFilter,
+  buildRows,
+  collapseRows,
+  filterItems,
+  groupItems,
+  groupKeysOf,
+  quickFilterOptions,
+  sortItems,
+  toggleQuickFilter,
+} from '../src/lib/list-view.ts'
 import type { SearchItem } from '../src/lib/github/types.ts'
 
 function item(overrides: Partial<SearchItem>): SearchItem {
@@ -69,6 +80,128 @@ describe('filterItems', () => {
       item({ id: 'y', assignees: [] }),
     ]
     assert.deepEqual(filterItems(assigned, 'monalisa').map((row) => row.id), ['x'])
+  })
+})
+
+describe('applyQuickFilter', () => {
+  const reviewed = [
+    item({ id: 'a', reviewDecision: 'APPROVED', authorLogin: 'octocat' }),
+    item({ id: 'b', reviewDecision: 'CHANGES_REQUESTED', authorLogin: 'octocat' }),
+    item({ id: 'c', reviewDecision: 'APPROVED', authorLogin: 'hubot' }),
+    item({ id: 'd', reviewDecision: 'REVIEW_REQUIRED', authorLogin: 'octocat' }),
+  ]
+  const ids = (list: SearchItem[]) => list.map((row) => row.id)
+
+  it('widens within a facet and narrows across facets', () => {
+    const review = { review: ['APPROVED', 'CHANGES_REQUESTED'] }
+    assert.deepEqual(ids(applyQuickFilter(reviewed, review)), ['a', 'b', 'c'])
+    assert.deepEqual(ids(applyQuickFilter(reviewed, { ...review, author: ['octocat'] })), ['a', 'b'])
+  })
+
+  it('leaves the list alone when nothing is chosen', () => {
+    assert.equal(applyQuickFilter(reviewed, {}), reviewed)
+    assert.equal(applyQuickFilter(reviewed, { review: [] }), reviewed)
+  })
+
+  it('counts errored checks as failing', () => {
+    const checked = [
+      item({ id: 'failed', checkState: 'FAILURE' }),
+      item({ id: 'errored', checkState: 'ERROR' }),
+      item({ id: 'pending', checkState: 'PENDING' }),
+    ]
+    assert.deepEqual(ids(applyQuickFilter(checked, { checks: ['failing'] })), ['failed', 'errored'])
+  })
+
+  it('matches rows with no assignee as unassigned', () => {
+    const assigned = [
+      item({ id: 'alice', assignees: [{ login: 'alice', avatarUrl: null }] }),
+      item({ id: 'nobody', assignees: [] }),
+    ]
+    assert.deepEqual(ids(applyQuickFilter(assigned, { assignee: [UNASSIGNED] })), ['nobody'])
+    assert.deepEqual(
+      ids(applyQuickFilter(assigned, { assignee: [UNASSIGNED, 'alice'] })),
+      ['alice', 'nobody'],
+    )
+  })
+})
+
+describe('quickFilterOptions', () => {
+  const reviewed = [
+    item({ id: 'a', reviewDecision: 'APPROVED', authorLogin: 'octocat' }),
+    item({ id: 'b', reviewDecision: 'CHANGES_REQUESTED', authorLogin: 'octocat' }),
+    item({ id: 'c', reviewDecision: 'APPROVED', authorLogin: 'hubot' }),
+    item({ id: 'd', reviewDecision: 'REVIEW_REQUIRED', authorLogin: 'octocat' }),
+  ]
+  const counts = (options: Array<{ value: string; count: number }>) =>
+    Object.fromEntries(options.map((option) => [option.value, option.count]))
+
+  it('counts each facet with every other facet applied', () => {
+    const options = quickFilterOptions(reviewed, reviewed, {
+      review: ['APPROVED'],
+      author: ['octocat'],
+    })
+    // Choosing Approved leaves the other review values counted, for octocat.
+    assert.deepEqual(counts(options.review), {
+      REVIEW_REQUIRED: 1,
+      APPROVED: 1,
+      CHANGES_REQUESTED: 1,
+    })
+    // And choosing octocat leaves the other authors counted, for Approved.
+    assert.deepEqual(counts(options.author), { octocat: 1, hubot: 1 })
+    assert.deepEqual(
+      options.review.map((option) => option.selected),
+      [false, true, false],
+    )
+  })
+
+  it('offers only what the rows have, plus anything already chosen', () => {
+    const options = quickFilterOptions(reviewed, reviewed, {
+      merge: ['conflicting'],
+      author: ['ghost'],
+    })
+    assert.deepEqual(options.checks, [])
+    assert.deepEqual(options.merge, [
+      { value: 'conflicting', count: 0, selected: true, avatarUrl: null },
+    ])
+    assert.deepEqual(
+      options.author.map((option) => [option.value, option.count]),
+      [['octocat', 0], ['hubot', 0], ['ghost', 0]],
+    )
+  })
+
+  it('offers from every row but counts only the rows the text matches', () => {
+    const options = quickFilterOptions(reviewed, reviewed.slice(0, 1), {})
+    assert.deepEqual(counts(options.author), { octocat: 1, hubot: 0 })
+  })
+
+  it('orders people by row count, with unassigned last, and carries their avatars', () => {
+    const assigned = [
+      item({ id: 'x', assignees: [] }),
+      item({ id: 'y', assignees: [{ login: 'bob', avatarUrl: null }] }),
+      item({ id: 'z', assignees: [
+        { login: 'alice', avatarUrl: 'https://avatars/alice' },
+        { login: 'bob', avatarUrl: 'https://avatars/bob' },
+      ] }),
+    ]
+    const options = quickFilterOptions(assigned, assigned, {})
+    assert.deepEqual(
+      options.assignee.map((option) => [option.value, option.count, option.avatarUrl]),
+      [
+        ['bob', 2, 'https://avatars/bob'],
+        ['alice', 1, 'https://avatars/alice'],
+        [UNASSIGNED, 1, null],
+      ],
+    )
+  })
+})
+
+describe('toggleQuickFilter', () => {
+  it('adds a value, then takes it away again, without changing the filter it was given', () => {
+    const before = { review: ['APPROVED'] }
+    const added = toggleQuickFilter(before, 'review', 'REVIEW_REQUIRED')
+    assert.deepEqual(added.review, ['APPROVED', 'REVIEW_REQUIRED'])
+    assert.deepEqual(toggleQuickFilter(added, 'review', 'APPROVED').review, ['REVIEW_REQUIRED'])
+    assert.deepEqual(before, { review: ['APPROVED'] })
   })
 })
 

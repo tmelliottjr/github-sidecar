@@ -2,7 +2,7 @@ import * as React from 'react'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 
 import { cn } from '@/lib/utils'
-import { usePortalContainer } from './portal-container'
+import { useOwnerPresent, usePortalContainer } from './portal-container'
 
 function TooltipProvider({
   delayDuration = 350,
@@ -26,6 +26,8 @@ function TooltipContent({
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
   const container = usePortalContainer()
+  const ownerPresent = useOwnerPresent()
+  if (!ownerPresent) return null
   return (
     <TooltipPrimitive.Portal container={container ?? undefined}>
       <TooltipPrimitive.Content

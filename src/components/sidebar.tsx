@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertIcon,
   FilterIcon,
@@ -10,19 +10,14 @@ import {
   XIcon,
 } from '@primer/octicons-react'
 
-import {
-  DOCK_RAIL_WIDTH,
-  DockRail,
-  DockedPanel,
-  clampDockWidth,
-} from '@/components/docked-panel'
-import { FloatingWindow } from '@/components/floating-window'
+import { DockedPanel, clampDockWidth } from '@/components/docked-panel'
 import { ItemList } from '@/components/item-list'
+import { Launcher } from '@/components/launcher'
+import { MorphPresence } from '@/components/morph'
 import { QueryEditor } from '@/components/query-editor'
 import { SidebarHeader } from '@/components/sidebar-header'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Hint } from '@/components/ui/tooltip'
 import { FilterBar, type GroupBy, type SortOrder } from '@/components/filter-bar'
 import { useDockLayout } from '@/hooks/use-dock-layout'
 import { useCurrentPageItem } from '@/hooks/use-current-page-item'
@@ -36,10 +31,21 @@ import { useTabOpen } from '@/hooks/use-tab-open'
 import { changesSince, isHidden, isWhole, nextReminderAt } from '@/lib/attention'
 import { browser } from '@/lib/browser'
 import type { SearchItem } from '@/lib/github/types'
-import { filterItems, sortItems, buildRows, groupKeysOf } from '@/lib/list-view'
+import {
+  FACETS,
+  applyQuickFilter,
+  buildRows,
+  filterItems,
+  groupKeysOf,
+  isQuickFiltered,
+  sortItems,
+  type QuickFilter,
+} from '@/lib/list-view'
 import { sendMessage, RequestError } from '@/lib/messages'
 import { DEFAULT_FEATURES, type SavedQuery, type Settings, type WindowState } from '@/lib/storage'
 import { cn, relativeTime } from '@/lib/utils'
+
+const NO_QUICK_FILTER: QuickFilter = {}
 
 export function Sidebar() {
   const [settings, setSettings] = useStorageValue('settings')
@@ -56,8 +62,9 @@ export function Sidebar() {
   const reminderOverrides = developer?.enabled ? developer.reminderSeconds : null
   const { memory, markSeen, remind, clearReminder, hide, unhide } =
     useItemMemory(reminderOverrides)
-  const [filtering, setFiltering] = useState(false)
+  const filterInputRef = useRef<HTMLInputElement>(null)
   const [filterText, setFilterText] = useState('')
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>({})
   const [sortOrder, setSortOrder] = useState<SortOrder>('default')
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set())
   const [showHidden, setShowHidden] = useState(false)
@@ -88,14 +95,41 @@ export function Sidebar() {
     [setSettings],
   )
 
-  // The toolbar button shows and hides the panel in the tab it was clicked on.
+  const isVisible = isOpen ?? false
+  const isCollapsed = windowState?.collapsed ?? false
+  const showsLauncher = !isVisible || isCollapsed
+
+  // The launcher slides in only until the first swap. After that it always
+  // morphs out of the panel, and a slide would move the box Motion measures.
+  const [wasLauncher, setWasLauncher] = useState(showsLauncher)
+  const [hasSwapped, setHasSwapped] = useState(false)
+  if (wasLauncher !== showsLauncher) {
+    setWasLauncher(showsLauncher)
+    setHasSwapped(true)
+  }
+
+  /**
+   * The launcher can stand for a hidden panel, a collapsed one, or both, and
+   * opening has to clear both or it just redraws the launcher.
+   */
+  const openPanel = useCallback(() => {
+    setOpen(true)
+    if (isCollapsed) patchWindow({ collapsed: false })
+  }, [isCollapsed, patchWindow, setOpen])
+
+  // The toolbar button opens the panel in the tab it was clicked on, or hides it there.
   useEffect(() => {
     const listener = (message: { type?: string }) => {
-      if (message?.type === 'toggle-sidebar') setOpen(!(isOpen ?? false))
+      if (message?.type !== 'toggle-sidebar') return
+      if (showsLauncher) {
+        openPanel()
+        return
+      }
+      setOpen(false)
     }
     browser.runtime.onMessage.addListener(listener)
     return () => browser.runtime.onMessage.removeListener(listener)
-  }, [isOpen, setOpen])
+  }, [openPanel, setOpen, showsLauncher])
 
   const activeQuery = useMemo<SavedQuery | null>(() => {
     if (!savedQueries?.length) return null
@@ -118,30 +152,14 @@ export function Sidebar() {
   )
 
   const hasToken = Boolean(settings?.token)
-  const isVisible = isOpen ?? false
-  const isDocked = windowState?.docked ?? false
-  const isCollapsed = windowState?.collapsed ?? false
-  // Collapsing means two different things. Floating, it hides the list behind
-  // the header. Docked, it swaps the panel for a rail that keeps reporting the
-  // count, so results have to go on loading.
-  //
-  // The rail also stands in for a docked panel that was never opened in this
-  // tab. A dock that is simply absent has to be recovered from the browser's
-  // own extensions menu, which is a long way to go for a panel that is meant
-  // to be part of the page; leaving the rail keeps it one click away.
-  const isRail = isDocked && (isCollapsed || !isVisible)
   const dockWidth = windowState?.dockWidth ?? 0
 
-  // Measuring the host page is only worth doing while the dock is on screen,
-  // and the rail asks the page for far less room than the panel does.
+  // Measuring the host page is only worth doing while the panel is on screen.
+  // The launcher sits over the page and takes no room from it.
   const dockTop = useDockLayout({
-    enabled: isDocked,
-    width: isRail ? DOCK_RAIL_WIDTH : dockWidth,
+    enabled: isOpen === null || !windowState ? null : !showsLauncher,
+    width: dockWidth,
   })
-
-  const toggleDock = useCallback(() => {
-    setWindowState((current) => ({ ...current, docked: !current.docked }))
-  }, [setWindowState])
 
   const setDockWidth = useCallback(
     (width: number) => {
@@ -154,8 +172,9 @@ export function Sidebar() {
     query: activeQuery?.query ?? null,
     pollIntervalMs: settings?.pollIntervalMs ?? 0,
     // A hidden tab asks for nothing at all; it hydrates from the worker's
-    // cache the moment the user switches to it.
-    enabled: hasToken && isVisible && !(isCollapsed && !isDocked) && !editing && isTabVisible,
+    // cache the moment the user switches to it. A collapsed panel goes on
+    // loading, since the launcher standing in for it shows the count.
+    enabled: hasToken && isVisible && !editing && isTabVisible,
   })
 
   // The worker answers from its cache straight away and only then goes to the
@@ -206,6 +225,24 @@ export function Sidebar() {
 
   const items = useMemo(() => [...groups.pinned, ...groups.rest], [groups])
 
+  // The merge-state switch hides merge marks on the rows, so it hides merge choices too.
+  const facets = useMemo(
+    () => (features.mergeState ? FACETS : FACETS.filter((facet) => facet !== 'merge')),
+    [features.mergeState],
+  )
+  // With the filter switched off its bar is gone, so nothing it holds may narrow the list.
+  const activeText = features.filter ? filterText : ''
+  const activeFilter = useMemo<QuickFilter>(
+    () =>
+      !features.filter
+        ? NO_QUICK_FILTER
+        : features.mergeState
+          ? quickFilter
+          : { ...quickFilter, merge: [] },
+    [features.filter, features.mergeState, quickFilter],
+  )
+  const isNarrowed = activeText.trim().length > 0 || isQuickFiltered(activeFilter)
+
   /**
    * What the list actually shows, and which of the rows it would have shown
    * are hidden.
@@ -220,7 +257,7 @@ export function Sidebar() {
    */
   const view = useMemo(() => {
     const shape = (group: SearchItem[]) =>
-      sortItems(filterItems(group, filterText), sortOrder)
+      sortItems(applyQuickFilter(filterItems(group, activeText), activeFilter), sortOrder)
     const shapedPinned = shape(groups.pinned)
     const shapedRest = shape(groups.rest)
     const matched = [...shapedPinned, ...shapedRest]
@@ -243,7 +280,19 @@ export function Sidebar() {
       items: [...visiblePinned, ...visibleRest],
       rows: buildRows(visiblePinned, visibleRest, groupBy),
     }
-  }, [features.hide, filterText, groupBy, groups, memory, showHidden, sortOrder])
+  }, [activeFilter, activeText, features.hide, groupBy, groups, memory, showHidden, sortOrder])
+
+  /**
+   * What the quick filter menu offers and counts: the rows the list can show
+   * before anything narrows them, and those the typed text matches. Null while
+   * the filter is switched off.
+   */
+  const quickFilterRows = useMemo(() => {
+    if (!features.filter) return null
+    const shown =
+      features.hide && !showHidden ? items.filter((item) => !isHidden(memory[item.id])) : items
+    return { shown, textMatches: filterItems(shown, filterText) }
+  }, [features.filter, features.hide, filterText, items, memory, showHidden])
 
   const { hiddenIds } = view
   const visibleItems = view.items
@@ -425,47 +474,27 @@ export function Sidebar() {
   if (!settings || !savedQueries || !windowState || !pinnedIds || isOpen === null)
     return null
 
-  // A floating window that is not showing leaves a launcher in the corner.
-  // A docked one leaves its rail instead, which is where the panel itself
-  // would have been.
-  if (!isVisible && !isDocked) {
-    return (
-      <Hint label="Open GitHub Sidecar" side="left">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className={cn(
-            'fixed bottom-5 right-5 z-[2147483646] flex size-10 items-center justify-center',
-            'rounded-full border border-border bg-background text-foreground shadow-window',
-            'transition-transform hover:scale-105 active:scale-95',
-          )}
-          aria-label="Open GitHub Sidecar"
-        >
-          <MarkGithubIcon className="size-4" />
-        </button>
-      </Hint>
-    )
-  }
-
   const lastFetchedAt = search.data?.pages[0]?.fetchedAt
+  const freshness = isRefreshing
+    ? 'updating…'
+    : lastFetchedAt
+      ? `updated ${relativeTime(new Date(lastFetchedAt).toISOString())}`
+      : null
   const totalCount = search.data?.pages[0]?.totalCount ?? 0
 
-  // Collapsed, or never opened here, the dock is a rail. Rendered before
-  // anything else so the list is not built just to sit behind it.
-  if (isRail) {
+  // Rendered before anything else so the list is not built just to sit
+  // behind the launcher.
+  if (showsLauncher) {
     return (
-      <DockRail
-        top={dockTop}
-        label={activeQuery?.name ?? 'GitHub Sidecar'}
-        count={search.data ? totalCount : null}
-        onExpand={() => {
-          // One rail, two reasons to be showing it, and the click has to clear
-          // both — otherwise expanding a hidden panel that was also left
-          // collapsed just draws the same rail again.
-          setOpen(true)
-          if (isCollapsed) patchWindow({ collapsed: false })
-        }}
-      />
+      <MorphPresence>
+        <Launcher
+          key="launcher"
+          title={activeQuery?.name ?? 'GitHub Sidecar'}
+          count={search.data ? totalCount : null}
+          onOpen={openPanel}
+          slideIn={!hasSwapped}
+        />
+      </MorphPresence>
     )
   }
 
@@ -482,26 +511,21 @@ export function Sidebar() {
           ? 'loading'
           : `${items.length === 0 ? 'empty' : 'list'}:${activeQuery?.id ?? ''}`
 
-  const renderHeader = (onPointerDown: (event: React.PointerEvent) => void) => (
+  const header = (
     <SidebarHeader
-      onPointerDown={onPointerDown}
-      windowState={windowState}
       queries={savedQueries}
       activeQuery={activeQuery}
       isFetching={search.isFetching}
+      count={search.data ? totalCount : null}
       isRefreshing={isRefreshing}
       canRefresh={hasToken}
       onSelectQuery={selectQuery}
       onManageQueries={() => setEditing(true)}
-      canFilter={features.filter}
-      isFiltering={filtering}
-      onToggleFilter={() => setFiltering((current) => !current)}
       canMarkAllSeen={tracksChanges && items.length > 0}
       canInspect={developer?.enabled ?? false}
       onMarkAllSeen={markAllSeen}
       onRefresh={refetch}
-      onPatchWindow={patchWindow}
-      onToggleDock={toggleDock}
+      onCollapse={() => patchWindow({ collapsed: true })}
       onHide={() => setOpen(false)}
     />
   )
@@ -512,7 +536,9 @@ export function Sidebar() {
    * on a freshly opened panel is nowhere in particular.
    */
   const onPanelKeyDown = (event: React.KeyboardEvent) => {
-    if (!features.filter || event.key !== '/' || filtering) return
+    // A `/` typed into a portaled menu bubbles here in React, but is not the panel's.
+    if (!event.currentTarget.contains(event.target as Node)) return
+    if (!features.filter || event.key !== '/') return
     const target = event.target
     if (
       target instanceof HTMLInputElement ||
@@ -522,7 +548,8 @@ export function Sidebar() {
       return
     }
     event.preventDefault()
-    setFiltering(true)
+    filterInputRef.current?.focus()
+    filterInputRef.current?.select()
   }
 
   const body = (
@@ -560,21 +587,23 @@ export function Sidebar() {
        * Also outside the keyed pane: what the reader has narrowed the list to
        * must survive a poll that changes the rows underneath it.
        */}
-      {filtering && !editing && hasToken && !search.isError && (
+      {quickFilterRows && !editing && hasToken && !search.isError && (
         <FilterBar
+          inputRef={filterInputRef}
           text={filterText}
           sort={sortOrder}
           group={groupBy}
           allGroupsCollapsed={allGroupsCollapsed}
           matches={visibleItems.length}
+          quickFilter={activeFilter}
+          facets={facets}
+          rows={quickFilterRows.shown}
+          textMatches={quickFilterRows.textMatches}
           onTextChange={setFilterText}
           onSortChange={setSortOrder}
           onGroupChange={setGroupBy}
           onToggleAllGroups={toggleAllGroups}
-          onClose={() => {
-            setFiltering(false)
-            setFilterText('')
-          }}
+          onQuickFilterChange={setQuickFilter}
         />
       )}
       {/*
@@ -603,6 +632,7 @@ export function Sidebar() {
           <FilteredOutState
             onClear={() => {
               setFilterText('')
+              setQuickFilter({})
               setShowHidden(true)
             }}
           />
@@ -622,7 +652,7 @@ export function Sidebar() {
              * would page through the whole result set looking for matches
              * nobody asked it to fetch.
              */
-            hasNextPage={search.hasNextPage && filterText.trim().length === 0}
+            hasNextPage={search.hasNextPage && !isNarrowed}
             isFetchingNextPage={search.isFetchingNextPage}
             onLoadMore={loadMore}
             onToggleGroup={toggleGroup}
@@ -640,11 +670,13 @@ export function Sidebar() {
       </div>
 
       {!editing && hasToken && (
-        <footer className="flex h-7 shrink-0 items-center justify-between gap-2 border-t border-border px-2.5 text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-2">
-            <span className="tabular-nums">
-              {items.length > 0 ? `${visibleItems.length} of ${totalCount.toLocaleString()}` : '—'}
-            </span>
+        <footer className="flex h-9 shrink-0 items-center justify-between gap-2 border-t border-border/70 px-3 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            {items.length > 0 && (
+              <span className="tabular-nums">
+                {visibleItems.length} of {totalCount.toLocaleString()}
+              </span>
+            )}
             {/*
              * Hidden rows are still results, so the count says where they went
              * rather than quietly leaving them out of it — and is the way back
@@ -655,74 +687,97 @@ export function Sidebar() {
                 type="button"
                 onClick={() => setShowHidden((current) => !current)}
                 aria-pressed={showHidden}
-                className="rounded px-1 tabular-nums underline-offset-2 hover:text-foreground hover:underline"
+                className={cn(
+                  'rounded-full bg-muted px-2 leading-5 tabular-nums transition-colors hover:text-foreground',
+                  'aria-pressed:bg-accent aria-pressed:text-foreground',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                )}
               >
                 {showHidden ? 'hide' : 'show'} {hiddenIds.size} hidden
               </button>
             )}
           </span>
-          <span className="flex items-center gap-1.5">
-            {settings.pollIntervalMs > 0 && (
-              <span
-                className={cn(
-                  'size-1.5 rounded-full',
-                  isRefreshing ? 'animate-pulse bg-open' : 'bg-border',
-                )}
-                aria-hidden
-              />
-            )}
-            {isRefreshing
-              ? 'updating…'
-              : lastFetchedAt
-                ? `updated ${relativeTime(new Date(lastFetchedAt).toISOString())}`
-                : 'idle'}
-          </span>
+          {/* Says nothing rather than a placeholder until there is a result to date. */}
+          {freshness && (
+            <span className="flex items-center gap-1.5">
+              {settings.pollIntervalMs > 0 && (
+                <span
+                  className={cn(
+                    'size-1.5 rounded-full',
+                    isRefreshing ? 'animate-pulse bg-open' : 'bg-muted-foreground/40',
+                  )}
+                  aria-hidden
+                />
+              )}
+              {freshness}
+            </span>
+          )}
         </footer>
       )}
     </div>
   )
 
-  if (isDocked) {
-    return (
+  return (
+    <MorphPresence>
       <DockedPanel
+        key="panel"
         width={clampDockWidth(windowState.dockWidth)}
         top={dockTop}
         onWidthChange={setDockWidth}
-        header={renderHeader(noop)}
+        header={header}
       >
         {body}
       </DockedPanel>
-    )
-  }
-
-  return (
-    <FloatingWindow
-      state={windowState}
-      onStateChange={patchWindow}
-      header={({ onPointerDown }) => renderHeader(onPointerDown)}
-    >
-      {body}
-    </FloatingWindow>
+    </MorphPresence>
   )
 }
 
-function noop() {}
+/** The icon, heading, text, and actions that stand in for the list when it has nothing to show. */
+function StatePanel({
+  icon,
+  tone,
+  title,
+  children,
+  actions,
+}: {
+  icon: React.ReactNode
+  /** Classes for the disc behind the icon. */
+  tone: string
+  title: string
+  children: React.ReactNode
+  actions: React.ReactNode
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+      <span className={cn('flex size-10 items-center justify-center rounded-full', tone)}>
+        {icon}
+      </span>
+      <p className="mt-1 text-[13px] font-semibold">{title}</p>
+      <p className="text-[12px] leading-relaxed text-muted-foreground">{children}</p>
+      <div className="mt-1.5 flex items-center gap-2">{actions}</div>
+    </div>
+  )
+}
 
 function TokenPrompt() {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <MarkGithubIcon className="size-7 text-muted-foreground" />
-      <div className="space-y-1">
-        <p className="text-[13px] font-semibold">Connect your GitHub account</p>
-        <p className="text-[12px] leading-relaxed text-muted-foreground">
-          Add a personal access token to start tracking the issues and pull requests you
-          care about.
-        </p>
-      </div>
-      <Button size="sm" onClick={() => void sendMessage({ type: 'open-options' })}>
-        Open settings
-      </Button>
-    </div>
+    <StatePanel
+      icon={<MarkGithubIcon className="size-5" />}
+      tone="bg-foreground text-background"
+      title="Connect your GitHub account"
+      actions={
+        <Button
+          size="sm"
+          className="rounded-full"
+          onClick={() => void sendMessage({ type: 'open-options' })}
+        >
+          Open settings
+        </Button>
+      }
+    >
+      Add a personal access token to start tracking the issues and pull requests you care
+      about.
+    </StatePanel>
   )
 }
 
@@ -739,25 +794,35 @@ function ErrorState({
   const isAuth = error instanceof RequestError && error.kind === 'auth'
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      {isAuth ? (
-        <KeyIcon className="size-6 text-attention" />
-      ) : (
-        <AlertIcon className="size-6 text-attention" />
-      )}
-      <p className="text-[12px] leading-relaxed text-muted-foreground">{message}</p>
-      <div className="flex items-center gap-2">
-        {isAuth && (
-          <Button size="sm" onClick={() => void sendMessage({ type: 'open-options' })}>
-            Open settings
+    <StatePanel
+      icon={isAuth ? <KeyIcon className="size-5" /> : <AlertIcon className="size-5" />}
+      tone={isAuth ? 'bg-attention/15 text-attention' : 'bg-closed/12 text-closed'}
+      title={isAuth ? 'GitHub didn’t accept the token' : 'Couldn’t load results'}
+      actions={
+        <>
+          {isAuth && (
+            <Button
+              size="sm"
+              className="rounded-full"
+              onClick={() => void sendMessage({ type: 'open-options' })}
+            >
+              Open settings
+            </Button>
+          )}
+          <Button
+            variant={isAuth ? 'outline' : 'default'}
+            size="sm"
+            className="rounded-full"
+            onClick={onRetry}
+          >
+            <SyncIcon />
+            Try again
           </Button>
-        )}
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          <SyncIcon />
-          Try again
-        </Button>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {message}
+    </StatePanel>
   )
 }
 
@@ -781,7 +846,7 @@ function WarningBanner({
   if (dismissed) return null
 
   return (
-    <div className="flex items-start gap-2 border-b border-attention/30 bg-attention/10 px-2.5 py-1.5">
+    <div className="mx-2 mt-2 flex shrink-0 items-start gap-2 rounded-lg bg-attention/12 py-1.5 pl-2.5 pr-1">
       <AlertIcon className="mt-px size-3.5 shrink-0 text-attention" />
       <p className="flex-1 text-[11px] leading-snug text-foreground">
         {message}
@@ -789,7 +854,7 @@ function WarningBanner({
           <button
             type="button"
             onClick={action.onClick}
-            className="ml-1 underline underline-offset-2 hover:text-attention"
+            className="ml-1 font-semibold underline underline-offset-2 hover:text-attention"
           >
             {action.label}
           </button>
@@ -799,7 +864,7 @@ function WarningBanner({
         type="button"
         onClick={() => setDismissed(true)}
         aria-label="Dismiss warning"
-        className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+        className="flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
       >
         <XIcon className="size-3" />
       </button>
@@ -809,16 +874,19 @@ function WarningBanner({
 
 function EmptyState({ onEdit }: { onEdit: () => void }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <InboxIcon className="size-6 text-muted-foreground" />
-      <p className="text-[12px] leading-relaxed text-muted-foreground">
-        Nothing matches this query right now.
-      </p>
-      <Button variant="outline" size="sm" onClick={onEdit}>
-        <SlidersIcon />
-        Edit query
-      </Button>
-    </div>
+    <StatePanel
+      icon={<InboxIcon className="size-5" />}
+      tone="bg-muted text-muted-foreground"
+      title="All clear"
+      actions={
+        <Button variant="outline" size="sm" className="rounded-full" onClick={onEdit}>
+          <SlidersIcon />
+          Edit query
+        </Button>
+      }
+    >
+      Nothing matches this query right now.
+    </StatePanel>
   )
 }
 
@@ -829,29 +897,34 @@ function EmptyState({ onEdit }: { onEdit: () => void }) {
  */
 function FilteredOutState({ onClear }: { onClear: () => void }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <FilterIcon className="size-5 text-muted-foreground" />
-      <p className="text-[12px] leading-relaxed text-muted-foreground">
-        Every row is hidden, by the filter or by you.
-      </p>
-      <Button variant="outline" size="sm" onClick={onClear}>
-        Show them all
-      </Button>
-    </div>
+    <StatePanel
+      icon={<FilterIcon className="size-5" />}
+      tone="bg-muted text-muted-foreground"
+      title="No rows to show"
+      actions={
+        <Button variant="outline" size="sm" className="rounded-full" onClick={onClear}>
+          Show them all
+        </Button>
+      }
+    >
+      Every row is hidden, by the filter or by you.
+    </StatePanel>
   )
 }
 
 const SKELETON_ROWS = ['a', 'b', 'c', 'd', 'e', 'f']
 
+/** Placeholder rows in the shape of the real ones, so nothing jumps when they land. */
 function LoadingState() {
   return (
-    <div className="flex flex-col gap-4 p-3">
+    <div className="flex flex-col gap-0.5 p-1.5" aria-hidden>
       {SKELETON_ROWS.map((row) => (
-        <div key={row} className="flex gap-2.5">
-          <Skeleton className="size-4 shrink-0 rounded-full" />
-          <div className="flex-1 space-y-1.5">
-            <Skeleton className="h-3 w-[85%]" />
-            <Skeleton className="h-2.5 w-[45%]" />
+        <div key={row} className="flex gap-2.5 px-2.5 py-2">
+          <Skeleton className="mt-0.5 size-7 shrink-0 rounded-full" />
+          <div className="flex-1 space-y-2 pt-0.5">
+            <Skeleton className="h-3 w-[78%] rounded-full" />
+            <Skeleton className="h-2.5 w-[46%] rounded-full" />
+            <Skeleton className="h-4 w-14 rounded-full" />
           </div>
         </div>
       ))}

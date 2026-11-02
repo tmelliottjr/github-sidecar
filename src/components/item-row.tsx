@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from 'react'
+import { memo, useCallback, useRef, useState } from 'react'
 import {
   AlertIcon,
   BellIcon,
@@ -29,6 +29,8 @@ import {
   ReminderMark,
   ReviewIndicator,
   StateIcon,
+  StatusPill,
+  drawsMergeState,
 } from '@/components/status-icons'
 import {
   ContextMenu,
@@ -41,6 +43,14 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { ClampedTitle } from '@/components/ui/clamped-title'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Hint } from '@/components/ui/tooltip'
 import { copyLink, copyText } from '@/lib/clipboard'
 import { itemMarkdown, stackMarkdown, stackUrls } from '@/lib/links'
@@ -58,8 +68,20 @@ import {
 import type { SearchItem } from '@/lib/github/types'
 import { cn, relativeTime } from '@/lib/utils'
 
-/** Row padding (12px) plus the state icon (16px) and the gap after it (10px). */
-const MARKS_INDENT = 'pl-[38px]'
+/** Row padding (10px) plus the state disc (28px) and the gap after it (10px). */
+const MARKS_INDENT = 'pl-12'
+
+/**
+ * The colors a row and its chips are drawn on, as variables so the marks
+ * inside can match them: label discs ring themselves in the surface, and the
+ * gray chips swap to the page color whenever the row itself turns gray.
+ */
+const SURFACES = cn(
+  '[--row-surface:var(--color-background)] [--row-chip:var(--color-muted)]',
+  'hover:[--row-surface:var(--color-accent)] hover:[--row-chip:var(--color-background)]',
+  'has-[:focus-visible]:[--row-surface:var(--color-accent)] has-[:focus-visible]:[--row-chip:var(--color-background)]',
+  'group-data-[state=open]/row:[--row-surface:var(--color-accent)] group-data-[state=open]/row:[--row-chip:var(--color-background)]',
+)
 
 interface Props {
   item: SearchItem
@@ -127,6 +149,10 @@ function ItemRowImpl({
   onUnhide,
 }: Props) {
   const [refresh, setRefresh] = useState<RefreshState>({ status: 'idle' })
+  // Quick actions mount on the first hover or focus, so scrolling through
+  // hundreds of rows never builds toolbars nobody reaches.
+  const [hasQuickActions, setHasQuickActions] = useState(false)
+  const showQuickActions = useCallback(() => setHasQuickActions(true), [])
   const stack = item.stack
 
   const refreshItem = useCallback(() => {
@@ -172,6 +198,10 @@ function ItemRowImpl({
 
   const markSeen = useCallback(() => onMarkSeen(item), [item, onMarkSeen])
   const clearReminder = useCallback(() => onClearReminder(item), [item, onClearReminder])
+  const remindAbout = useCallback(
+    (choice: ReminderChoice) => onRemind(item, choice),
+    [item, onRemind],
+  )
   const hide = useCallback(() => onHide(item), [item, onHide])
   const unhide = useCallback(() => onUnhide(item), [item, onUnhide])
 
@@ -192,6 +222,12 @@ function ItemRowImpl({
    */
   const awaitingMarks = item.enrichment === 'pending'
 
+  const hasStatus =
+    Boolean(item.checkState) || drawsMergeState(mergeState) || Boolean(item.reviewDecision)
+
+  // An open id can outlive the checks it listed, so the lift follows what is drawn.
+  const isLifted = (isChecksOpen && failing.length > 0) || (isStackOpen && Boolean(stack))
+
   const hasMarks =
     awaitingMarks ||
     Boolean(stack) ||
@@ -200,9 +236,7 @@ function ItemRowImpl({
     isHidden ||
     item.labels.length > 0 ||
     item.commentCount > 0 ||
-    Boolean(item.checkState) ||
-    Boolean(mergeState) ||
-    Boolean(item.reviewDecision)
+    hasStatus
 
   return (
     <ContextMenu>
@@ -211,29 +245,28 @@ function ItemRowImpl({
           data-pinned={isPinned || undefined}
           data-current={isCurrent || undefined}
           data-row-hidden={isHidden || undefined}
+          data-lifted={isLifted || undefined}
           className={cn(
-            'group flex flex-col',
-            isPinned && 'bg-accent/40',
-            // A row only on screen because the reader asked to see what they
-            // had hidden is drawn as what it is: still here, still put away.
-            isHidden && 'opacity-55',
-            // Layered over a pin rather than instead of it: a row can be both,
-            // and the tint is faint enough to read as a wash either way.
-            isCurrent && 'bg-ring/8',
+            'group/row flex flex-col rounded-xl transition-[margin,box-shadow] duration-300 ease-stack motion-reduce:transition-none',
+            isLifted && 'my-1.5 bg-background shadow-lift',
           )}
         >
           {/*
            * Hover and focus are carried by the row's own wrapper rather than
-           * the button, so the marks below the meta line — which sit outside
-           * the click target now that one of them is a control — still read as
+           * the button, so the marks below the meta line, which sit outside
+           * the click target because some of them are controls, still read as
            * part of the same row.
            */}
           <div
             data-item-body=""
+            onPointerEnter={hasQuickActions ? undefined : showQuickActions}
+            onFocus={hasQuickActions ? undefined : showQuickActions}
             className={cn(
-              'flex flex-col transition-colors',
-              'hover:bg-accent has-[:focus-visible]:bg-accent',
-              'group-data-[state=open]:bg-accent',
+              'group/body relative flex flex-col rounded-xl bg-[color:var(--row-surface)] transition-colors',
+              SURFACES,
+              isCurrent &&
+                '[--row-surface:color-mix(in_oklab,var(--color-ring)_8%,var(--color-background))]',
+              'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/70',
             )}
           >
             <button
@@ -242,24 +275,41 @@ function ItemRowImpl({
               aria-busy={refresh.status === 'loading'}
               aria-current={isCurrent ? 'page' : undefined}
               className={cn(
-                'flex w-full min-w-0 gap-2.5 px-3 pt-2.5 text-left focus-visible:outline-none',
-                hasMarks ? 'pb-1' : 'pb-2.5',
+                'flex w-full min-w-0 gap-2.5 rounded-xl px-2.5 pt-2 text-left focus-visible:outline-none',
+                hasMarks ? 'pb-1.5' : 'pb-2',
               )}
             >
-              <StateIcon item={item} />
+              <span className="relative mt-0.5 shrink-0">
+                <StateIcon
+                  item={item}
+                  variant="disc"
+                  // Still here, still put away: the disc loses its fill but keeps its glyph.
+                  className={cn(isHidden && 'border border-dashed border-muted-foreground/70 bg-transparent')}
+                />
+                {hasChanges && (
+                  <span
+                    aria-hidden
+                    className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-link ring-2 ring-[color:var(--row-surface)]"
+                  />
+                )}
+              </span>
 
-              <span className="flex min-w-0 flex-1 flex-col gap-1">
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="flex items-start gap-2">
                   <ClampedTitle
                     title={item.title}
-                    className="line-clamp-2 flex-1 text-[13px] font-semibold leading-snug text-foreground"
+                    className={cn(
+                      'line-clamp-2 flex-1 text-[13px] font-semibold leading-[18px]',
+                      isHidden ? 'text-muted-foreground' : 'text-foreground',
+                    )}
                   />
                   {/*
                    * A refresh reports itself in the same slot as the timestamp it
                    * is about to change, so the row says what it is doing without
                    * reflowing around a new element.
                    */}
-                  <span className="flex shrink-0 items-center pt-px text-[11px] tabular-nums text-muted-foreground">
+                  <span className="flex shrink-0 items-center gap-1 pt-px text-[11px] tabular-nums text-muted-foreground">
+                    {isPinned && <PinIcon className="size-3 shrink-0" aria-label="Pinned" />}
                     {refresh.status === 'loading' ? (
                       <SyncIcon
                         className="size-3 animate-spin-slow"
@@ -278,15 +328,11 @@ function ItemRowImpl({
                   </span>
                 </span>
 
-                <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  {isPinned && (
-                    <PinIcon
-                      className="size-3 shrink-0 text-accent-foreground"
-                      aria-label="Pinned"
-                    />
-                  )}
-                  <span className="truncate font-medium">{item.repository}</span>
-                  <span aria-hidden>#{item.number}</span>
+                <span className="flex min-w-0 items-center gap-1.5 text-[12px] leading-4 text-muted-foreground">
+                  <span className="truncate">{item.repository}</span>
+                  <span aria-hidden className="tabular-nums">
+                    #{item.number}
+                  </span>
                   {item.authorLogin && (
                     <Author login={item.authorLogin} avatarUrl={item.authorAvatarUrl} />
                   )}
@@ -295,28 +341,58 @@ function ItemRowImpl({
             </button>
 
             {/*
-             * Indented past the state icon so the marks line up under the
-             * title. `MARKS_INDENT` is that icon plus the row's own padding.
+             * After the row's own button, so moving to a row still focuses the
+             * row and Tab steps from it into these.
+             */}
+            {hasQuickActions && (
+              <QuickActions
+                isPinned={isPinned}
+                hasChanges={hasChanges}
+                canRemind={canRemind}
+                hasReminder={reminder !== 'none'}
+                reminderOverrides={reminderOverrides}
+                onTogglePin={togglePin}
+                onMarkSeen={markSeen}
+                onRemind={remindAbout}
+                onClearReminder={clearReminder}
+                onCopyLink={copyItemLink}
+              />
+            )}
+
+            {/*
+             * Indented past the state disc so the marks line up under the
+             * title. `MARKS_INDENT` is that disc plus the row's own padding.
              */}
             {hasMarks && (
               <div
                 className={cn(
-                  'flex flex-wrap items-center gap-1.5 pb-2.5 pr-3',
+                  'flex flex-wrap items-center gap-x-2 gap-y-1 pb-2 pr-2.5',
                   MARKS_INDENT,
-                  // Holds the line open at the height of the marks it is
-                  // waiting for, which are all drawn at 14px.
-                  awaitingMarks && 'min-h-[14px]',
+                  // Holds the line open at the height of the pill it is
+                  // waiting for, plus the line's own bottom padding.
+                  awaitingMarks && 'min-h-7',
                 )}
               >
                 {/*
-                 * What changed leads the line: it is the only mark here that
-                 * is about the reader rather than about the item.
+                 * The pill leads, so checks, review, and merge state sit in
+                 * the same place on every row and can be read down the list.
                  */}
-                {hasChanges && <ChangeBadge kinds={changes} item={item} seen={seen} />}
-                {reminder !== 'none' && reminderDetail && (
-                  <ReminderMark state={reminder} label={describeReminder(reminderDetail)} />
+                {hasStatus && (
+                  <StatusPill>
+                    <CheckIndicator
+                      state={item.checkState}
+                      failing={failing}
+                      isOpen={isChecksOpen}
+                      partial={
+                        item.checkCount != null && (item.checksRead ?? 0) < item.checkCount
+                      }
+                      onToggle={showFailingChecks ? toggleChecks : undefined}
+                    />
+                    <ReviewIndicator decision={item.reviewDecision} />
+                    <MergeIndicator state={mergeState} />
+                  </StatusPill>
                 )}
-                {isHidden && <HiddenMark />}
+                {hasChanges && <ChangeBadge kinds={changes} item={item} seen={seen} />}
                 {stack && (
                   <StackBadge
                     stack={stack}
@@ -324,32 +400,20 @@ function ItemRowImpl({
                     onToggle={toggleStack}
                   />
                 )}
-                <CheckIndicator
-                  state={item.checkState}
-                  failing={failing}
-                  isOpen={isChecksOpen}
-                  partial={
-                    item.checkCount != null && (item.checksRead ?? 0) < item.checkCount
-                  }
-                  onToggle={showFailingChecks ? toggleChecks : undefined}
-                />
-                <MergeIndicator state={mergeState} />
-                <ReviewIndicator decision={item.reviewDecision} />
+                {reminder !== 'none' && reminderDetail && (
+                  <ReminderMark state={reminder} label={describeReminder(reminderDetail)} />
+                )}
+                {isHidden && <HiddenMark />}
 
                 {item.commentCount > 0 && (
-                  <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
-                    <CommentIcon className="size-3" />
+                  <span className="flex items-center gap-1 text-[12px] tabular-nums text-muted-foreground">
+                    <CommentIcon className="size-3.5" />
                     {item.commentCount}
                   </span>
                 )}
 
-                {/*
-                 * Labels are the least of what this line says, so they are put
-                 * where the eye lands last rather than in the run of marks.
-                 */}
-                <span className="ml-auto flex items-center pl-1.5">
-                  <LabelDots labels={item.labels} total={item.labelCount} />
-                </span>
+                {/* Labels are the least of what this line says, so they come last. */}
+                <LabelDots labels={item.labels} total={item.labelCount} />
               </div>
             )}
           </div>
@@ -509,6 +573,145 @@ function ItemRowImpl({
 }
 
 export const ItemRow = memo(ItemRowImpl)
+
+/** How long the copy button shows a check after copying. */
+const COPIED_FOR_MS = 1500
+
+/**
+ * The commonest row actions as a capsule over the row's top-right corner,
+ * shown while the row is hovered or holds keyboard focus. Laid over the row
+ * rather than in it, so showing it never moves anything. The context menu
+ * still lists every action.
+ */
+function QuickActions({
+  isPinned,
+  hasChanges,
+  canRemind,
+  hasReminder,
+  reminderOverrides,
+  onTogglePin,
+  onMarkSeen,
+  onRemind,
+  onClearReminder,
+  onCopyLink,
+}: {
+  isPinned: boolean
+  hasChanges: boolean
+  canRemind: boolean
+  hasReminder: boolean
+  reminderOverrides: ReminderOverrides | null
+  onTogglePin: () => void
+  onMarkSeen: () => void
+  onRemind: (choice: ReminderChoice) => void
+  onClearReminder: () => void
+  onCopyLink: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+  const copiedTimer = useRef(0)
+  const [isMenuOpen, setMenuOpen] = useState(false)
+
+  // The button goes away once the row is seen, so focus moves on to the next
+  // action rather than falling back to the page and its own shortcuts.
+  const markSeenKeepingFocus = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const next = event.currentTarget.nextElementSibling
+    if (next instanceof HTMLElement) next.focus()
+    onMarkSeen()
+  }
+
+  const copyAndConfirm = () => {
+    onCopyLink()
+    setCopied(true)
+    window.clearTimeout(copiedTimer.current)
+    copiedTimer.current = window.setTimeout(() => setCopied(false), COPIED_FOR_MS)
+  }
+
+  return (
+    <div
+      data-quick-actions=""
+      data-menu-open={isMenuOpen || undefined}
+      role="group"
+      aria-label="Quick actions"
+      className={cn(
+        'absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded-full border border-border bg-background p-0.5 shadow-capsule',
+        'pointer-events-none opacity-0 transition-opacity duration-150 ease-stack motion-reduce:transition-none',
+        'group-hover/body:pointer-events-auto group-hover/body:opacity-100',
+        'group-has-[:focus-visible]/body:pointer-events-auto group-has-[:focus-visible]/body:opacity-100',
+        // Stays up while its reminder menu is open, after the pointer has left for the menu.
+        'data-[menu-open]:pointer-events-auto data-[menu-open]:opacity-100',
+      )}
+    >
+      {hasChanges && (
+        <QuickAction label="Mark as seen" onClick={markSeenKeepingFocus}>
+          <CheckIcon />
+        </QuickAction>
+      )}
+
+      <QuickAction label={isPinned ? 'Unpin item' : 'Pin item'} onClick={onTogglePin}>
+        {isPinned ? <PinSlashIcon /> : <PinIcon />}
+      </QuickAction>
+
+      {canRemind && (
+        <DropdownMenu open={isMenuOpen} onOpenChange={setMenuOpen}>
+          <Hint label={hasReminder ? 'Remind me instead' : 'Remind me'} side="top">
+            <DropdownMenuTrigger
+              aria-label={hasReminder ? 'Remind me instead' : 'Remind me'}
+              className={QUICK_ACTION}
+            >
+              <BellIcon />
+            </DropdownMenuTrigger>
+          </Hint>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Remind me</DropdownMenuLabel>
+            {(Object.keys(REMINDER_LABELS) as ReminderChoice[]).map((choice) => (
+              <DropdownMenuItem key={choice} onSelect={() => onRemind(choice)}>
+                {reminderChoiceLabel(choice, reminderOverrides)}
+              </DropdownMenuItem>
+            ))}
+            {hasReminder && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={onClearReminder}>
+                  <BellSlashIcon />
+                  Clear the reminder
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      <QuickAction label={copied ? 'Copied' : 'Copy link'} onClick={copyAndConfirm}>
+        {copied ? <CheckIcon className="text-open" /> : <LinkIcon />}
+      </QuickAction>
+    </div>
+  )
+}
+
+const QUICK_ACTION = cn(
+  'flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors',
+  // `aria-expanded`, since the tooltip around the trigger overrides its `data-state`.
+  'hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+  '[&_svg]:size-3.5',
+)
+
+function QuickAction({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: React.MouseEventHandler<HTMLButtonElement>
+  children: React.ReactNode
+}) {
+  return (
+    <Hint label={label} side="top">
+      <button type="button" onClick={onClick} aria-label={label} className={QUICK_ACTION}>
+        {children}
+      </button>
+    </Hint>
+  )
+}
 
 /**
  * The author, as a face and a handle. The avatar stands in for the separator
