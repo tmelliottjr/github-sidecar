@@ -6,14 +6,17 @@ import {
   applyQuickFilter,
   buildRows,
   collapseRows,
+  expandStacks,
   filterItems,
+  foldStacks,
   groupItems,
   groupKeysOf,
   quickFilterOptions,
   sortItems,
   toggleQuickFilter,
 } from '../src/lib/list-view.ts'
-import type { SearchItem } from '../src/lib/github/types.ts'
+import type { SearchItem, Stack } from '../src/lib/github/types.ts'
+import type { ListRow } from '../src/lib/list-view.ts'
 
 function item(overrides: Partial<SearchItem>): SearchItem {
   return {
@@ -308,6 +311,7 @@ describe('buildRows', () => {
         key: row.id,
         groupKey: null,
         item: row,
+        nesting: null,
       })),
     )
   })
@@ -315,8 +319,8 @@ describe('buildRows', () => {
   it('opens with a Pinned section, then a header per group', () => {
     const built = buildRows(pinned, rest, 'repository')
     assert.deepEqual(
-      built.map((row) => (row.type === 'header' ? `#${row.label}(${row.count})` : row.item.id)),
-      ['#Pinned(1)', 'p', '#acme/app(1)', 'a', '#acme/tools(1)', 'b'],
+      built.map((row) => (row.type === 'header' ? `#${row.label}(${row.count})` : row.key)),
+      ['#Pinned(1)', 'pinned:p', '#acme/app(1)', 'repository:acme/app:a', '#acme/tools(1)', 'repository:acme/tools:b'],
     )
   })
 
@@ -346,7 +350,7 @@ describe('collapseRows', () => {
   )
 
   const labelled = (list: ReturnType<typeof collapseRows>) =>
-    list.map((row) => (row.type === 'header' ? `#${row.label}` : row.item.id))
+    list.map((row) => (row.type === 'header' ? `#${row.label}` : row.type === 'item' ? row.item.id : row.key))
 
   it('leaves the rows untouched when nothing is collapsed', () => {
     assert.equal(collapseRows(built, new Set()), built)
@@ -391,5 +395,139 @@ describe('groupKeysOf', () => {
   it('is empty for a flat list, so there is nothing to fold', () => {
     const flat = buildRows([], [item({ id: 'x' }), item({ id: 'y' })], 'none')
     assert.deepEqual(groupKeysOf(flat), [])
+  })
+})
+
+/** A loaded row that is layer `position` of stack S. */
+function layer(id: string, position: number, overrides: Partial<SearchItem> = {}): SearchItem {
+  return item({
+    id,
+    title: `Layer ${position}`,
+    stack: { id: 'S', number: 9, size: 4, baseRefName: 'main', position },
+    ...overrides,
+  })
+}
+
+/** What each entry or row is, in order: an id, or `[layer ids]` for a stack. */
+function shapeOf(listed: Array<{ type: string; item?: SearchItem; stack?: { layers: SearchItem[] } }>) {
+  return listed.map((row) =>
+    row.type === 'stack' ? `[${row.stack!.layers.map((entry) => entry.id).join(' ')}]` : row.item!.id,
+  )
+}
+
+describe('foldStacks', () => {
+  it('folds layers from anywhere in the list into one stack, in the slot of the first', () => {
+    const folded = foldStacks([], [item({ id: 'a' }), layer('l3', 3), item({ id: 'b' }), layer('l1', 1)])
+
+    assert.deepEqual(shapeOf(folded.rest), ['a', '[l1 l3]', 'b'])
+    const stack = folded.rest[1]
+    assert.equal(stack.type === 'stack' && stack.stack.lead.id, 'l1')
+  })
+
+  it('leaves a stack with one loaded layer as a plain row', () => {
+    assert.deepEqual(shapeOf(foldStacks([], [item({ id: 'a' }), layer('l2', 2)]).rest), ['a', 'l2'])
+  })
+
+  it('pins a stack when any loaded layer is pinned, at its earliest pin', () => {
+    const folded = foldStacks([item({ id: 'p' }), layer('l2', 2)], [item({ id: 'a' }), layer('l1', 1)])
+
+    assert.deepEqual(shapeOf(folded.pinned), ['p', '[l1 l2]'])
+    assert.deepEqual(shapeOf(folded.rest), ['a'])
+  })
+
+  it('puts a pull request in a stack once, however often it is listed', () => {
+    const folded = foldStacks([], [layer('l1', 1), layer('l1', 1), layer('l2', 2)])
+
+    assert.deepEqual(shapeOf(folded.rest), ['[l1 l2]'])
+  })
+
+  it('folds only the rows the filter leaves', () => {
+    const layers = [layer('l1', 1, { title: 'Cache the search' }), layer('l2', 2, { title: 'Draw rows' })]
+
+    assert.deepEqual(shapeOf(foldStacks([], filterItems(layers, 'cache')).rest), ['l1'])
+  })
+})
+
+describe('expandStacks', () => {
+  const whole: Stack = {
+    id: 'S',
+    number: 9,
+    size: 4,
+    baseRefName: 'main',
+    fetchedAt: 1,
+    layers: [1, 2, 3, 4].map((position) => ({
+      id: `l${position}`,
+      number: 100 + position,
+      title: `Layer ${position}`,
+      url: `https://github.com/acme/app/pull/${100 + position}`,
+      repository: 'acme/app',
+      state: 'open' as const,
+      position,
+    })),
+  }
+  const stackRow = (groupKey: string | null): ListRow => ({
+    type: 'stack',
+    key: groupKey ? `${groupKey}:stack:S` : 'stack:S',
+    groupKey,
+    stack: { id: 'S', lead: layer('l1', 1), layers: [layer('l1', 1), layer('l3', 3)] },
+  })
+  const built = [stackRow(null)]
+  const expanded = new Set(['S'])
+  const labelled = (expandedRows: ReturnType<typeof expandStacks>) =>
+    expandedRows.map((row) => {
+      const last = 'nesting' in row && row.nesting?.isLast ? '.' : ''
+      if (row.type === 'item') return `item ${row.item.id}${last}`
+      if (row.type === 'layer') return `layer ${row.layer.id}${last}`
+      if (row.type === 'stack-status') return `${row.status}${last}`
+      return row.type
+    })
+
+  it('lists the layers top first, with full rows for loaded layers and compact rows for the rest', () => {
+    const opened = expandStacks(built, expanded, new Map([['S', { stack: whole, isLoading: false, isFailed: false }]]))
+
+    assert.deepEqual(labelled(opened), ['stack', 'layer l4', 'item l3', 'layer l2', 'item l1.'])
+  })
+
+  it('shows the loaded layers and a loading row until the stack arrives', () => {
+    assert.deepEqual(labelled(expandStacks(built, expanded, new Map())), [
+      'stack',
+      'item l3',
+      'item l1',
+      'loading.',
+    ])
+  })
+
+  it('keeps the loaded layers and adds a failure row when the stack fails to load', () => {
+    const views = new Map([['S', { stack: undefined, isLoading: false, isFailed: true }]])
+
+    assert.deepEqual(labelled(expandStacks(built, expanded, views)), [
+      'stack',
+      'item l3',
+      'item l1',
+      'failed.',
+    ])
+  })
+
+  it('still lists a loaded layer an older copy of the stack is missing', () => {
+    const stale = { ...whole, layers: whole.layers.filter((entry) => entry.id !== 'l3') }
+    const views = new Map([['S', { stack: stale, isLoading: false, isFailed: false }]])
+
+    assert.deepEqual(labelled(expandStacks(built, expanded, views)), [
+      'stack',
+      'layer l4',
+      'item l3',
+      'layer l2',
+      'item l1.',
+    ])
+  })
+
+  it('leaves the rows alone when no stack is expanded', () => {
+    assert.equal(expandStacks(built, new Set(), new Map()), built)
+  })
+
+  it('folds an expanded stack away with its group', () => {
+    const opened = expandStacks([stackRow('repository:acme/app')], expanded, new Map())
+
+    assert.deepEqual(labelled(collapseRows(opened, new Set(['repository:acme/app']))), [])
   })
 })
