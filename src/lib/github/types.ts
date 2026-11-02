@@ -83,6 +83,32 @@ export interface StackInfo extends StackMembership {
   entries: StackEntry[]
 }
 
+/** One layer of a whole stack. */
+export interface StackLayer {
+  /** Pull request node id. */
+  id: string
+  number: number
+  title: string
+  url: string
+  repository: string
+  state: ItemState
+  /** 1 is the layer closest to the base branch. */
+  position: number
+}
+
+/** A whole stack, read by id when the reader goes to open one. */
+export interface Stack {
+  /** `PullRequestStack` node id. */
+  id: string
+  number: number
+  size: number
+  baseRefName: string
+  /** Every layer the token can read, from the base branch up. */
+  layers: StackLayer[]
+  /** When the request that read it started. A newer read replaces an older one. */
+  fetchedAt: number
+}
+
 /**
  * How far a row has got in the second of the two requests that build it.
  *

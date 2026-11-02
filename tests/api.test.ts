@@ -5,8 +5,10 @@ import {
   ENRICH_QUERY,
   GitHubApiError,
   SEARCH_QUERY,
+  STACKS_QUERY,
   enrichItems,
   fetchItem,
+  fetchStacks,
   resetPreviewSupport,
   searchIssues,
 } from '../src/lib/github/api.ts'
@@ -633,6 +635,103 @@ describe('stacked pull requests', () => {
       () => searchIssues('token', { q: 'is:pr', first: 30 }),
       /Something else went wrong/,
     )
+  })
+
+  const stackNode = (entries: Record<string, unknown> = {}) => ({
+    __typename: 'PullRequestStack',
+    id: 'STACK_7',
+    number: 7,
+    size: 3,
+    baseRefName: 'main',
+    entries: {
+      pageInfo: { hasNextPage: false, endCursor: null },
+      nodes: stackedPullRequestNode.stack.entries.nodes,
+      ...entries,
+    },
+  })
+
+  /** Answers each request with the next response, and records what was sent. */
+  function stubResponses(...responses: Array<() => Response>) {
+    const sent: Array<{ query: string; variables: Record<string, unknown> }> = []
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)))
+      return responses[sent.length - 1]()
+    }) as unknown as typeof fetch
+    return sent
+  }
+
+  const json = (body: unknown) => () =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+  it('reads whole stacks by id, from the base branch up, without review state', async () => {
+    const sent = stubResponses(json(nodesPayload([stackNode()])))
+
+    const { stacks, failedIds } = await fetchStacks('token', ['STACK_7'])
+
+    assert.deepEqual(sent[0].variables, { ids: ['STACK_7'] })
+    assert.ok(!STACKS_QUERY.includes('reviewDecision'))
+    assert.deepEqual(failedIds, [])
+    assert.equal(stacks[0].size, 3)
+    assert.deepEqual(
+      stacks[0].layers.map((layer) => [layer.position, layer.number, layer.state]),
+      [
+        [1, 34, 'queued'],
+        [2, 35, 'draft'],
+      ],
+    )
+    assert.equal(typeof stacks[0].fetchedAt, 'number')
+  })
+
+  it('reads every page of layers in a deep stack', async () => {
+    const [first, second] = stackedPullRequestNode.stack.entries.nodes
+    const sent = stubResponses(
+      json(
+        nodesPayload([
+          stackNode({ pageInfo: { hasNextPage: true, endCursor: 'PAGE_1' }, nodes: [second] }),
+        ]),
+      ),
+      json({
+        data: {
+          node: {
+            __typename: 'PullRequestStack',
+            entries: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [first] },
+          },
+        },
+      }),
+    )
+
+    const { stacks } = await fetchStacks('token', ['STACK_7'])
+
+    assert.deepEqual(sent[1].variables, { id: 'STACK_7', after: 'PAGE_1' })
+    assert.deepEqual(
+      stacks[0].layers.map((layer) => layer.position),
+      [1, 2],
+    )
+  })
+
+  it('reports a stack as failed when a later page of layers fails', async () => {
+    stubResponses(
+      json(nodesPayload([stackNode({ pageInfo: { hasNextPage: true, endCursor: 'PAGE_1' } })])),
+      () => new Response('<html>502</html>', { status: 502 }),
+    )
+
+    const result = await fetchStacks('token', ['STACK_7'])
+
+    assert.deepEqual(result.stacks, [])
+    assert.deepEqual(result.failedIds, ['STACK_7'])
+    assert.match(result.error!, /took too long/)
+  })
+
+  it('reports a stack the token cannot read as failed', async () => {
+    stubResponses(json(nodesPayload([null, stackNode()])))
+
+    const result = await fetchStacks('token', ['STACK_hidden', 'STACK_7'])
+
+    assert.deepEqual(result.stacks.map((stack) => stack.id), ['STACK_7'])
+    assert.deepEqual(result.failedIds, ['STACK_hidden'])
   })
 })
 

@@ -9,8 +9,10 @@ import type {
   ReviewDecision,
   SearchItem,
   SearchPage,
+  Stack,
   StackEntry,
   StackInfo,
+  StackLayer,
 } from './types'
 
 const GITHUB_GRAPHQL_ENDPOINT = 'https://api.github.com/graphql'
@@ -334,6 +336,65 @@ export const itemQuery = (withPreview = true) => /* GraphQL */ `
 
 export const ITEM_QUERY = itemQuery()
 
+/** How many layers one request reads. Deeper stacks page through the rest. */
+const STACK_PAGE = 100
+
+/** `reviewDecision` is left out: it makes this request three to five times slower. */
+const STACK_ENTRY_FIELDS = /* GraphQL */ `
+  totalCount
+  pageInfo {
+    hasNextPage
+    endCursor
+  }
+  nodes {
+    position
+    pullRequest {
+      id
+      number
+      title
+      url
+      state
+      isDraft
+      isInMergeQueue
+      repository {
+        nameWithOwner
+      }
+    }
+  }
+`
+
+/** Reads whole stacks by node id. No field looks a stack up by number. */
+export const STACKS_QUERY = /* GraphQL */ `
+  query SidebarStacks($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequestStack {
+        id
+        number
+        size
+        baseRefName
+        entries(first: ${STACK_PAGE}) {
+          ${STACK_ENTRY_FIELDS}
+        }
+      }
+    }
+  }
+`
+
+/** Reads the next page of layers of one stack. */
+export const STACK_ENTRIES_QUERY = /* GraphQL */ `
+  query SidebarStackEntries($id: ID!, $after: String!) {
+    node(id: $id) {
+      __typename
+      ... on PullRequestStack {
+        entries(first: ${STACK_PAGE}, after: $after) {
+          ${STACK_ENTRY_FIELDS}
+        }
+      }
+    }
+  }
+`
+
 /**
  * One entry in a commit's check rollup: either a check run from the Checks
  * API or a commit status from the older one. They name themselves and their
@@ -426,6 +487,30 @@ interface ItemResponse {
   data?: {
     repository: { issueOrPullRequest: GraphQLNode | null } | null
   } | null
+  errors?: GraphQLError[]
+}
+
+interface StackEntriesNode {
+  pageInfo: { hasNextPage: boolean; endCursor: string | null }
+  nodes: Array<StackEntryNode | null> | null
+}
+
+interface StackNode {
+  __typename: 'PullRequestStack'
+  id: string
+  number: number
+  size: number
+  baseRefName: string
+  entries: StackEntriesNode | null
+}
+
+interface StacksResponse {
+  data?: { nodes: Array<StackNode | Record<string, never> | null> | null } | null
+  errors?: GraphQLError[]
+}
+
+interface StackEntriesResponse {
+  data?: { node: Pick<StackNode, '__typename' | 'entries'> | null } | null
   errors?: GraphQLError[]
 }
 
@@ -824,7 +909,7 @@ export interface GraphQLPayload {
 }
 
 /** Which of the panel's questions a request was asking. */
-export type ApiOperation = 'search' | 'enrich' | 'item'
+export type ApiOperation = 'search' | 'enrich' | 'item' | 'stacks'
 
 /**
  * One request, as it went.
@@ -1158,6 +1243,125 @@ export interface ItemRef {
   /** `owner/name`, exactly as it is stored on a row. */
   repository: string
   number: number
+}
+
+export interface StacksResult {
+  stacks: Stack[]
+  /** Stacks GitHub would not answer for in full. Nothing partial is returned. */
+  failedIds: string[]
+  /** Why, in one line, where anything was left out. */
+  error: string | null
+}
+
+function isStackNode(node: StackNode | Record<string, never> | null): node is StackNode {
+  return node !== null && '__typename' in node && node.__typename === 'PullRequestStack'
+}
+
+function toLayers(entries: ReadonlyArray<StackEntryNode | null>): StackLayer[] {
+  const layers: StackLayer[] = []
+  for (const entry of entries) {
+    const pullRequest = entry?.pullRequest
+    if (!pullRequest) continue
+    layers.push({
+      id: pullRequest.id,
+      number: pullRequest.number,
+      title: pullRequest.title,
+      url: pullRequest.url,
+      repository: pullRequest.repository.nameWithOwner,
+      state: toPullRequestState(pullRequest),
+      position: entry.position,
+    })
+  }
+  return layers.toSorted((a, b) => a.position - b.position)
+}
+
+/** Reads the layers past the first page of one stack, a page at a time. */
+async function readMoreEntries(
+  token: string,
+  id: string,
+  after: string,
+): Promise<Array<StackEntryNode | null>> {
+  const entries: Array<StackEntryNode | null> = []
+  let cursor: string | null = after
+  while (cursor) {
+    // Each page needs the cursor from the one before it.
+    // eslint-disable-next-line no-await-in-loop
+    const body: StackEntriesResponse = await post<StackEntriesResponse>(
+      token,
+      { query: STACK_ENTRIES_QUERY, variables: { id, after: cursor } },
+      { operation: 'stacks', detail: `${id} after ${cursor}` },
+    )
+    const page = body.data?.node?.entries
+    if (!page) throw new GitHubApiError(`GitHub did not return every layer of stack ${id}.`)
+    entries.push(...(page.nodes ?? []))
+    cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null
+  }
+  return entries
+}
+
+/**
+ * Reads whole stacks by node id, every layer of each.
+ *
+ * Throws only where the first request failed. A stack the token cannot read,
+ * or one whose later page of layers fails, comes back in `failedIds`, so a
+ * caller never stores half a stack. Each stack carries the time this call
+ * started, so a slower, older read cannot replace a newer one.
+ */
+export async function fetchStacks(token: string, ids: readonly string[]): Promise<StacksResult> {
+  if (ids.length === 0) return { stacks: [], failedIds: [], error: null }
+
+  const fetchedAt = Date.now()
+  const body = await post<StacksResponse>(
+    token,
+    { query: STACKS_QUERY, variables: { ids: [...ids] } },
+    { operation: 'stacks', detail: `${ids.length} stacks` },
+  )
+
+  const stacks: Stack[] = []
+  const failedIds: string[] = []
+  const errors = body.errors?.length ? [describeGraphQLErrors(body.errors)] : []
+
+  for (const node of body.data?.nodes ?? []) {
+    if (!isStackNode(node)) continue
+    if (!node.entries) {
+      failedIds.push(node.id)
+      continue
+    }
+
+    const entries = [...(node.entries.nodes ?? [])]
+    const { hasNextPage, endCursor } = node.entries.pageInfo
+    if (hasNextPage && endCursor) {
+      try {
+        // One stack at a time: GitHub queues a token's requests either way.
+        // eslint-disable-next-line no-await-in-loop
+        entries.push(...(await readMoreEntries(token, node.id, endCursor)))
+      } catch (error) {
+        failedIds.push(node.id)
+        errors.push(error instanceof Error ? error.message : String(error))
+        continue
+      }
+    }
+
+    stacks.push({
+      id: node.id,
+      number: node.number,
+      size: node.size,
+      baseRefName: node.baseRefName,
+      layers: toLayers(entries),
+      fetchedAt,
+    })
+  }
+
+  // `nodes(ids:)` answers null for a stack this token cannot read.
+  const answered = new Set([...stacks.map((stack) => stack.id), ...failedIds])
+  for (const id of ids) if (!answered.has(id)) failedIds.push(id)
+
+  return {
+    stacks,
+    failedIds,
+    error:
+      errors[0] ?? (failedIds.length > 0 ? 'GitHub did not answer for every stack.' : null),
+  }
 }
 
 /**
