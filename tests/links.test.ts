@@ -6,6 +6,7 @@ import type { SearchItem, StackInfo } from '../src/lib/github/types.ts'
 
 function stack(overrides: Partial<StackInfo> = {}): StackInfo {
   return {
+    id: 'STACK_4',
     number: 4,
     size: 3,
     baseRefName: 'main',

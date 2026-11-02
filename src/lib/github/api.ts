@@ -60,11 +60,28 @@ let previewFieldsSupported = true
 /** Opts into every preview the query asks for; ordinary JSON either way. */
 const PREVIEW_ACCEPT = 'application/vnd.github.merge-info-preview+json'
 
+/**
+ * Where a pull request sits in its stack, read with the search. Measured on
+ * `org:` searches at no cost to a thirty-row page.
+ */
+const STACK_MEMBERSHIP_FIELDS = /* GraphQL */ `
+  stackEntry {
+    position
+  }
+  stack {
+    id
+    number
+    size
+    baseRefName
+  }
+`
+
 const PREVIEW_FIELDS = /* GraphQL */ `
   stackEntry {
     position
   }
   stack {
+    id
     number
     size
     baseRefName
@@ -140,7 +157,7 @@ const issueFields = /* GraphQL */ `
  * one that knows about conflicts — so the mark that matters most is on screen
  * with the first request rather than the second.
  */
-const PULL_REQUEST_PRIMARY_FIELDS = /* GraphQL */ `
+const pullRequestPrimaryFields = (withPreview: boolean) => /* GraphQL */ `
   id
   number
   title
@@ -178,6 +195,7 @@ const PULL_REQUEST_PRIMARY_FIELDS = /* GraphQL */ `
       avatarUrl(size: ${AVATAR_SIZE})
     }
   }
+  ${withPreview ? STACK_MEMBERSHIP_FIELDS : ''}
 `
 
 /**
@@ -225,7 +243,7 @@ const itemFields = (withPreview: boolean) => /* GraphQL */ `
   ${issueFields}
 
   fragment PullRequestFields on PullRequest {
-    ${PULL_REQUEST_PRIMARY_FIELDS}
+    ${pullRequestPrimaryFields(withPreview)}
     ${pullRequestCostlyFields(withPreview)}
   }
 `
@@ -248,11 +266,11 @@ const itemFields = (withPreview: boolean) => /* GraphQL */ `
  * except that a space between `repo:`, `org:`, or `user:` qualifiers now means
  * AND where it used to mean OR.
  */
-export const SEARCH_QUERY = /* GraphQL */ `
+export const searchQuery = (withPreview = true) => /* GraphQL */ `
   ${issueFields}
 
   fragment PullRequestPrimaryFields on PullRequest {
-    ${PULL_REQUEST_PRIMARY_FIELDS}
+    ${pullRequestPrimaryFields(withPreview)}
   }
 
   query SidebarSearch($q: String!, $first: Int!, $after: String) {
@@ -270,6 +288,8 @@ export const SEARCH_QUERY = /* GraphQL */ `
     }
   }
 `
+
+export const SEARCH_QUERY = searchQuery()
 
 /**
  * Reads the costly half of rows the search has already listed, by node id.
@@ -387,10 +407,12 @@ interface GraphQLNode {
   } | null
   stackEntry?: { position: number } | null
   stack?: {
+    id: string
     number: number
     size: number
     baseRefName: string
-    entries: { totalCount: number; nodes: Array<StackEntryNode | null> | null } | null
+    /** Only the second request reads these. */
+    entries?: { totalCount: number; nodes: Array<StackEntryNode | null> | null } | null
   } | null
 }
 
@@ -536,6 +558,7 @@ function toStack(node: Pick<GraphQLNode, 'stack' | 'stackEntry'>): StackInfo | n
   }
 
   return {
+    id: stack.id,
     number: stack.number,
     size: stack.size,
     baseRefName: stack.baseRefName,
@@ -984,20 +1007,48 @@ async function postWithPreviewFallback<T extends GraphQLPayload>(
   }
 }
 
-/** Test hook: forgets that a host rejected the preview fields. */
+/**
+ * Searches that timed out while asking for stack membership. The worker asks
+ * them without it from then on, so they lose membership instead of the list.
+ */
+const searchesWithoutMembership = new Set<string>()
+
+/** Test hook: forgets rejected preview fields and searches that timed out. */
 export function resetPreviewSupport(): void {
   previewFieldsSupported = true
+  searchesWithoutMembership.clear()
+}
+
+/** A 502 or 504 is the proxy in front of GraphQL giving up at ten seconds. */
+function isTimeout(error: unknown): boolean {
+  return error instanceof GitHubApiError && (error.status === 502 || error.status === 504)
+}
+
+async function postSearch(
+  token: string,
+  variables: { q: string; first: number; after: string | null },
+  call: { operation: ApiOperation; detail: string },
+): Promise<GraphQLResponse> {
+  if (searchesWithoutMembership.has(variables.q)) {
+    return post<GraphQLResponse>(token, { query: searchQuery(false), variables }, call)
+  }
+  try {
+    return await postWithPreviewFallback<GraphQLResponse>(token, searchQuery, variables, call)
+  } catch (error) {
+    // Once the preview is dropped, the request that timed out had no membership to drop.
+    if (!isTimeout(error) || !previewFieldsSupported) throw error
+    searchesWithoutMembership.add(variables.q)
+    return post<GraphQLResponse>(token, { query: searchQuery(false), variables }, call)
+  }
 }
 
 export async function searchIssues(
   token: string,
   { q, first, after }: SearchParams,
 ): Promise<SearchPage> {
-  // No preview fallback: the search no longer asks for a preview field. The
-  // costly half of a row, which is where they all live, is read separately.
-  const body = await post<GraphQLResponse>(
+  const body = await postSearch(
     token,
-    { query: SEARCH_QUERY, variables: { q, first, after: after ?? null } },
+    { q, first, after: after ?? null },
     { operation: 'search', detail: q },
   )
   if (!body.data) {

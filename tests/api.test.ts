@@ -125,6 +125,7 @@ const pullRequestNode = {
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  resetPreviewSupport()
 })
 
 describe('searchIssues', () => {
@@ -390,6 +391,7 @@ const stackedPullRequestNode = {
   number: 35,
   stackEntry: { position: 2 },
   stack: {
+    id: 'STACK_7',
     number: 7,
     size: 3,
     baseRefName: 'main',
@@ -438,12 +440,27 @@ describe('stacked pull requests', () => {
     resetPreviewSupport()
   })
 
-  it('asks GitHub for stack membership, in the second request', () => {
-    assert.match(ENRICH_QUERY, /stackEntry\s*\{\s*position/)
-    assert.match(ENRICH_QUERY, /stack\s*\{[\s\S]*baseRefName/)
-    // The search is what has to stay under GitHub's time limit, and a stack
-    // is one of the fields that put it over.
-    assert.ok(!SEARCH_QUERY.includes('stackEntry'))
+  it('asks for stack membership with the search, and the layers in the second request', () => {
+    assert.match(SEARCH_QUERY, /stackEntry\s*\{\s*position/)
+    assert.match(SEARCH_QUERY, /stack\s*\{\s*id\s+number\s+size\s+baseRefName\s*\}/)
+    assert.ok(!SEARCH_QUERY.includes('entries('))
+    assert.match(ENRICH_QUERY, /entries\(first:/)
+  })
+
+  it('reports where a searched row sits in its stack before the layers arrive', async () => {
+    const { entries: _entries, ...membership } = stackedPullRequestNode.stack
+    stubFetch(searchPayload([{ ...stackedPullRequestNode, stack: membership }]))
+
+    const page = await searchIssues('token', { q: 'is:pr', first: 30 })
+
+    assert.deepEqual(page.items[0].stack, {
+      id: 'STACK_7',
+      number: 7,
+      size: 3,
+      baseRefName: 'main',
+      position: 2,
+      entries: [],
+    })
   })
 
   it('reports where a row sits in its stack', async () => {
@@ -453,6 +470,7 @@ describe('stacked pull requests', () => {
     const { stack } = enrichments[0]
 
     assert.ok(stack)
+    assert.equal(stack.id, 'STACK_7')
     assert.equal(stack.number, 7)
     assert.equal(stack.size, 3)
     assert.equal(stack.position, 2)
@@ -516,6 +534,67 @@ describe('stacked pull requests', () => {
     await enrichItems('token', ['PR_1'])
     assert.equal(sent.length, 3)
     assert.ok(!sent[2].includes('stackEntry'))
+  })
+
+  /** Answers a query that asks for membership with `refusal`, and lists rows otherwise. */
+  function stubMembership(refusal: () => Response) {
+    const sent: string[] = []
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { query: string }
+      sent.push(body.query)
+      if (body.query.includes('stackEntry')) return refusal()
+      return new Response(JSON.stringify(searchPayload([pullRequestNode])), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+    return sent
+  }
+
+  it('searches again without the preview fields when a host rejects them', async () => {
+    const sent = stubMembership(
+      () =>
+        new Response(
+          JSON.stringify({
+            errors: [{ message: "Field 'stackEntry' doesn't exist on type 'PullRequest'" }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    )
+
+    const page = await searchIssues('token', { q: 'is:pr', first: 30 })
+
+    assert.equal(page.items.length, 1)
+    assert.equal(page.items[0].stack, null)
+    assert.equal(sent.length, 2)
+    assert.ok(!sent[1].includes('stackEntry'))
+  })
+
+  it('searches again without membership when GitHub runs out of time', async () => {
+    const sent = stubMembership(() => new Response('<html>504</html>', { status: 504 }))
+
+    const page = await searchIssues('token', { q: 'org:acme', first: 30 })
+
+    assert.equal(page.items.length, 1)
+    assert.equal(sent.length, 2)
+    assert.ok(!sent[1].includes('stackEntry'))
+
+    // The next poll of that query asks without it, and other queries still ask.
+    await searchIssues('token', { q: 'org:acme', first: 30, after: 'CURSOR' })
+    assert.equal(sent.length, 3)
+    assert.ok(!sent[2].includes('stackEntry'))
+
+    await searchIssues('token', { q: 'repo:acme/app', first: 30 })
+    assert.ok(sent[3].includes('stackEntry'))
+  })
+
+  it('reports a timeout when the search without membership times out too', async () => {
+    stubFetch('<html>502 Bad Gateway</html>' as unknown as object, { status: 502 })
+
+    await assert.rejects(
+      () => searchIssues('token', { q: 'org:acme', first: 30 }),
+      /took too long/,
+    )
   })
 
   it('still surfaces unrelated GraphQL errors', async () => {

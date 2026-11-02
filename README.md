@@ -184,11 +184,12 @@ already have a mark of their own on the same line.
 A row arrives in two halves.
 
 The search lists the rows and everything cheap about them: title, repository,
-author, assignees, labels, comments, the diff size, and whether the branch
-conflicts. That request is what has to be quick, and it is.
+author, assignees, labels, comments, the diff size, whether the branch
+conflicts, and where a pull request sits in its stack. That request is what has
+to be quick, and it is.
 
 The rest — the review decision, the CI rollup and its failing checks, the full
-merge state, and the stack — is read afterwards, five rows at a time, and
+merge state, and the layers of a stack — is read afterwards, five rows at a time, and
 merged field by field into the rows already on screen. Field by field because
 the row may have been refreshed in the seconds it took to answer, and swapping
 the whole row would put the older title back.
@@ -630,6 +631,10 @@ the fields rejects the whole query rather than returning null, which would take
 the list down with it, so the first such failure drops the stack fields and
 every request after it asks the smaller question. Losing the badges is an
 acceptable outcome; losing the list is not.
+
+Membership arrives with the search, so the badge shows with the row. A search
+that times out while asking for it is asked again without it, and that query
+skips membership until the worker restarts.
 
 Only the first 20 layers of a stack are read per row, but `size` comes from
 GitHub, so a deeper stack still reports its real size and says how many layers

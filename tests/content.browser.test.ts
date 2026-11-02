@@ -111,6 +111,7 @@ const items = Array.from({ length: 40 }, (_, index) => ({
   // its own, so the list has to cope with both.
   stack: index === 1
     ? {
+        id: 'STACK_4',
         number: 4,
         size: 3,
         baseRefName: 'main',

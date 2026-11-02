@@ -60,18 +60,26 @@ export interface StackEntry {
 }
 
 /**
- * A pull request's membership of a stack: a chain of pull requests where each
- * one targets the branch of the pull request below it.
+ * Where a pull request sits in its stack: a chain of pull requests where each
+ * one targets the branch of the pull request below it. Read with the search.
  */
-export interface StackInfo {
+export interface StackMembership {
+  /** `PullRequestStack` node id. Keys the stack everywhere. */
+  id: string
   /** Identifies the stack within its repository. */
   number: number
   size: number
   /** The branch the whole stack lands on, usually the default branch. */
   baseRefName: string
-  /** This pull request's own position, counting from the base branch. */
+  /** 1 is the layer closest to the base branch. */
   position: number
-  /** Ordered from the base branch up. Can be shorter than `size`. */
+}
+
+export interface StackInfo extends StackMembership {
+  /**
+   * Ordered from the base branch up. Empty until the second request lands, and
+   * can be shorter than `size`.
+   */
   entries: StackEntry[]
 }
 
