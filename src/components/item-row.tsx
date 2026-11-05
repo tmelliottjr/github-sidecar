@@ -756,7 +756,7 @@ function QuickAction({
  * that would otherwise sit before the login, so it reads as one more mark in
  * the meta line rather than an extra element.
  */
-function Author({ login, avatarUrl }: { login: string; avatarUrl: string | null }) {
+export function Author({ login, avatarUrl }: { login: string; avatarUrl: string | null }) {
   // A blocked or missing avatar must not leave a torn image in the row, so it
   // falls back to the separator the handle used to carry on its own.
   const [broken, setBroken] = useState(false)

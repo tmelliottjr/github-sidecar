@@ -1790,7 +1790,8 @@ describe('stacks folded into one row', { concurrency: false, skip }, () => {
       first[2] = layer(first[2], 1, 'Groundwork layer')
       first[6] = layer(first[6], 3, 'Third layer')
       const second = scope.__items.slice(12, 20)
-      second[3] = layer(second[3], 2, 'Second layer')
+      // Layer 2 has its own author, so the stack row has two to show.
+      second[3] = { ...layer(second[3], 2, 'Second layer'), authorLogin: 'hubot' }
       scope.__searchPages = {
         '': { items: first, endCursor: 'PAGE_2', hasNextPage: true },
         PAGE_2: { items: second, endCursor: null, hasNextPage: false },
@@ -1878,6 +1879,27 @@ describe('stacks folded into one row', { concurrency: false, skip }, () => {
       () => document.getElementById('github-sidecar-root')!.shadowRoot!.querySelector('footer')!.textContent,
     )
     assert.match(footer!, /20 of 400/)
+  })
+
+  it('shows every author of the loaded layers on the stack row, base first', async () => {
+    const authors = await stackPage.evaluate(() => {
+      const faces = document
+        .getElementById('github-sidecar-root')!
+        .shadowRoot!.querySelector('[data-stack-row] [data-stack-authors]')!
+      const [first, second] = [...faces.firstElementChild!.children] as HTMLElement[]
+      return {
+        names: faces.querySelector('.sr-only')!.textContent,
+        first: first.tagName,
+        second: second.tagName,
+        overlap: first.getBoundingClientRect().right - second.getBoundingClientRect().left,
+      }
+    })
+
+    assert.equal(authors.names, 'octocat, hubot')
+    // octocat has no avatar on any loaded layer, so a placeholder stands in.
+    assert.equal(authors.first, 'SPAN')
+    assert.equal(authors.second, 'IMG')
+    assert.ok(authors.overlap > 0, `expected the faces to overlap, saw ${authors.overlap}px`)
   })
 
   /** Where focus is: a stack row, a layer by position, or something else. */

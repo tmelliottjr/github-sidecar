@@ -1,12 +1,13 @@
-import { memo, useCallback } from 'react'
+import { memo, useCallback, useState } from 'react'
 import {
   ChevronDownIcon,
   CopyIcon,
   MarkdownIcon,
+  PersonIcon,
   StackIcon,
 } from '@primer/octicons-react'
 
-import { SURFACES } from '@/components/item-row'
+import { Author, SURFACES } from '@/components/item-row'
 import {
   CHECK_META,
   MERGE_META,
@@ -29,7 +30,7 @@ import { Hint } from '@/components/ui/tooltip'
 import { copyText } from '@/lib/clipboard'
 import type { CheckState, ReviewDecision, SearchItem, Stack } from '@/lib/github/types'
 import { stackMarkdown, stackUrls } from '@/lib/links'
-import type { FoldedStack, Nesting } from '@/lib/list-view'
+import { authorsOf, type FoldedStack, type Nesting } from '@/lib/list-view'
 import { cn, relativeTime } from '@/lib/utils'
 
 /** Draws the lift shadow on all sides of a stack card except where the next part of it joins. */
@@ -133,6 +134,69 @@ function CombinedMarks({ marks, showFailingChecks }: { marks: Marks; showFailing
   )
 }
 
+const MAX_AUTHOR_FACES = 3
+
+function Face({
+  avatarUrl,
+  className,
+  style,
+}: {
+  avatarUrl: string | null
+  className?: string
+  style?: React.CSSProperties
+}) {
+  const [broken, setBroken] = useState(false)
+  // The ring is the row surface, so overlapping faces read as separate discs.
+  // The outline keeps a face visible on a hovered row, where bg-muted matches the surface.
+  const disc = cn(
+    'relative size-3.5 shrink-0 rounded-full bg-muted ring-2 ring-[color:var(--row-surface)] outline-1 -outline-offset-1 outline-border/60',
+    className,
+  )
+
+  return avatarUrl && !broken ? (
+    <img
+      src={avatarUrl}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onError={() => setBroken(true)}
+      className={disc}
+      style={style}
+    />
+  ) : (
+    <span aria-hidden className={cn(disc, 'flex items-center justify-center text-muted-foreground')} style={style}>
+      <PersonIcon className="size-2.5" />
+    </span>
+  )
+}
+
+/** Several authors as overlapping faces, named on hover. */
+function AuthorFaces({ authors }: { authors: Array<{ login: string; avatarUrl: string | null }> }) {
+  const shown = authors.slice(0, MAX_AUTHOR_FACES)
+  const hidden = authors.length - shown.length
+  const label = authors.map((author) => author.login).join(', ')
+
+  return (
+    <Hint label={label}>
+      <span data-stack-authors="" className="flex shrink-0 items-center gap-1">
+        <span className="isolate flex items-center">
+          {shown.map((author, index) => (
+            // The first face sits in front, as in Primer's AvatarStack.
+            <Face
+              key={author.login}
+              avatarUrl={author.avatarUrl}
+              className={cn(index > 0 && '-ml-1')}
+              style={{ zIndex: shown.length - index }}
+            />
+          ))}
+        </span>
+        {hidden > 0 && <span className="text-[11px] font-semibold tabular-nums">+{hidden}</span>}
+        <span className="sr-only">{label}</span>
+      </span>
+    </Hint>
+  )
+}
+
 interface Props {
   stack: FoldedStack
   isExpanded: boolean
@@ -168,6 +232,7 @@ function StackRowImpl({
   const membership = lead.stack
   const size = membership?.size ?? layers.length
   const marks = sumMarks(layers, showMergeState)
+  const authors = authorsOf(layers)
   const awaitingMarks = layers.some((layer) => layer.enrichment === 'pending')
   const updatedAt = layers.reduce(
     (latest, layer) => (layer.updatedAt > latest ? layer.updatedAt : latest),
@@ -244,6 +309,11 @@ function StackRowImpl({
                 <span className="flex min-w-0 items-center gap-1.5 text-[12px] leading-4 text-muted-foreground">
                   <span className="truncate">{lead.repository}</span>
                   <span className="shrink-0 tabular-nums">Stack #{membership?.number}</span>
+                  {authors.length === 1 ? (
+                    <Author login={authors[0].login} avatarUrl={authors[0].avatarUrl} />
+                  ) : (
+                    authors.length > 1 && <AuthorFaces authors={authors} />
+                  )}
                 </span>
               </span>
             </span>

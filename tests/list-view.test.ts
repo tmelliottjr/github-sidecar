@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import {
   UNASSIGNED,
   applyQuickFilter,
+  authorsOf,
   buildRows,
   collapseRows,
   expandStacks,
@@ -445,6 +446,22 @@ describe('foldStacks', () => {
     const layers = [layer('l1', 1, { title: 'Cache the search' }), layer('l2', 2, { title: 'Draw rows' })]
 
     assert.deepEqual(shapeOf(foldStacks([], filterItems(layers, 'cache')).rest), ['l1'])
+  })
+})
+
+describe('authorsOf', () => {
+  it('lists each author once, in row order, with the first avatar any of their rows gives', () => {
+    const authors = authorsOf([
+      item({ id: 'a', authorLogin: 'octocat', authorAvatarUrl: null }),
+      item({ id: 'b', authorLogin: 'hubot', authorAvatarUrl: 'https://avatars/hubot' }),
+      item({ id: 'c', authorLogin: 'octocat', authorAvatarUrl: 'https://avatars/octocat' }),
+      item({ id: 'd', authorLogin: null }),
+    ])
+
+    assert.deepEqual(authors, [
+      { login: 'octocat', avatarUrl: 'https://avatars/octocat' },
+      { login: 'hubot', avatarUrl: 'https://avatars/hubot' },
+    ])
   })
 })
 

@@ -510,6 +510,17 @@ export function foldStacks(
   return folded
 }
 
+/** Each author of the rows once, in row order, with the first avatar any of their rows gives. */
+export function authorsOf(items: readonly SearchItem[]): Array<{ login: string; avatarUrl: string | null }> {
+  const authors = new Map<string, string | null>()
+  for (const item of items) {
+    if (item.authorLogin && !authors.get(item.authorLogin)) {
+      authors.set(item.authorLogin, item.authorAvatarUrl)
+    }
+  }
+  return [...authors].map(([login, avatarUrl]) => ({ login, avatarUrl }))
+}
+
 function leadOf(entry: ListEntry): SearchItem {
   return entry.type === 'item' ? entry.item : entry.stack.lead
 }
