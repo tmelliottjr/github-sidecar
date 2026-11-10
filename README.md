@@ -486,8 +486,10 @@ read while sharing the one filter box.
 The search box sits above the list whenever **Filter and reorder** is on in
 settings; switching it off gives that height back to the rows. The funnel
 beside it narrows the same rows by status and by person: review (needs review,
-approved, changes requested), failing checks, conflicts, behind, draft, author,
-and assignee. Its options come from the loaded rows, and each shows how many
+approved, changes requested), failing checks, conflicts, behind, state (open
+pull request, open issue, draft, queued to merge), author, and assignee. Needs
+review matches only open pull requests that are ready for review, so drafts
+drop out. Its options come from the loaded rows, and each shows how many
 rows it would leave. Choices in one section add rows, so needs review and
 approved shows both. Sections narrow each other, so approved and an author
 shows that author's approved rows. Each section with a choice shows as a token

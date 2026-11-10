@@ -139,6 +139,23 @@ describe('applyQuickFilter', () => {
     assert.deepEqual(ids(applyQuickFilter(waiting, { review: ['REVIEW_REQUIRED'] })), ['open'])
     assert.deepEqual(ids(applyQuickFilter(waiting, { review: ['APPROVED'] })), ['draft-approved'])
   })
+
+  it('tells open pull requests from open issues, drafts, and queued pull requests', () => {
+    const states = [
+      item({ id: 'pr', kind: 'pull-request', state: 'open' }),
+      item({ id: 'issue', kind: 'issue', state: 'open' }),
+      item({ id: 'draft', kind: 'pull-request', state: 'draft' }),
+      item({ id: 'queued', kind: 'pull-request', state: 'queued' }),
+      item({ id: 'merged', kind: 'pull-request', state: 'merged' }),
+    ]
+    assert.deepEqual(ids(applyQuickFilter(states, { state: ['open-pull-request'] })), ['pr'])
+    assert.deepEqual(ids(applyQuickFilter(states, { state: ['open-issue'] })), ['issue'])
+    assert.deepEqual(ids(applyQuickFilter(states, { state: ['queued'] })), ['queued'])
+    assert.deepEqual(
+      ids(applyQuickFilter(states, { state: ['open-pull-request', 'draft'] })),
+      ['pr', 'draft'],
+    )
+  })
 })
 
 describe('quickFilterOptions', () => {
@@ -198,6 +215,20 @@ describe('quickFilterOptions', () => {
     assert.deepEqual(counts(quickFilterOptions(waiting, waiting, {}).review), { REVIEW_REQUIRED: 1 })
     // A list where only drafts need review does not offer it at all.
     assert.deepEqual(quickFilterOptions(waiting.slice(1), waiting.slice(1), {}).review, [])
+  })
+
+  it('offers each state the rows have, in menu order', () => {
+    const states = [
+      item({ id: 'queued', state: 'queued' }),
+      item({ id: 'issue', kind: 'issue', state: 'open' }),
+      item({ id: 'draft', state: 'draft' }),
+      item({ id: 'pr', state: 'open' }),
+      item({ id: 'pr2', state: 'open' }),
+    ]
+    assert.deepEqual(
+      quickFilterOptions(states, states, {}).state.map((option) => [option.value, option.count]),
+      [['open-pull-request', 2], ['open-issue', 1], ['draft', 1], ['queued', 1]],
+    )
   })
 
   it('orders people by row count, with unassigned last, and carries their avatars', () => {

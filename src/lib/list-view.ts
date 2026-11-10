@@ -167,13 +167,29 @@ const STATUS_VALUES: Partial<Record<Facet, readonly string[]>> = {
   review: ['REVIEW_REQUIRED', 'APPROVED', 'CHANGES_REQUESTED'],
   checks: ['failing'],
   merge: ['conflicting', 'behind'],
-  state: ['draft'],
+  state: ['open-pull-request', 'open-issue', 'draft', 'queued'],
 }
 
 const NO_VALUES: readonly string[] = []
 const FAILING: readonly string[] = ['failing']
+const OPEN_PULL_REQUEST: readonly string[] = ['open-pull-request']
+const OPEN_ISSUE: readonly string[] = ['open-issue']
 const DRAFT: readonly string[] = ['draft']
+const QUEUED: readonly string[] = ['queued']
 const NOBODY: readonly string[] = [UNASSIGNED]
+
+function stateValues(item: SearchItem): readonly string[] {
+  switch (item.state) {
+    case 'open':
+      return item.kind === 'issue' ? OPEN_ISSUE : OPEN_PULL_REQUEST
+    case 'draft':
+      return DRAFT
+    case 'queued':
+      return QUEUED
+    default:
+      return NO_VALUES
+  }
+}
 
 function facetValues(item: SearchItem, facet: Facet): readonly string[] {
   switch (facet) {
@@ -189,7 +205,7 @@ function facetValues(item: SearchItem, facet: Facet): readonly string[] {
         ? [item.mergeState]
         : NO_VALUES
     case 'state':
-      return item.state === 'draft' ? DRAFT : NO_VALUES
+      return stateValues(item)
     case 'author':
       return item.authorLogin ? [item.authorLogin] : NO_VALUES
     case 'assignee':

@@ -1,14 +1,8 @@
 import { useMemo, useRef } from 'react'
 import type { Icon } from '@primer/octicons-react'
-import {
-  CheckIcon,
-  GitPullRequestDraftIcon,
-  PeopleIcon,
-  PersonIcon,
-  XIcon,
-} from '@primer/octicons-react'
+import { CheckIcon, PeopleIcon, PersonIcon, XIcon } from '@primer/octicons-react'
 
-import { CHECK_META, MERGE_META, REVIEW_META } from '@/components/status-icons'
+import { CHECK_META, MERGE_META, REVIEW_META, stateMark } from '@/components/status-icons'
 import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
@@ -18,7 +12,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
-import type { SearchItem } from '@/lib/github/types'
+import type { ItemKind, ItemState, SearchItem } from '@/lib/github/types'
 import {
   FACETS,
   UNASSIGNED,
@@ -52,6 +46,10 @@ interface Mark {
 
 const STATUS_FACETS: readonly StatusFacet[] = ['review', 'checks', 'merge', 'state']
 
+function rowMark(kind: ItemKind, state: ItemState) {
+  return stateMark({ kind, state, stateReason: null })
+}
+
 /** The same glyph and color each value has on the rows. */
 const MARKS: Record<StatusFacet, Record<string, Mark>> = {
   review: {
@@ -67,7 +65,10 @@ const MARKS: Record<StatusFacet, Record<string, Mark>> = {
     behind: { ...MERGE_META.behind, label: 'Behind' },
   },
   state: {
-    draft: { label: 'Draft', Icon: GitPullRequestDraftIcon, className: 'text-draft' },
+    'open-pull-request': { ...rowMark('pull-request', 'open'), label: 'Open pull request' },
+    'open-issue': { ...rowMark('issue', 'open'), label: 'Open issue' },
+    draft: { ...rowMark('pull-request', 'draft'), label: 'Draft' },
+    queued: { ...rowMark('pull-request', 'queued'), label: 'Queued to merge' },
   },
 }
 
