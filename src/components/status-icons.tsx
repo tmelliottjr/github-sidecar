@@ -118,6 +118,11 @@ export function StackDisc({ item }: { item: StateItem }) {
   )
 }
 
+/** The glyph and text color a row shows for its kind and state. */
+export function stateMark(item: StateItem): { Icon: Icon; className: string } {
+  return { Icon: pickIcon(item), className: TONES[describeState(item).tone].text }
+}
+
 function pickIcon(item: StateItem) {
   if (item.kind === 'issue') {
     if (item.state === 'closed') {

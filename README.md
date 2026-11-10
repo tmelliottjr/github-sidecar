@@ -479,15 +479,18 @@ fast as it can be typed, it cannot lose the reader's place, and it costs no
 rate limit. It also stops the list pulling in further pages while it is on,
 because a filter matching little enough would otherwise page through the whole
 result set looking for matches nobody asked it to fetch. The order can be changed to what has waited longest, which is what
-a review queue loses first, or grouped by repository. A grouping is remembered
+a review queue loses first, or sorted by author or by repository. The rows can also be
+broken into sections by status, author, assignee, or repository. A grouping is remembered
 with the query it was chosen on, so each saved query keeps its own way of being
 read while sharing the one filter box.
 
 The search box sits above the list whenever **Filter and reorder** is on in
 settings; switching it off gives that height back to the rows. The funnel
 beside it narrows the same rows by status and by person: review (needs review,
-approved, changes requested), failing checks, conflicts, behind, draft, author,
-and assignee. Its options come from the loaded rows, and each shows how many
+approved, changes requested), failing checks, conflicts, behind, state (open
+pull request, open issue, draft, queued to merge), author, and assignee. Needs
+review matches only open pull requests that are ready for review, so drafts
+drop out. Its options come from the loaded rows, and each shows how many
 rows it would leave. Choices in one section add rows, so needs review and
 approved shows both. Sections narrow each other, so approved and an author
 shows that author's approved rows. Each section with a choice shows as a token

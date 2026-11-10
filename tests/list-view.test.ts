@@ -127,6 +127,35 @@ describe('applyQuickFilter', () => {
       ['alice', 'nobody'],
     )
   })
+
+  it('matches needs review only on open pull requests that are ready for review', () => {
+    const waiting = [
+      item({ id: 'open', state: 'open', reviewDecision: 'REVIEW_REQUIRED' }),
+      item({ id: 'draft', state: 'draft', reviewDecision: 'REVIEW_REQUIRED' }),
+      item({ id: 'queued', state: 'queued', reviewDecision: 'REVIEW_REQUIRED' }),
+      item({ id: 'closed', state: 'closed', reviewDecision: 'REVIEW_REQUIRED' }),
+      item({ id: 'draft-approved', state: 'draft', reviewDecision: 'APPROVED' }),
+    ]
+    assert.deepEqual(ids(applyQuickFilter(waiting, { review: ['REVIEW_REQUIRED'] })), ['open'])
+    assert.deepEqual(ids(applyQuickFilter(waiting, { review: ['APPROVED'] })), ['draft-approved'])
+  })
+
+  it('tells open pull requests from open issues, drafts, and queued pull requests', () => {
+    const states = [
+      item({ id: 'pr', kind: 'pull-request', state: 'open' }),
+      item({ id: 'issue', kind: 'issue', state: 'open' }),
+      item({ id: 'draft', kind: 'pull-request', state: 'draft' }),
+      item({ id: 'queued', kind: 'pull-request', state: 'queued' }),
+      item({ id: 'merged', kind: 'pull-request', state: 'merged' }),
+    ]
+    assert.deepEqual(ids(applyQuickFilter(states, { state: ['open-pull-request'] })), ['pr'])
+    assert.deepEqual(ids(applyQuickFilter(states, { state: ['open-issue'] })), ['issue'])
+    assert.deepEqual(ids(applyQuickFilter(states, { state: ['queued'] })), ['queued'])
+    assert.deepEqual(
+      ids(applyQuickFilter(states, { state: ['open-pull-request', 'draft'] })),
+      ['pr', 'draft'],
+    )
+  })
 })
 
 describe('quickFilterOptions', () => {
@@ -178,6 +207,30 @@ describe('quickFilterOptions', () => {
     assert.deepEqual(counts(options.author), { octocat: 1, hubot: 0 })
   })
 
+  it('leaves drafts out of the needs review count', () => {
+    const waiting = [
+      item({ id: 'open', state: 'open', reviewDecision: 'REVIEW_REQUIRED' }),
+      item({ id: 'draft', state: 'draft', reviewDecision: 'REVIEW_REQUIRED' }),
+    ]
+    assert.deepEqual(counts(quickFilterOptions(waiting, waiting, {}).review), { REVIEW_REQUIRED: 1 })
+    // A list where only drafts need review does not offer it at all.
+    assert.deepEqual(quickFilterOptions(waiting.slice(1), waiting.slice(1), {}).review, [])
+  })
+
+  it('offers each state the rows have, in menu order', () => {
+    const states = [
+      item({ id: 'queued', state: 'queued' }),
+      item({ id: 'issue', kind: 'issue', state: 'open' }),
+      item({ id: 'draft', state: 'draft' }),
+      item({ id: 'pr', state: 'open' }),
+      item({ id: 'pr2', state: 'open' }),
+    ]
+    assert.deepEqual(
+      quickFilterOptions(states, states, {}).state.map((option) => [option.value, option.count]),
+      [['open-pull-request', 2], ['open-issue', 1], ['draft', 1], ['queued', 1]],
+    )
+  })
+
   it('orders people by row count, with unassigned last, and carries their avatars', () => {
     const assigned = [
       item({ id: 'x', assignees: [] }),
@@ -220,6 +273,20 @@ describe('sortItems', () => {
 
   it('groups by repository, then by number', () => {
     assert.deepEqual(sortItems(rows, 'repository').map((row) => row.id), ['c', 'a', 'b'])
+  })
+
+  it('orders by author, keeping the list order within each author and no author last', () => {
+    const authored = [
+      item({ id: 'unknown', authorLogin: null }),
+      item({ id: 'octocat', authorLogin: 'octocat' }),
+      item({ id: 'hubot', authorLogin: 'hubot' }),
+      item({ id: 'Alice', authorLogin: 'Alice' }),
+      item({ id: 'octocat2', authorLogin: 'octocat' }),
+    ]
+    assert.deepEqual(
+      sortItems(authored, 'author').map((row) => row.id),
+      ['Alice', 'hubot', 'octocat', 'octocat2', 'unknown'],
+    )
   })
 
   it('never reorders the list it was given', () => {
@@ -294,6 +361,22 @@ describe('groupItems', () => {
     assert.deepEqual(shape(groupItems(mixed, 'assignee')).map((group) => group.key), [
       'assignee:alice',
     ])
+  })
+
+  it('gathers rows by author, with rows that have no author last', () => {
+    const mixed = [
+      item({ id: 'unknown', authorLogin: null, authorAvatarUrl: null }),
+      item({ id: 'hubot', authorLogin: 'hubot', authorAvatarUrl: 'https://avatars/hubot' }),
+      item({ id: 'alice', authorLogin: 'Alice', authorAvatarUrl: null }),
+      item({ id: 'hubot2', authorLogin: 'hubot', authorAvatarUrl: 'https://avatars/hubot' }),
+    ]
+    const grouped = groupItems(mixed, 'author')
+    assert.deepEqual(shape(grouped), [
+      { key: 'author:Alice', label: 'Alice', ids: ['alice'] },
+      { key: 'author:hubot', label: 'hubot', ids: ['hubot', 'hubot2'] },
+      { key: 'author:__none__', label: 'Unknown author', ids: ['unknown'] },
+    ])
+    assert.equal(grouped[1].avatarUrl, 'https://avatars/hubot')
   })
 })
 
