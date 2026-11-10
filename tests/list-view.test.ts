@@ -348,6 +348,22 @@ describe('groupItems', () => {
       'assignee:alice',
     ])
   })
+
+  it('gathers rows by author, with rows that have no author last', () => {
+    const mixed = [
+      item({ id: 'unknown', authorLogin: null, authorAvatarUrl: null }),
+      item({ id: 'hubot', authorLogin: 'hubot', authorAvatarUrl: 'https://avatars/hubot' }),
+      item({ id: 'alice', authorLogin: 'Alice', authorAvatarUrl: null }),
+      item({ id: 'hubot2', authorLogin: 'hubot', authorAvatarUrl: 'https://avatars/hubot' }),
+    ]
+    const grouped = groupItems(mixed, 'author')
+    assert.deepEqual(shape(grouped), [
+      { key: 'author:Alice', label: 'Alice', ids: ['alice'] },
+      { key: 'author:hubot', label: 'hubot', ids: ['hubot', 'hubot2'] },
+      { key: 'author:__none__', label: 'Unknown author', ids: ['unknown'] },
+    ])
+    assert.equal(grouped[1].avatarUrl, 'https://avatars/hubot')
+  })
 })
 
 describe('buildRows', () => {

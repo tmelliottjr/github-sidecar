@@ -18,17 +18,21 @@ export const SORT_LABELS: Record<SortOrder, string> = {
  * this only rearranges what is on screen: it groups the loaded rows under a
  * header each, without asking GitHub for anything.
  */
-export type GroupBy = 'none' | 'status' | 'assignee' | 'repository'
+export type GroupBy = 'none' | 'status' | 'author' | 'assignee' | 'repository'
 
 export const GROUP_LABELS: Record<GroupBy, string> = {
   none: 'No grouping',
   status: 'By status',
+  author: 'By author',
   assignee: 'By assignee',
   repository: 'By repository',
 }
 
 /** The label shown for the bucket that holds rows with no assignee. */
 export const UNASSIGNED_LABEL = 'Unassigned'
+
+/** The label shown for the bucket that holds rows with no author. */
+const UNKNOWN_AUTHOR_LABEL = 'Unknown author'
 
 /**
  * The lifecycle states in the order their sections are drawn: what is still
@@ -386,11 +390,20 @@ export function sortItems(items: SearchItem[], order: SortOrder): SearchItem[] {
  *
  * Grouping by assignee lists a row under every assignee it has, so a shared
  * row appears in each of their sections. Rows with no assignee fall into one
- * `Unassigned` section, drawn last.
+ * `Unassigned` section, drawn last. Grouping by author works the same way,
+ * with one author per row, and rows with no author fall into an
+ * `Unknown author` section.
  */
 export function groupItems(items: SearchItem[], groupBy: GroupBy): ItemGroup[] {
   return groupEntries(items, groupBy, (item) => item)
 }
+
+interface Person {
+  login: string
+  avatarUrl: string | null
+}
+
+const NO_PEOPLE: readonly Person[] = []
 
 /** Groups any kind of entry by the row `itemOf` picks for it. */
 function groupEntries<T>(
@@ -401,8 +414,13 @@ function groupEntries<T>(
   switch (groupBy) {
     case 'status':
       return groupByStatus(entries, itemOf)
+    case 'author':
+      return groupByPerson(entries, 'author', UNKNOWN_AUTHOR_LABEL, (entry) => {
+        const { authorLogin, authorAvatarUrl } = itemOf(entry)
+        return authorLogin ? [{ login: authorLogin, avatarUrl: authorAvatarUrl }] : NO_PEOPLE
+      })
     case 'assignee':
-      return groupByAssignee(entries, itemOf)
+      return groupByPerson(entries, 'assignee', UNASSIGNED_LABEL, (entry) => itemOf(entry).assignees)
     case 'repository':
       return groupByRepository(entries, itemOf)
     default:
@@ -447,38 +465,44 @@ function groupByRepository<T>(
   }))
 }
 
-function groupByAssignee<T>(entries: T[], itemOf: (entry: T) => SearchItem): Array<ItemGroup<T>> {
+/** Lists an entry under each person `peopleOf` gives it, with a section for entries that have nobody. */
+function groupByPerson<T>(
+  entries: T[],
+  keyPrefix: 'author' | 'assignee',
+  nobodyLabel: string,
+  peopleOf: (entry: T) => readonly Person[],
+): Array<ItemGroup<T>> {
   const buckets = new Map<string, T[]>()
   const avatars = new Map<string, string | null>()
-  const unassigned: T[] = []
+  const nobody: T[] = []
 
   for (const entry of entries) {
-    const { assignees } = itemOf(entry)
-    if (assignees.length === 0) {
-      unassigned.push(entry)
+    const people = peopleOf(entry)
+    if (people.length === 0) {
+      nobody.push(entry)
       continue
     }
-    for (const assignee of assignees) {
-      const bucket = buckets.get(assignee.login)
+    for (const person of people) {
+      const bucket = buckets.get(person.login)
       if (bucket) bucket.push(entry)
-      else buckets.set(assignee.login, [entry])
-      if (!avatars.has(assignee.login)) avatars.set(assignee.login, assignee.avatarUrl)
+      else buckets.set(person.login, [entry])
+      if (!avatars.has(person.login)) avatars.set(person.login, person.avatarUrl)
     }
   }
 
   const groups: Array<ItemGroup<T>> = [...buckets.keys()]
     .toSorted((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
     .map((login) => ({
-      key: `assignee:${login}`,
+      key: `${keyPrefix}:${login}`,
       label: login,
       avatarUrl: avatars.get(login) ?? null,
       items: buckets.get(login) ?? [],
     }))
 
-  // The unassigned rows are the list's leftovers, so they sit after the named
+  // The rows with nobody are the list's leftovers, so they sit after the named
   // sections rather than jostling for a place among them.
-  if (unassigned.length > 0) {
-    groups.push({ key: 'assignee:__none__', label: UNASSIGNED_LABEL, avatarUrl: null, items: unassigned })
+  if (nobody.length > 0) {
+    groups.push({ key: `${keyPrefix}:__none__`, label: nobodyLabel, avatarUrl: null, items: nobody })
   }
 
   return groups
