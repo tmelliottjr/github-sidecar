@@ -5,11 +5,12 @@ import type { ItemState, SearchItem, Stack, StackLayer } from './github/types'
  * qualifier: this reorders what is on screen without asking for anything, so
  * it costs no request and cannot lose the reader's place in a long list.
  */
-export type SortOrder = 'default' | 'stalest' | 'repository'
+export type SortOrder = 'default' | 'stalest' | 'author' | 'repository'
 
 export const SORT_LABELS: Record<SortOrder, string> = {
   default: 'Recently updated',
   stalest: 'Longest untouched',
+  author: 'By author',
   repository: 'By repository',
 }
 
@@ -377,9 +378,19 @@ export function sortItems(items: SearchItem[], order: SortOrder): SearchItem[] {
     return items.toSorted((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt))
   }
 
+  if (order === 'author') {
+    // Each author keeps the order the rows came in, and rows with no author go last.
+    return items.toSorted((a, b) => compareAuthors(a.authorLogin, b.authorLogin))
+  }
+
   return items.toSorted(
     (a, b) => a.repository.localeCompare(b.repository) || a.number - b.number,
   )
+}
+
+function compareAuthors(a: string | null, b: string | null): number {
+  if (a === null || b === null) return Number(a === null) - Number(b === null)
+  return a.localeCompare(b, undefined, { sensitivity: 'base' })
 }
 
 /**

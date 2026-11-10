@@ -275,6 +275,20 @@ describe('sortItems', () => {
     assert.deepEqual(sortItems(rows, 'repository').map((row) => row.id), ['c', 'a', 'b'])
   })
 
+  it('orders by author, keeping the list order within each author and no author last', () => {
+    const authored = [
+      item({ id: 'unknown', authorLogin: null }),
+      item({ id: 'octocat', authorLogin: 'octocat' }),
+      item({ id: 'hubot', authorLogin: 'hubot' }),
+      item({ id: 'Alice', authorLogin: 'Alice' }),
+      item({ id: 'octocat2', authorLogin: 'octocat' }),
+    ]
+    assert.deepEqual(
+      sortItems(authored, 'author').map((row) => row.id),
+      ['Alice', 'hubot', 'octocat', 'octocat2', 'unknown'],
+    )
+  })
+
   it('never reorders the list it was given', () => {
     const before = rows.map((row) => row.id)
     sortItems(rows, 'stalest')

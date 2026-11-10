@@ -479,7 +479,7 @@ fast as it can be typed, it cannot lose the reader's place, and it costs no
 rate limit. It also stops the list pulling in further pages while it is on,
 because a filter matching little enough would otherwise page through the whole
 result set looking for matches nobody asked it to fetch. The order can be changed to what has waited longest, which is what
-a review queue loses first, or grouped by repository. The rows can also be
+a review queue loses first, or sorted by author or by repository. The rows can also be
 broken into sections by status, author, assignee, or repository. A grouping is remembered
 with the query it was chosen on, so each saved query keeps its own way of being
 read while sharing the one filter box.
