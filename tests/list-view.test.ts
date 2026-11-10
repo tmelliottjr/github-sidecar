@@ -127,6 +127,18 @@ describe('applyQuickFilter', () => {
       ['alice', 'nobody'],
     )
   })
+
+  it('matches needs review only on open pull requests that are ready for review', () => {
+    const waiting = [
+      item({ id: 'open', state: 'open', reviewDecision: 'REVIEW_REQUIRED' }),
+      item({ id: 'draft', state: 'draft', reviewDecision: 'REVIEW_REQUIRED' }),
+      item({ id: 'queued', state: 'queued', reviewDecision: 'REVIEW_REQUIRED' }),
+      item({ id: 'closed', state: 'closed', reviewDecision: 'REVIEW_REQUIRED' }),
+      item({ id: 'draft-approved', state: 'draft', reviewDecision: 'APPROVED' }),
+    ]
+    assert.deepEqual(ids(applyQuickFilter(waiting, { review: ['REVIEW_REQUIRED'] })), ['open'])
+    assert.deepEqual(ids(applyQuickFilter(waiting, { review: ['APPROVED'] })), ['draft-approved'])
+  })
 })
 
 describe('quickFilterOptions', () => {
@@ -176,6 +188,16 @@ describe('quickFilterOptions', () => {
   it('offers from every row but counts only the rows the text matches', () => {
     const options = quickFilterOptions(reviewed, reviewed.slice(0, 1), {})
     assert.deepEqual(counts(options.author), { octocat: 1, hubot: 0 })
+  })
+
+  it('leaves drafts out of the needs review count', () => {
+    const waiting = [
+      item({ id: 'open', state: 'open', reviewDecision: 'REVIEW_REQUIRED' }),
+      item({ id: 'draft', state: 'draft', reviewDecision: 'REVIEW_REQUIRED' }),
+    ]
+    assert.deepEqual(counts(quickFilterOptions(waiting, waiting, {}).review), { REVIEW_REQUIRED: 1 })
+    // A list where only drafts need review does not offer it at all.
+    assert.deepEqual(quickFilterOptions(waiting.slice(1), waiting.slice(1), {}).review, [])
   })
 
   it('orders people by row count, with unassigned last, and carries their avatars', () => {

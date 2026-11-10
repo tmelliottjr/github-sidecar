@@ -178,6 +178,8 @@ const NOBODY: readonly string[] = [UNASSIGNED]
 function facetValues(item: SearchItem, facet: Facet): readonly string[] {
   switch (facet) {
     case 'review':
+      // Needs review matches only pull requests that are open and ready for review.
+      if (item.reviewDecision === 'REVIEW_REQUIRED' && item.state !== 'open') return NO_VALUES
       return item.reviewDecision ? [item.reviewDecision] : NO_VALUES
     case 'checks':
       // Both are drawn as the same red mark on the row.
