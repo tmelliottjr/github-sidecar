@@ -53,12 +53,18 @@ const PRIORITY_CHANGE = 0
  */
 export interface NotificationStyle {
   rich?: boolean
+  /**
+   * Whether the panel plays its own sound with this notification. Chrome is
+   * then asked for silence. Firefox rejects a notification that asks for
+   * anything about sound, so its shape never does.
+   */
+  ownSound?: boolean
 }
 
 export function buildNotification(
   entry: WaitingItem,
   icon: string,
-  { rich = can.richNotifications }: NotificationStyle = {},
+  { rich = can.richNotifications, ownSound = false }: NotificationStyle = {},
 ): Notification {
   const { item, reason } = entry
   const isReminder = reason === 'reminder'
@@ -106,7 +112,7 @@ export function buildNotification(
       // stay until it is dealt with. A change was not, so it is neither.
       priority: isReminder ? PRIORITY_REMINDER : PRIORITY_CHANGE,
       requireInteraction: isReminder,
-      silent: !isReminder,
+      silent: ownSound || !isReminder,
       buttons: [{ title: isReminder ? 'Remind me in an hour' : 'Mark as seen' }],
     },
     target: {
@@ -130,6 +136,7 @@ export function buildGroupNotification(
     queryName,
     url,
     rich = can.richNotifications,
+    ownSound = false,
   }: { queryName: string | null; url: string | null } & NotificationStyle,
 ): Notification {
   const listed = entries.slice(0, MAX_LISTED)
@@ -178,7 +185,7 @@ export function buildGroupNotification(
         ? PRIORITY_REMINDER
         : PRIORITY_CHANGE,
       requireInteraction: false,
-      silent: !entries.some((entry) => entry.reason === 'reminder'),
+      silent: ownSound || !entries.some((entry) => entry.reason === 'reminder'),
       buttons: [{ title: 'Mark all as seen' }],
     },
     target: {

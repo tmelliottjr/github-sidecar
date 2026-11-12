@@ -182,13 +182,11 @@ async function announce(waiting: readonly WaitingItem[]): Promise<void> {
     const active = queries.find((query) => query.id === settings.activeQueryId) ?? queries[0]
     await show(
       `${NOTIFICATION_PREFIX}group:${Date.now()}`,
-      hush(
-        buildGroupNotification(send, icon, {
-          queryName: active?.name ?? null,
-          url: active ? searchUrl(active.query) : null,
-        }),
-        ourSound,
-      ),
+      buildGroupNotification(send, icon, {
+        queryName: active?.name ?? null,
+        url: active ? searchUrl(active.query) : null,
+        ownSound: ourSound,
+      }),
       icon,
     )
     return
@@ -204,7 +202,7 @@ async function announce(waiting: readonly WaitingItem[]): Promise<void> {
     // eslint-disable-next-line no-await-in-loop
     await show(
       `${NOTIFICATION_PREFIX}${entry.item.id}`,
-      hush(buildNotification(entry, icon), ours),
+      buildNotification(entry, icon, { ownSound: ours }),
       icon,
     )
   }
@@ -223,12 +221,6 @@ let avatarsLoad = true
 /** Whether the panel itself will make a noise for this kind of notification. */
 function willPlay(sounds: SoundSettings, kind: 'reminder' | 'change'): boolean {
   return sounds[kind] !== 'none' && sounds.volume > 0
-}
-
-/** Silences Chrome's own sound when the panel is making one of its own. */
-function hush(notification: Notification, ourSound: boolean): Notification {
-  if (!ourSound) return notification
-  return { ...notification, options: { ...notification.options, silent: true } }
 }
 
 /**
