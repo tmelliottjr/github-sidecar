@@ -123,13 +123,9 @@ const TARGET_PREFIX = 'notification:'
 const LATER_MS = 60 * 60_000
 
 /**
- * Plays the panel's own notification sound.
- *
- * A browser's `silent: false` is a request, not an instruction: on macOS
- * whether a notification makes a noise is a system setting for the browser as
- * a whole, and an extension cannot reach it. A sound the reader asked this
- * panel for is therefore made by the panel, by whichever route the browser
- * leaves open — see `./audio`.
+ * Plays the panel's own notification sound. Chrome notifications make no
+ * sound on macOS, whatever `silent` says, so the panel plays the sound the
+ * reader picked itself; see `./audio`.
  */
 async function playSound(kind: 'reminder' | 'change'): Promise<void> {
   const { notifications } = await readStorage('settings')
@@ -220,7 +216,7 @@ let avatarsLoad = true
 
 /** Whether the panel itself will make a noise for this kind of notification. */
 function willPlay(sounds: SoundSettings, kind: 'reminder' | 'change'): boolean {
-  return sounds[kind] !== 'none' && sounds.volume > 0
+  return !can.systemNotificationSound && sounds[kind] !== 'none' && sounds.volume > 0
 }
 
 /**

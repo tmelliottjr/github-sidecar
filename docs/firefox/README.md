@@ -86,8 +86,12 @@ Set `DEV_RELOAD_PORT` to use a port other than 5599.
 ## What differs from Chrome
 
 Firefox has no extension service worker, so the panel's background runs as an
-event page. That page has a DOM, which is what lets Firefox play the
-notification sound directly rather than borrowing a document for it.
+event page.
+
+Firefox plays the system notification sound with every notification and gives
+extensions no way to turn it off, so the panel plays no sound of its own and the
+settings page has no sounds to pick. The sound is changed or muted for Firefox
+in the system's notification settings.
 
 Notifications are plainer, because Firefox shows only a title, a body, and an
 icon that ships with the extension:
@@ -99,6 +103,7 @@ icon that ships with the extension:
 | Dim third line (`acme/app #34 · by octocat`) | Yes | Folded into the body |
 | Author's avatar as the icon | Yes | Extension icon only |
 | Reminders that stay until dismissed | Yes | No |
+| Sound | Picked in settings | The system notification sound |
 
 Clicking a notification still opens the row. Everything else — the panel, the
 toolbar count, reminders, hiding, pinning, filtering, and the keyboard — behaves
@@ -111,5 +116,5 @@ the same.
 | Add-on gone after restarting Firefox | Temporary add-ons are dropped on quit. See **Load, permanently**. |
 | "This add-on could not be installed because it appears to be corrupt" | Release and Beta require a signed add-on. See **Load, permanently**. |
 | Zip installs but the id changes each time | The zip was built from the wrong directory. Zip the *contents* of `dist/firefox`, not the directory itself, so `manifest.json` sits at the archive root. |
-| No sound | Firefox's autoplay setting can block an audio context that no click asked for. Check **Settings → Privacy & Security → Autoplay**. The notification still appears. |
+| No sound | Firefox plays the system notification sound, not one of the panel's. Check that sounds are allowed for Firefox in the system's notification settings (on macOS, **System Settings → Notifications → Firefox**). |
 | Notifications never arrive | The `notifications` permission is optional and is asked for when the switch is turned on in settings. |

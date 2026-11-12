@@ -38,11 +38,11 @@ export interface Capabilities {
    */
   offscreenAudio: boolean
   /**
-   * The background context is a page with a DOM, so it can hold an
-   * `AudioContext` and make the sound itself. True only on Firefox, whose MV3
-   * background is an event page rather than a service worker.
+   * Every notification plays the system notification sound, and extensions
+   * cannot turn it off. True only on Firefox, so the panel plays no sound of
+   * its own there: it would play on top of the system sound.
    */
-  backgroundAudio: boolean
+  systemNotificationSound: boolean
   /** Desktop notifications through the extension API at all. */
   notifications: boolean
   /**
@@ -56,13 +56,13 @@ export interface Capabilities {
 const CAPABILITIES: Record<BrowserTarget, Capabilities> = {
   chrome: {
     offscreenAudio: true,
-    backgroundAudio: false,
+    systemNotificationSound: false,
     notifications: true,
     richNotifications: true,
   },
   firefox: {
     offscreenAudio: false,
-    backgroundAudio: true,
+    systemNotificationSound: true,
     notifications: true,
     richNotifications: false,
   },
@@ -71,7 +71,7 @@ const CAPABILITIES: Record<BrowserTarget, Capabilities> = {
   // sound in. The panel says as much in settings rather than pretending.
   safari: {
     offscreenAudio: false,
-    backgroundAudio: false,
+    systemNotificationSound: false,
     notifications: false,
     richNotifications: false,
   },

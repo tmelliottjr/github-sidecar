@@ -403,60 +403,71 @@ function NotificationsSection({
              * a reader who wants a chime for their own reminders and nothing
              * at all for everything else should not have to think twice.
              */}
-            <Nested disabled={!notifications.enabled || !notifications[key]}>
-              <div
-                role="group"
-                aria-label={`${title} sound`}
-                className="flex flex-wrap items-center gap-1.5"
-              >
-                <span className="mr-1 text-[12px] font-semibold">Sound</span>
-                {SOUND_NAMES.map((name) => (
-                  <Button
-                    key={name}
-                    variant={sounds[kind] === name ? 'default' : 'outline'}
-                    size="sm"
-                    aria-pressed={sounds[kind] === name}
-                    disabled={!notifications.enabled || !notifications[key]}
-                    onClick={() => setSound({ [kind]: name }, name)}
-                    title={SOUNDS[name].description}
-                  >
-                    {SOUNDS[name].label}
-                  </Button>
-                ))}
-              </div>
-            </Nested>
+            {!can.systemNotificationSound && (
+              <Nested disabled={!notifications.enabled || !notifications[key]}>
+                <div
+                  role="group"
+                  aria-label={`${title} sound`}
+                  className="flex flex-wrap items-center gap-1.5"
+                >
+                  <span className="mr-1 text-[12px] font-semibold">Sound</span>
+                  {SOUND_NAMES.map((name) => (
+                    <Button
+                      key={name}
+                      variant={sounds[kind] === name ? 'default' : 'outline'}
+                      size="sm"
+                      aria-pressed={sounds[kind] === name}
+                      disabled={!notifications.enabled || !notifications[key]}
+                      onClick={() => setSound({ [kind]: name }, name)}
+                      title={SOUNDS[name].description}
+                    >
+                      {SOUNDS[name].label}
+                    </Button>
+                  ))}
+                </div>
+              </Nested>
+            )}
           </div>
         ))}
+
+        {can.systemNotificationSound && (
+          <p className="text-[12px] leading-relaxed text-muted-foreground">
+            {browserName} plays your system’s notification sound with every notification, so
+            there is no sound to pick here. Change or mute it for {browserName} in your
+            system’s notification settings.
+          </p>
+        )}
 
         {/*
          * One volume for both, shown only while something would use it.
          * Silence is chosen per kind above, so there is no switch here to
          * contradict them with.
          */}
-        {(sounds.reminder !== 'none' || sounds.change !== 'none') && (
-          <label className="flex items-center gap-3">
-            <span className="text-[12px] font-semibold">Volume</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={5}
-              value={Math.round(sounds.volume * 100)}
-              aria-label="Volume"
-              disabled={!notifications.enabled}
-              onChange={(event) =>
-                setSound(
-                  { volume: Number(event.target.value) / 100 },
-                  sounds.reminder === 'none' ? sounds.change : sounds.reminder,
-                )
-              }
-              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-input accent-ring disabled:cursor-not-allowed"
-            />
-            <span className="w-9 text-right text-[12px] tabular-nums text-muted-foreground">
-              {Math.round(sounds.volume * 100)}%
-            </span>
-          </label>
-        )}
+        {!can.systemNotificationSound &&
+          (sounds.reminder !== 'none' || sounds.change !== 'none') && (
+            <label className="flex items-center gap-3">
+              <span className="text-[12px] font-semibold">Volume</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={Math.round(sounds.volume * 100)}
+                aria-label="Volume"
+                disabled={!notifications.enabled}
+                onChange={(event) =>
+                  setSound(
+                    { volume: Number(event.target.value) / 100 },
+                    sounds.reminder === 'none' ? sounds.change : sounds.reminder,
+                  )
+                }
+                className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-input accent-ring disabled:cursor-not-allowed"
+              />
+              <span className="w-9 text-right text-[12px] tabular-nums text-muted-foreground">
+                {Math.round(sounds.volume * 100)}%
+              </span>
+            </label>
+          )}
       </Nested>
     </Section>
   )

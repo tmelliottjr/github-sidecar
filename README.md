@@ -576,20 +576,20 @@ it. One volume serves both, and is shown only while something would use it.
 
 ##### Making a noise
 
-A browser's `silent: false` is a request, not an instruction. Whether a
-notification makes a sound is a matter for the operating system — on macOS it
-is a per-application setting under **System Settings → Notifications**, off for
-many people and unreachable from an extension.
+Chrome sets no sound on the notifications it shows on macOS, whatever `silent`
+says, so the **Play sound for notification** setting for Chrome under **System
+Settings → Notifications** has nothing to play. On Chrome the sound is the
+panel's own. Chrome's background is a service worker, which cannot play audio at
+all, so the sound plays in an offscreen document borrowed for the purpose.
 
-So the sound is the panel's own, made by whichever route the browser leaves
-open. Chrome's background is a service worker, which cannot play audio at all,
-so the sound is played in an offscreen document borrowed for the purpose.
-Firefox's background is an event page with a DOM of its own, so it plays the
-sound directly. Safari has neither, and no notification to play a sound
-alongside.
+Firefox plays the system notification sound with every notification and gives
+extensions no way to turn it off, so the panel plays no sound of its own there:
+it would play on top of the system's. The settings page says so where the
+sounds would be, and the sound is changed or muted for Firefox in the system's
+notification settings. Safari has no notifications to play a sound alongside.
 
-Neither asks its audio context whether it may start before scheduling the
-notes. A context the browser will not let start does not refuse — it holds the
+The offscreen document does not ask its audio context whether it may start
+before scheduling the notes. A context the browser will not let start does not refuse — it holds the
 question open until a click that a background page will never see — so waiting
 for an answer would wait for ever and take the notification down with it. The
 notes are scheduled either way: where audio is allowed they play, and where the
@@ -818,7 +818,7 @@ browser will let an extension do when the panel is *not* on screen.
 | Buttons on a notification | Yes | No | — |
 | Several at once as one grouped list | Yes | Written into the body | — |
 | The author's face as the icon | Yes | Extension icon only | — |
-| Notification sounds | Yes | Yes | Not offered |
+| Notification sounds | The panel's own | The system's | Not offered |
 
 Safari gives web extensions no notifications API at all, so the settings page
 says so where those switches would otherwise be rather than offering a switch
@@ -826,10 +826,11 @@ that does nothing. Firefox has notifications but shows only a title, a body, and
 an icon that ships with the extension, so what Chrome puts in the dim third line
 is folded into the body instead of being dropped.
 
-The sound is made differently in each: Chrome's background is a service worker
-and cannot play audio, so it borrows an offscreen document; Firefox's background
-is an event page with a DOM of its own and needs nothing borrowed; Safari has
-neither, and no notification to play a sound alongside.
+Chrome notifications make no sound on macOS, so on Chrome the panel plays its
+own, from an offscreen document because Chrome's background is a service
+worker. Firefox plays the system notification sound with every notification, so
+the panel adds none there. Safari has no notifications to play a sound
+alongside.
 
 ## Usage
 
