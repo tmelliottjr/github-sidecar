@@ -427,7 +427,10 @@ change, the worker reads that row by id, so the reminder still counts and still
 notifies. A merged pull request leaves every `is:open` query in the same poll
 that makes its **When it changes** reminder due, and this is how it is heard
 from anyway. Rows read this way are refreshed no more often than the list, and a
-reminder set for later costs nothing until it comes due.
+reminder set for later costs nothing until it comes due. A row whose read fails
+keeps its last copy, so a reminder that has come round stays counted and is not
+announced twice, and a read that failed on the network is tried again a minute
+later.
 
 </details>
 

@@ -208,7 +208,22 @@ export interface ItemServiceDeps {
   now?: () => number
 }
 
-/** Answers rows by node id, reading those missing or older than `freshMs`. */
+export interface ItemsAnswer {
+  /** Fresh rows, and the stored copy of any row whose read failed. */
+  items: FetchedItem[]
+  /** Rows with no copy at all. */
+  failedIds: string[]
+  /** The rows among `failedIds` whose read failed on the network, not on GitHub's answer. */
+  retryIds: string[]
+}
+
+/**
+ * Answers rows by node id, reading those missing or older than `freshMs`.
+ *
+ * A row whose read failed comes back as its stored copy, however old, so a
+ * reminder that was due stays due and keeps its announcement. Its read is not
+ * tried again until `freshMs` has passed.
+ */
 export function createItemService({
   store,
   fetchItems,
@@ -216,6 +231,9 @@ export function createItemService({
   onError,
   now = Date.now,
 }: ItemServiceDeps) {
+  /** When each read last failed, and whether it failed on the network. */
+  const failures = new Map<string, { at: number; network: boolean }>()
+
   const loadOnce = createLoader<FetchedItem>({
     name: 'rows',
     store,
@@ -232,12 +250,15 @@ export function createItemService({
           const result = await fetchItems(batch)
           records.push(...result.items)
           failedIds.push(...result.failedIds)
+          for (const id of result.failedIds) failures.set(id, { at: now(), network: false })
           error ??= result.error
         } catch (caught) {
           onError?.(caught)
           failedIds.push(...batch)
+          for (const id of batch) failures.set(id, { at: now(), network: true })
         }
       }
+      for (const record of records) failures.delete(record.id)
       return { records, failedIds, error }
     },
     broadcast: (items) => onRead?.(items),
@@ -245,21 +266,39 @@ export function createItemService({
   })
 
   return {
-    async items({
-      ids,
-      freshMs,
-    }: {
-      ids: readonly string[]
-      freshMs: number
-    }): Promise<{ items: FetchedItem[]; failedIds: string[] }> {
+    async items({ ids, freshMs }: { ids: readonly string[]; freshMs: number }): Promise<ItemsAnswer> {
+      const wanted = [...new Set(ids)]
+      const skipped = new Set(
+        wanted.filter((id) => {
+          const failure = failures.get(id)
+          return failure !== undefined && now() - failure.at < freshMs
+        }),
+      )
+
       const { records, failedIds } = await answer(
-        [...new Set(ids)],
+        wanted.filter((id) => !skipped.has(id)),
         store,
         (item) => now() - item.fetchedAt < freshMs,
         loadOnce,
         onError,
       )
-      return { items: records, failedIds }
+
+      const unread = [...failedIds, ...skipped]
+      const stale =
+        unread.length > 0
+          ? await store.read(unread).catch((error: unknown) => {
+              onError?.(error)
+              return []
+            })
+          : []
+      const kept = new Set(stale.map((item) => item.id))
+      const missing = unread.filter((id) => !kept.has(id))
+
+      return {
+        items: [...records, ...stale],
+        failedIds: missing,
+        retryIds: missing.filter((id) => failures.get(id)?.network === true),
+      }
     },
   }
 }

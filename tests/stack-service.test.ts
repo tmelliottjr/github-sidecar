@@ -275,6 +275,7 @@ describe('item service', () => {
       failedIds: [],
       error: null,
     }),
+    clock = { now: 10_000 },
   ) {
     const calls: string[][] = []
     const errors: unknown[] = []
@@ -286,7 +287,7 @@ describe('item service', () => {
         return fetch(ids)
       },
       onError: (error) => errors.push(error),
-      now: () => 10_000,
+      now: () => clock.now,
     })
     return { service, store, calls, errors }
   }
@@ -319,6 +320,53 @@ describe('item service', () => {
 
     assert.deepEqual(answer.items.map((item) => item.id), ['PR_6'])
     assert.deepEqual(answer.failedIds, ['PR_1', 'PR_2', 'PR_3', 'PR_4', 'PR_5'])
+    assert.deepEqual(answer.retryIds, ['PR_1', 'PR_2', 'PR_3', 'PR_4', 'PR_5'])
     assert.equal((errors[0] as Error).message, 'offline')
+  })
+
+  // Dropping the row would drop its announcement too, and the next good read
+  // would announce it again.
+  it('serves the stored copy when a re-read fails, and waits out the window', async () => {
+    const clock = { now: 0 }
+    let online = true
+    const { service, calls } = createItemHarness(
+      [],
+      async (ids) => {
+        if (!online) throw new Error('offline')
+        return { items: ids.map((id) => fetched(id, clock.now)), failedIds: [], error: null }
+      },
+      clock,
+    )
+
+    await service.items({ ids: ['PR_1'], freshMs: FRESH_MS })
+    clock.now = FRESH_MS + 10_000
+    online = false
+    const stale = await service.items({ ids: ['PR_1'], freshMs: FRESH_MS })
+
+    assert.deepEqual(stale.items.map((item) => item.id), ['PR_1'])
+    assert.deepEqual(stale.failedIds, [])
+
+    clock.now += 1000
+    await service.items({ ids: ['PR_1'], freshMs: FRESH_MS })
+    assert.equal(calls.length, 2)
+  })
+
+  it('does not retry a row GitHub would not return until the window has passed', async () => {
+    const clock = { now: 10_000 }
+    const { service, calls } = createItemHarness(
+      [],
+      async (ids) => ({ items: [], failedIds: [...ids], error: 'GitHub did not answer for every row.' }),
+      clock,
+    )
+
+    const answer = await service.items({ ids: ['PR_gone'], freshMs: FRESH_MS })
+    assert.deepEqual(answer, { items: [], failedIds: ['PR_gone'], retryIds: [] })
+
+    await service.items({ ids: ['PR_gone'], freshMs: FRESH_MS })
+    assert.equal(calls.length, 1)
+
+    clock.now += FRESH_MS
+    await service.items({ ids: ['PR_gone'], freshMs: FRESH_MS })
+    assert.equal(calls.length, 2)
   })
 })

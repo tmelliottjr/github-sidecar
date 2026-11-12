@@ -9,6 +9,7 @@ import {
   observeApiCalls,
   searchIssues,
 } from '@/lib/github/api'
+import type { SearchItem } from '@/lib/github/types'
 import type { BroadcastMessage, RequestMessage, ResponseMessage } from '@/lib/messages'
 import {
   badgeText,
@@ -167,6 +168,9 @@ const BADGE_BACKGROUND = '#2f81f7'
  * because the soonest reminder is the only one that can come due first.
  */
 const REMINDER_ALARM = 'reminder-due'
+
+/** How soon a row read for a due reminder is tried again after a network failure. */
+const REMINDER_RETRY_MS = 60_000
 
 async function activeQueryText(): Promise<string | null> {
   const [settings, queries] = await Promise.all([
@@ -364,22 +368,29 @@ async function refreshAttention(): Promise<void> {
   // it changes" reminder due, so rows the active query does not list are read
   // by id.
   const reminderIds = features.reminders ? unlistedReminderIds(memory, listed) : []
-  const unlisted =
-    reminderIds.length > 0
-      ? (
-          await itemService.items({
-            ids: reminderIds,
-            freshMs: freshnessWindow(settings.pollIntervalMs),
-          })
-        ).items
-      : []
+  const unlisted: SearchItem[] = []
+  let retryAt: number | null = null
+  if (reminderIds.length > 0) {
+    const read = await itemService.items({
+      ids: reminderIds,
+      freshMs: freshnessWindow(settings.pollIntervalMs),
+    })
+    // A row never read by id can still sit in another query's cached pages.
+    const cached = read.failedIds.length > 0 ? await indexedDbStore.findItems(read.failedIds) : []
+    unlisted.push(...read.items, ...cached)
+    // With no row to show, a reminder that has come round waits for the next
+    // pass, and a timed one may have no other pass coming. A network failure
+    // is worth another try soon; a row GitHub would not return is not.
+    const shown = new Set(cached.map((item) => item.id))
+    if (read.retryIds.some((id) => !shown.has(id))) retryAt = Date.now() + REMINDER_RETRY_MS
+  }
   const waiting = waitingItems(listed, memory, {
     reminders: features.reminders,
     hiding: features.hide,
     unlisted,
   })
 
-  await armReminderAlarm(features.reminders ? memory : {})
+  await armReminderAlarm(features.reminders ? memory : {}, retryAt)
 
   await browser.action.setBadgeText({
     text: features.badge ? badgeText(waiting.length) : '',
@@ -414,12 +425,17 @@ let counting: Promise<void> | null = null
 let recount = false
 
 /**
- * Sleeps until the next timed reminder, and stops waiting when there is none —
- * which includes the case where reminders have been switched off, since an
- * alarm that can only wake a feature nobody wants is worse than no alarm.
+ * Sleeps until the next timed reminder, or until `retryAt` where that is
+ * sooner, and stops waiting when there is neither — which includes the case
+ * where reminders have been switched off, since an alarm that can only wake a
+ * feature nobody wants is worse than no alarm.
  */
-async function armReminderAlarm(memory: Awaited<ReturnType<typeof readStorage<'itemMemory'>>>): Promise<void> {
-  const due = nextReminderAt(memory)
+async function armReminderAlarm(
+  memory: Awaited<ReturnType<typeof readStorage<'itemMemory'>>>,
+  retryAt: number | null = null,
+): Promise<void> {
+  const next = nextReminderAt(memory)
+  const due = next === null ? retryAt : retryAt === null ? next : Math.min(next, retryAt)
   if (due === null) {
     await browser.alarms.clear(REMINDER_ALARM)
     return
