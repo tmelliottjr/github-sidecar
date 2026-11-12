@@ -616,9 +616,9 @@ not a choice anyone can make by reading it.
 
 Every sound plays at the same loudness at full volume: -23 LUFS (maximum
 momentary loudness, ITU-R BS.1770), the middle of the macOS alert sounds in
-`/System/Library/Sounds`, so 100% is as loud as a system alert. Each sound has
-its own gain for this, and `tests/sound.browser.test.ts` renders every sound to
-check it.
+`/System/Library/Sounds`. So 100% is as loud as a system alert, the volume
+starts there, and the slider only turns it down. Each sound has its own gain
+for this, and `tests/sound.browser.test.ts` renders every sound to check it.
 
 Each sound is a handful of numbers — frequency, start, length — turned into
 sine or triangle notes with a short fade at both ends, since a square-edged
