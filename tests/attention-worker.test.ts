@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 
 import {
   badgeText,
+  forgetAnnounced,
   nextReminderAt,
   pendingNotifications,
   signatureOf,
@@ -198,6 +199,16 @@ describe('announcing a change once', () => {
   it('forgets rows that are no longer changed', () => {
     const { announced } = pendingNotifications(changed, {})
     assert.deepEqual(pendingNotifications([], announced).announced, {})
+  })
+
+  it('sends a notification again when it failed to show', () => {
+    const { send, announced } = pendingNotifications(changed, {})
+    const kept = forgetAnnounced(announced, send)
+
+    assert.deepEqual(
+      pendingNotifications(changed, kept).send.map((entry) => entry.item.id),
+      ['a'],
+    )
   })
 
   it('speaks again when a reminder comes round on a row it already announced', () => {

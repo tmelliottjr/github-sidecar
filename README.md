@@ -551,7 +551,9 @@ along with why it was announced, so a row that changes again is announced
 again, and a reminder coming round on a row that had already been announced for
 a change is announced in its own right — while a row that is merely still
 waiting stays quiet — otherwise every poll would repeat itself until the
-reader happened to read it.
+reader happened to read it. The signature is remembered only once the
+notification shows, so one the browser refused is sent again on the next pass,
+and the sound plays only for notifications that showed.
 
 Notifications need the browser's `notifications` permission, which the extension
 is not installed with. The switch on the settings page asks for it from the

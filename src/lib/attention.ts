@@ -392,6 +392,20 @@ export function pendingNotifications(
 }
 
 /**
+ * Drops the stamps of notifications that failed to show, so the next pass
+ * sends them again.
+ */
+export function forgetAnnounced(
+  announced: Record<string, string>,
+  failed: readonly WaitingItem[],
+): Record<string, string> {
+  if (failed.length === 0) return announced
+  const next = { ...announced }
+  for (const entry of failed) delete next[entry.item.id]
+  return next
+}
+
+/**
  * When the next timed reminder comes round, so the worker can sleep until then
  * rather than poll for it. Change reminders need no alarm: they can only come
  * due when new results arrive, which wakes the worker anyway.

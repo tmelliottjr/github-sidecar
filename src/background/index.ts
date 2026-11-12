@@ -11,6 +11,7 @@ import {
 import type { BroadcastMessage, RequestMessage, ResponseMessage } from '@/lib/messages'
 import {
   badgeText,
+  forgetAnnounced,
   nextReminderAt,
   pendingNotifications,
   signatureOf,
@@ -158,17 +159,15 @@ async function announce(waiting: readonly WaitingItem[]): Promise<void> {
   const stored = await browser.storage.session.get(ANNOUNCED_KEY)
   const previous = (stored[ANNOUNCED_KEY] ?? {}) as Record<string, string>
   const { send, announced } = pendingNotifications(waiting, previous)
-  await browser.storage.session.set({ [ANNOUNCED_KEY]: announced })
-  if (send.length === 0) return
+  if (send.length === 0) {
+    await browser.storage.session.set({ [ANNOUNCED_KEY]: announced })
+    return
+  }
 
   const icon = browser.runtime.getURL('icon-128.png')
   const { notifications } = await readStorage('settings')
-  // Whoever makes the sound, only one of them does: Chrome's own is asked for
-  // only where the panel is not making its own. Each kind answers for itself,
-  // so a silent change and a chiming reminder are both possible.
-  const loudest = send.some((entry) => entry.reason === 'reminder') ? 'reminder' : 'change'
-  const ourSound = willPlay(notifications.sounds, loudest)
-  if (ourSound) void playSound(loudest)
+  const shown: WaitingItem[] = []
+  const failed: WaitingItem[] = []
 
   if (send.length > MAX_INDIVIDUAL) {
     const [settings, queries] = await Promise.all([
@@ -176,32 +175,60 @@ async function announce(waiting: readonly WaitingItem[]): Promise<void> {
       readStorage('savedQueries'),
     ])
     const active = queries.find((query) => query.id === settings.activeQueryId) ?? queries[0]
-    await show(
-      `${NOTIFICATION_PREFIX}group:${Date.now()}`,
-      buildGroupNotification(send, icon, {
-        queryName: active?.name ?? null,
-        url: active ? searchUrl(active.query) : null,
-        ownSound: ourSound,
-      }),
-      icon,
-    )
-    return
+    const loudest = kindsIn(send)[0]
+    try {
+      await show(
+        `${NOTIFICATION_PREFIX}group:${Date.now()}`,
+        buildGroupNotification(send, icon, {
+          queryName: active?.name ?? null,
+          url: active ? searchUrl(active.query) : null,
+          ownSound: willPlay(notifications.sounds, loudest),
+        }),
+        icon,
+      )
+      shown.push(...send)
+    } catch (error) {
+      console.warn('[github-sidecar] could not show a notification', error)
+      failed.push(...send)
+    }
+  } else {
+    for (const entry of send) {
+      try {
+        // Sequential rather than parallel: two notifications raised in the same
+        // instant arrive in whichever order Chrome feels like.
+        // eslint-disable-next-line no-await-in-loop
+        await show(
+          `${NOTIFICATION_PREFIX}${entry.item.id}`,
+          buildNotification(entry, icon, {
+            ownSound: willPlay(notifications.sounds, entry.reason),
+          }),
+          icon,
+        )
+        shown.push(entry)
+      } catch (error) {
+        console.warn('[github-sidecar] could not show a notification', error)
+        failed.push(entry)
+      }
+    }
   }
 
-  for (const entry of send) {
-    const kind = entry.reason === 'reminder' ? 'reminder' : 'change'
-    const ours = willPlay(notifications.sounds, kind)
-    if (ours && kind !== loudest) void playSound(kind)
+  // Saved after showing, so a notification the browser refused is sent again
+  // on the next pass instead of counting as announced.
+  await browser.storage.session.set({ [ANNOUNCED_KEY]: forgetAnnounced(announced, failed) })
 
-    // Sequential rather than parallel: two notifications raised in the same
-    // instant arrive in whichever order Chrome feels like.
-    // eslint-disable-next-line no-await-in-loop
-    await show(
-      `${NOTIFICATION_PREFIX}${entry.item.id}`,
-      buildNotification(entry, icon, { ownSound: ours }),
-      icon,
-    )
+  // A group plays one sound, for its loudest kind; single notifications play
+  // one for each kind shown. Chrome was asked for silence wherever these play.
+  const kinds = kindsIn(shown)
+  for (const kind of send.length > MAX_INDIVIDUAL ? kinds.slice(0, 1) : kinds) {
+    void playSound(kind)
   }
+}
+
+/** The kinds among these entries, loudest first: a reminder was asked for. */
+function kindsIn(entries: readonly WaitingItem[]): Array<WaitingItem['reason']> {
+  return (['reminder', 'change'] as const).filter((kind) =>
+    entries.some((entry) => entry.reason === kind),
+  )
 }
 
 /**
@@ -222,8 +249,8 @@ function willPlay(sounds: SoundSettings, kind: 'reminder' | 'change'): boolean {
 /**
  * Raises one notification and remembers what it was about. An image that will
  * not load takes the whole notification down with it — Chrome refuses to show
- * one whose images it could not fetch — so a failure is retried rather than
- * lost.
+ * one whose images it could not fetch — so that failure is tried again with
+ * the extension icon. Anything that still fails is thrown.
  */
 async function show(id: string, notification: Notification, icon: string): Promise<void> {
   await browser.storage.session.set({ [`${TARGET_PREFIX}${id}`]: notification.target })
@@ -232,12 +259,10 @@ async function show(id: string, notification: Notification, icon: string): Promi
 
   try {
     await browser.notifications.create(id, options)
-  } catch {
-    if (options.iconUrl === icon) return
+  } catch (error) {
+    if (options.iconUrl === icon) throw error
     avatarsLoad = false
-    await browser.notifications
-      .create(id, { ...notification.options, iconUrl: icon })
-      .catch(() => undefined)
+    await browser.notifications.create(id, { ...notification.options, iconUrl: icon })
   }
 }
 
