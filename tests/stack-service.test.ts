@@ -351,6 +351,17 @@ describe('item service', () => {
     assert.equal(calls.length, 2)
   })
 
+  it('does not ask for a quick retry after an error that cannot clear by itself', async () => {
+    const { service } = createItemHarness([], async () => {
+      throw Object.assign(new Error('That token was rejected by GitHub.'), { retryable: false })
+    })
+
+    const answer = await service.items({ ids: ['PR_1'], freshMs: FRESH_MS })
+
+    assert.deepEqual(answer.failedIds, ['PR_1'])
+    assert.deepEqual(answer.retryIds, [])
+  })
+
   it('does not retry a row GitHub would not return until the window has passed', async () => {
     const clock = { now: 10_000 }
     const { service, calls } = createItemHarness(

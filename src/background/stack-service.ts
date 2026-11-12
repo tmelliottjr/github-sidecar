@@ -213,7 +213,11 @@ export interface ItemsAnswer {
   items: FetchedItem[]
   /** Rows with no copy at all. */
   failedIds: string[]
-  /** The rows among `failedIds` whose read failed on the network, not on GitHub's answer. */
+  /**
+   * The rows among `failedIds` whose read failed on an error that can clear by
+   * itself, such as the network, rather than a refused token, a rate limit, or
+   * GitHub's answer.
+   */
   retryIds: string[]
 }
 
@@ -231,8 +235,8 @@ export function createItemService({
   onError,
   now = Date.now,
 }: ItemServiceDeps) {
-  /** When each read last failed, and whether it failed on the network. */
-  const failures = new Map<string, { at: number; network: boolean }>()
+  /** When each read last failed, and whether trying again unchanged could succeed. */
+  const failures = new Map<string, { at: number; retryable: boolean }>()
 
   const loadOnce = createLoader<FetchedItem>({
     name: 'rows',
@@ -250,12 +254,15 @@ export function createItemService({
           const result = await fetchItems(batch)
           records.push(...result.items)
           failedIds.push(...result.failedIds)
-          for (const id of result.failedIds) failures.set(id, { at: now(), network: false })
+          for (const id of result.failedIds) failures.set(id, { at: now(), retryable: false })
           error ??= result.error
         } catch (caught) {
           onError?.(caught)
           failedIds.push(...batch)
-          for (const id of batch) failures.set(id, { at: now(), network: true })
+          // GitHubApiError marks a refused token or a rate limit as not
+          // retryable. A network failure arrives as a plain TypeError.
+          const retryable = (caught as { retryable?: unknown } | null)?.retryable !== false
+          for (const id of batch) failures.set(id, { at: now(), retryable })
         }
       }
       for (const record of records) failures.delete(record.id)
@@ -297,7 +304,7 @@ export function createItemService({
       return {
         items: [...records, ...stale],
         failedIds: missing,
-        retryIds: missing.filter((id) => failures.get(id)?.network === true),
+        retryIds: missing.filter((id) => failures.get(id)?.retryable === true),
       }
     },
   }

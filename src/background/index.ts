@@ -379,8 +379,9 @@ async function refreshAttention(): Promise<void> {
     const cached = read.failedIds.length > 0 ? await indexedDbStore.findItems(read.failedIds) : []
     unlisted.push(...read.items, ...cached)
     // With no row to show, a reminder that has come round waits for the next
-    // pass, and a timed one may have no other pass coming. A network failure
-    // is worth another try soon; a row GitHub would not return is not.
+    // pass, and a timed one may have no other pass coming. A read that failed
+    // on the network is worth another try soon; a refused token, a rate limit,
+    // or a row GitHub would not return is not.
     const shown = new Set(cached.map((item) => item.id))
     if (read.retryIds.some((id) => !shown.has(id))) retryAt = Date.now() + REMINDER_RETRY_MS
   }
