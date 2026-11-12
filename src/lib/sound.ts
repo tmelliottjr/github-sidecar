@@ -27,6 +27,12 @@ export interface Sound {
   /** What it is for, said in the way the reader would describe it. */
   description: string
   notes: Note[]
+  /**
+   * Peak level of a note at full volume. Set per sound so each one measures
+   * -23 LUFS at full volume (maximum momentary loudness, ITU-R BS.1770), the
+   * middle of the macOS alert sounds; `tests/sound.browser.test.ts` checks it.
+   */
+  gain: number
 }
 
 export const SOUNDS: Record<SoundName, Sound> = {
@@ -37,11 +43,13 @@ export const SOUNDS: Record<SoundName, Sound> = {
       { hz: 880, at: 0, length: 0.12 },
       { hz: 1318.5, at: 0.12, length: 0.16 },
     ],
+    gain: 0.257,
   },
   ping: {
     label: 'Ping',
-    description: 'One soft note',
-    notes: [{ hz: 740, at: 0, length: 0.12, level: 0.6 }],
+    description: 'One short note',
+    notes: [{ hz: 740, at: 0, length: 0.12 }],
+    gain: 0.423,
   },
   bell: {
     label: 'Bell',
@@ -50,6 +58,7 @@ export const SOUNDS: Record<SoundName, Sound> = {
       { hz: 1046.5, at: 0, length: 0.7 },
       { hz: 1568, at: 0, length: 0.5, level: 0.35 },
     ],
+    gain: 0.179,
   },
   knock: {
     label: 'Knock',
@@ -58,6 +67,7 @@ export const SOUNDS: Record<SoundName, Sound> = {
       { hz: 196, at: 0, length: 0.07, type: 'triangle' },
       { hz: 196, at: 0.11, length: 0.07, type: 'triangle' },
     ],
+    gain: 0.461,
   },
   marimba: {
     label: 'Marimba',
@@ -67,18 +77,17 @@ export const SOUNDS: Record<SoundName, Sound> = {
       { hz: 880, at: 0.08, length: 0.09, type: 'triangle' },
       { hz: 1174.7, at: 0.16, length: 0.18, type: 'triangle' },
     ],
+    gain: 0.283,
   },
   none: {
     label: 'Silent',
     description: 'Nothing at all',
     notes: [],
+    gain: 0,
   },
 }
 
 export const SOUND_NAMES = Object.keys(SOUNDS) as SoundName[]
-
-/** Loud enough to hear across a desk, quiet enough not to be resented. */
-const FULL_GAIN = 0.12
 
 export function isSoundName(value: unknown): value is SoundName {
   return typeof value === 'string' && value in SOUNDS
@@ -93,12 +102,12 @@ export function isSoundName(value: unknown): value is SoundName {
  * which is the difference between a chime and a fault.
  */
 export function playSound(
-  context: AudioContext,
+  context: BaseAudioContext,
   name: SoundName,
   volume = 1,
 ): void {
   const sound = SOUNDS[name]
-  const level = Math.max(0, Math.min(1, volume)) * FULL_GAIN
+  const level = Math.max(0, Math.min(1, volume)) * (sound?.gain ?? 0)
   if (!sound || sound.notes.length === 0 || level === 0) return
 
   const begin = context.currentTime + 0.01

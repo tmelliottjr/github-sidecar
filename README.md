@@ -609,10 +609,16 @@ for. The notification arrives regardless.
 
 There are five of them — chime, ping, bell, knock, marimba — plus silence,
 chosen under the kind of notification they belong to: the default pair is a
-two-note chime for what was asked for and a softer single note for what merely
+two-note chime for what was asked for and a single short note for what merely
 happened. Volume is the reader's, and every control on the settings page plays
 what it is about the moment it is touched, because a list of names for noises is
 not a choice anyone can make by reading it.
+
+Every sound plays at the same loudness at full volume: -23 LUFS (maximum
+momentary loudness, ITU-R BS.1770), the middle of the macOS alert sounds in
+`/System/Library/Sounds`, so 100% is as loud as a system alert. Each sound has
+its own gain for this, and `tests/sound.browser.test.ts` renders every sound to
+check it.
 
 Each sound is a handful of numbers — frequency, start, length — turned into
 sine or triangle notes with a short fade at both ends, since a square-edged
