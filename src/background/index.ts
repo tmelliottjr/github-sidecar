@@ -25,6 +25,7 @@ import {
   searchUrl,
   MAX_INDIVIDUAL,
   type Notification,
+  type NotificationEntry,
   type NotificationTarget,
 } from '@/lib/notify'
 import { carryEnrichment, mergeEnrichments } from '@/lib/github/enrichment'
@@ -122,6 +123,21 @@ const TARGET_PREFIX = 'notification:'
 
 /** How long a "remind me in an hour" from a notification button waits. */
 const LATER_MS = 60 * 60_000
+
+/** What **Send a test notification** shows: a reminder for a made-up row. */
+const TEST_REMINDER: NotificationEntry = {
+  item: {
+    id: 'sidecar-test',
+    title: 'Make the sidebar say what changed',
+    url: 'https://github.com/acme/app/pull/34',
+    repository: 'acme/app',
+    number: 34,
+    authorLogin: 'octocat',
+    authorAvatarUrl: null,
+  },
+  reason: 'reminder',
+  summary: 'Reminder · 3 new comments',
+}
 
 /**
  * Plays the panel's own notification sound. Chrome notifications make no
@@ -552,25 +568,14 @@ async function handle(
       }
       const { notifications: testNotifications } = await readStorage('settings')
       const testSound = willPlay(testNotifications.sounds, 'reminder')
-      if (testSound) await playSound('reminder')
       const testIcon = browser.runtime.getURL('icon-128.png')
-      await browser.notifications.create('sidecar-test', {
-        type: 'basic',
-        iconUrl: testIcon,
-        title: 'Make the sidebar say what changed',
-        // What the reader sees here is what they would see for a real row, so
-        // on a browser that shows only a title and a body, so does this.
-        ...(can.richNotifications
-          ? {
-              message: 'Reminder · 3 new comments',
-              contextMessage: 'acme/app #34 · by octocat',
-              eventTime: Date.now(),
-              priority: 2,
-              silent: testSound,
-              buttons: [{ title: 'Remind me in an hour' }],
-            }
-          : { message: 'Reminder · 3 new comments\nacme/app #34 · by octocat' }),
-      })
+      // Built like a real reminder, so the test takes the path reminders take.
+      await show(
+        'sidecar-test',
+        buildNotification(TEST_REMINDER, testIcon, { ownSound: testSound }),
+        testIcon,
+      )
+      if (testSound) await playSound('reminder')
       return undefined
     }
     case 'open-options': {

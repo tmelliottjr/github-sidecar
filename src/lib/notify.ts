@@ -1,5 +1,6 @@
 import type { WaitingItem } from './attention'
 import { can } from './browser.ts'
+import type { SearchItem } from './github/types'
 
 /**
  * What a notification says, and what acting on it should do.
@@ -61,8 +62,16 @@ export interface NotificationStyle {
   ownSound?: boolean
 }
 
+/** The parts of a waiting row that one notification shows. */
+export type NotificationEntry = Pick<WaitingItem, 'reason' | 'summary'> & {
+  item: Pick<
+    SearchItem,
+    'id' | 'title' | 'url' | 'repository' | 'number' | 'authorLogin' | 'authorAvatarUrl'
+  >
+}
+
 export function buildNotification(
-  entry: WaitingItem,
+  entry: NotificationEntry,
   icon: string,
   { rich = can.richNotifications, ownSound = false }: NotificationStyle = {},
 ): Notification {

@@ -959,10 +959,10 @@ on purpose. Switched on, it gives each named reminder a length in seconds
 instead of a place on the clock, and the menu says so: **In an hour · 30s**. The
 choice that waits on the row is left alone, having no clock to override.
 
-It also sends a test notification, which answers the question that brings most
-people here — whether nothing appeared because nothing fired, or because the
-browser was never given permission to show it. On Safari there is nothing to
-test, so the button is not shown.
+It also sends a test notification, built like a real reminder, which answers
+the question that brings most people here — whether nothing appeared because
+nothing fired, or because the browser was never given permission to show it. On
+Safari there is nothing to test, so the button is not shown.
 
 Switched on, it adds a control to the sidebar's header that opens this section,
 and the section carries a log of every request the worker has made this browser

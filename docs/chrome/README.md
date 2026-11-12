@@ -71,4 +71,5 @@ buttons, a list, a dim third line, and the author's avatar.
 | "Manifest file is missing or unreadable" | `dist/chrome` was selected before `npm run build:chrome` finished, or `dist/` was selected instead of `dist/chrome`. |
 | Panel does not appear on github.com | The content script loads at `document_idle` on `https://github.com/*` only. Refresh the tab after reloading the extension. |
 | Notifications never arrive | The `notifications` permission is optional and is asked for when the switch is turned on in settings. macOS can also suppress Chrome's notifications system-wide. |
+| Reminders never arrive, but changes do | On macOS, Chrome shows reminders and the test notification through a separate helper app, **Google Chrome Helper (Alerts)**, with its own entry under **System Settings → Notifications**. Allow notifications for it. |
 | No sound | The panel plays its own sound in an offscreen document. Check the volume and the per-kind sound in settings; **Silent** is one of the choices. |
