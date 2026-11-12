@@ -9,6 +9,7 @@ import {
   STACKS_QUERY,
   enrichItems,
   fetchItem,
+  fetchItems,
   fetchLayerReviews,
   fetchStacks,
   resetPreviewSupport,
@@ -726,6 +727,43 @@ describe('stacked pull requests', () => {
 
     assert.deepEqual(result.stacks.map((stack) => stack.id), ['STACK_7'])
     assert.deepEqual(result.failedIds, ['STACK_hidden'])
+  })
+})
+
+describe('fetchItems', () => {
+  it('reads rows whole by node id, whichever query listed them', async () => {
+    stubFetch(nodesPayload([pullRequestNode, issueNode]))
+
+    const { items, failedIds, error } = await fetchItems('token', ['PR_1', 'I_1'])
+
+    assert.deepEqual(items.map((item) => item.id), ['PR_1', 'I_1'])
+    assert.equal(items[0].enrichment, 'ready')
+    assert.equal(items[0].reviewDecision, 'CHANGES_REQUESTED')
+    assert.equal(typeof items[0].fetchedAt, 'number')
+    assert.deepEqual(failedIds, [])
+    assert.equal(error, null)
+  })
+
+  it('reports rows GitHub did not answer for', async () => {
+    // `nodes(ids:)` answers with null for a row that is gone or out of reach.
+    stubFetch(nodesPayload([null, pullRequestNode]))
+
+    const { items, failedIds, error } = await fetchItems('token', ['PR_gone', 'PR_1'])
+
+    assert.deepEqual(items.map((item) => item.id), ['PR_1'])
+    assert.deepEqual(failedIds, ['PR_gone'])
+    assert.equal(error, 'GitHub did not answer for every row.')
+  })
+
+  it('asks nothing at all for no rows', async () => {
+    let called = false
+    globalThis.fetch = (async () => {
+      called = true
+      return new Response('{}', { status: 200 })
+    }) as unknown as typeof fetch
+
+    assert.deepEqual(await fetchItems('token', []), { items: [], failedIds: [], error: null })
+    assert.equal(called, false)
   })
 })
 

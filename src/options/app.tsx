@@ -665,6 +665,7 @@ const OPERATION_LABELS: Record<ApiLogEntry['operation'], string> = {
   search: 'Search',
   enrich: 'Row detail',
   item: 'Single row',
+  rows: 'Rows by id',
   stacks: 'Stacks',
   'layer-reviews': 'Layer reviews',
 }

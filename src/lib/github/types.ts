@@ -179,6 +179,12 @@ export interface SearchItem {
   enrichment: EnrichmentState
 }
 
+/** A row read on its own by node id, rather than listed by a search. */
+export interface FetchedItem extends SearchItem {
+  /** When the request that read it started. A newer read replaces an older one. */
+  fetchedAt: number
+}
+
 export interface SearchPage {
   items: SearchItem[]
   totalCount: number
