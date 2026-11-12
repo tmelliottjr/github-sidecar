@@ -421,6 +421,14 @@ answers would go on saying "waiting" until the next poll. Change reminders need
 neither: they can only come due when new results arrive, which redraws the
 panel and wakes the worker anyway.
 
+A reminder belongs to the row, not to the query that listed it. Where the
+active query does not list a row with a due reminder, or one waiting for a
+change, the worker reads that row by id, so the reminder still counts and still
+notifies. A merged pull request leaves every `is:open` query in the same poll
+that makes its **When it changes** reminder due, and this is how it is heard
+from anyway. Rows read this way are refreshed no more often than the list, and a
+reminder set for later costs nothing until it comes due.
+
 </details>
 
 <details>
@@ -516,7 +524,8 @@ The count on the toolbar icon and the notification that something moved — or
 that a reminder has come round — are both worked out in the service worker, because both have to be right in a
 browser with no github.com tab open at all — which is exactly when the panel is
 not running. The worker reads the same cached pages the panel does and the same
-record of what the reader has seen.
+record of what the reader has seen, plus any row with a reminder that the
+active query does not list, read by id.
 
 A notification has three pieces of text of decreasing weight, and using them
 carelessly leads to a title reading `acme/app #34` — the one thing the reader

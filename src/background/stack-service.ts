@@ -202,15 +202,20 @@ export function createLayerReviewService({
 export interface ItemServiceDeps {
   store: ItemStore
   fetchItems: (ids: readonly string[]) => Promise<ItemsResult>
+  /** Called with the rows each read returned. No tab lists them, so none is told. */
+  onRead?: (items: FetchedItem[]) => void
   onError?: (error: unknown) => void
   now?: () => number
 }
 
-/**
- * Answers rows by node id, reading those missing or older than `freshMs`.
- * These are rows no tab lists, so nothing is sent to the tabs.
- */
-export function createItemService({ store, fetchItems, onError, now = Date.now }: ItemServiceDeps) {
+/** Answers rows by node id, reading those missing or older than `freshMs`. */
+export function createItemService({
+  store,
+  fetchItems,
+  onRead,
+  onError,
+  now = Date.now,
+}: ItemServiceDeps) {
   const loadOnce = createLoader<FetchedItem>({
     name: 'rows',
     store,
@@ -235,7 +240,7 @@ export function createItemService({ store, fetchItems, onError, now = Date.now }
       }
       return { records, failedIds, error }
     },
-    broadcast: () => undefined,
+    broadcast: (items) => onRead?.(items),
     onError,
   })
 

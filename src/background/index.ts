@@ -2,6 +2,7 @@ import {
   GitHubApiError,
   enrichItems,
   fetchItem,
+  fetchItems,
   fetchLayerReviews,
   fetchStacks,
   fetchViewer,
@@ -16,6 +17,7 @@ import {
   pendingNotifications,
   signatureOf,
   uniqueItems,
+  unlistedReminderIds,
   waitingItems,
   type WaitingItem,
 } from '@/lib/attention'
@@ -33,9 +35,14 @@ import { readStorage, writeStorage, type SoundSettings } from '@/lib/storage'
 import { browser, can, browserName } from '@/lib/browser'
 import { clearApiLog, readApiLog, recordApiCall } from './api-log'
 import { playNotificationSound } from './audio'
-import { indexedDbLayerReviewStore, indexedDbStackStore, indexedDbStore } from './cache'
+import {
+  indexedDbItemStore,
+  indexedDbLayerReviewStore,
+  indexedDbStackStore,
+  indexedDbStore,
+} from './cache'
 import { createSearchService, freshnessWindow, MAX_CACHE_AGE_MS } from './search-service'
-import { createLayerReviewService, createStackService } from './stack-service'
+import { createItemService, createLayerReviewService, createStackService } from './stack-service'
 import { startDevReload } from './dev-reload'
 
 const POPUP_WIDTH = 1100
@@ -296,7 +303,12 @@ async function readTarget(id: string): Promise<NotificationTarget | null> {
 async function actOn(target: NotificationTarget): Promise<void> {
   if (!target.action) return
 
-  const items = await indexedDbStore.findItems(target.itemIds)
+  const listed = await indexedDbStore.findItems(target.itemIds)
+  const found = new Set(listed.map((item) => item.id))
+  const missing = target.itemIds.filter((id) => !found.has(id))
+  // A row read by id for its reminder can be in no cached page at all.
+  const items =
+    missing.length > 0 ? [...listed, ...(await indexedDbItemStore.read(missing))] : listed
   if (items.length === 0) return
 
   const memory = await readStorage('itemMemory')
@@ -346,11 +358,26 @@ async function refreshAttention(): Promise<void> {
     indexedDbStore.readQuery(query),
     readStorage('itemMemory'),
   ])
-  const waiting = waitingItems(
-    uniqueItems(entries.flatMap((entry) => entry.page.items)),
-    memory,
-    { reminders: features.reminders, hiding: features.hide },
-  )
+  const listed = uniqueItems(entries.flatMap((entry) => entry.page.items))
+  // Reminders belong to rows, not to the query that listed them. A merged pull
+  // request leaves every `is:open` query in the same poll that makes its "when
+  // it changes" reminder due, so rows the active query does not list are read
+  // by id.
+  const reminderIds = features.reminders ? unlistedReminderIds(memory, listed) : []
+  const unlisted =
+    reminderIds.length > 0
+      ? (
+          await itemService.items({
+            ids: reminderIds,
+            freshMs: freshnessWindow(settings.pollIntervalMs),
+          })
+        ).items
+      : []
+  const waiting = waitingItems(listed, memory, {
+    reminders: features.reminders,
+    hiding: features.hide,
+    unlisted,
+  })
 
   await armReminderAlarm(features.reminders ? memory : {})
 
@@ -457,11 +484,28 @@ const layerReviewService = createLayerReviewService({
   onError: (error) => console.warn('[github-sidecar] could not read layer reviews', error),
 })
 
-/** Drops cached pages, stacks, and layer reviews older than a day. */
+const itemService = createItemService({
+  store: indexedDbItemStore,
+  fetchItems: async (ids) => fetchItems(await requireToken(), ids),
+  // A row read by id replaces its copies in cached pages, as a refreshed row
+  // does, so those queries and the notification buttons see it as it is now.
+  onRead: (items) => {
+    for (const { fetchedAt, ...item } of items) {
+      void fetchedAt
+      void indexedDbStore.updateItem(item).catch((error: unknown) => {
+        console.warn('[github-sidecar] could not cache a row read by id', error)
+      })
+    }
+  },
+  onError: (error) => console.warn('[github-sidecar] could not read rows with reminders', error),
+})
+
+/** Drops cached pages, stacks, layer reviews, and rows read by id older than a day. */
 function pruneCaches(): void {
   void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
   void indexedDbStackStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
   void indexedDbLayerReviewStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+  void indexedDbItemStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
 }
 
 async function openItem(url: string, target: 'window' | 'tab'): Promise<void> {
