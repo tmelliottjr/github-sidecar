@@ -302,6 +302,11 @@ export interface WaitingOptions {
    */
   reminders?: boolean
   hiding?: boolean
+  /**
+   * Rows with reminders that `items` does not list, read by id. Only their
+   * reminders count: the reader asked about them by name, wherever they are.
+   */
+  unlisted?: readonly SearchItem[]
 }
 
 /**
@@ -316,33 +321,63 @@ export interface WaitingOptions {
 export function waitingItems(
   items: readonly SearchItem[],
   memory: Record<string, ItemMemory>,
-  { now = Date.now(), reminders = true, hiding = true }: WaitingOptions = {},
+  { now = Date.now(), reminders = true, hiding = true, unlisted = [] }: WaitingOptions = {},
 ): WaitingItem[] {
   const waiting: WaitingItem[] = []
 
-  for (const item of items) {
-    const entry = memory[item.id]
-    const seen = entry?.seen
+  const describe = (item: SearchItem) => {
+    const seen = memory[item.id]?.seen
     const changes = seen ? changesSince(seen, item) : []
     const summary = seen && changes.length > 0 ? describeChanges(changes, item, seen) : ''
+    return { changes, summary }
+  }
 
-    if (reminders && reminderState(entry, item, now) === 'due') {
-      waiting.push({
-        item,
-        reason: 'reminder',
-        changes,
-        summary: summary ? `Reminder · ${summary}` : 'Reminder',
-      })
-      continue
-    }
+  /** Adds the row if its reminder has come round, and says whether it did. */
+  const addDueReminder = (item: SearchItem): boolean => {
+    if (!reminders || reminderState(memory[item.id], item, now) !== 'due') return false
+    const { changes, summary } = describe(item)
+    waiting.push({
+      item,
+      reason: 'reminder',
+      changes,
+      summary: summary ? `Reminder · ${summary}` : 'Reminder',
+    })
+    return true
+  }
+
+  for (const item of items) {
+    if (addDueReminder(item)) continue
 
     // A hidden row is one the reader has said they do not want to see, so it
     // is not counted either — a reminder is the way to hear from one.
-    if (changes.length === 0 || (hiding && isHidden(entry))) continue
+    const { changes, summary } = describe(item)
+    if (changes.length === 0 || (hiding && isHidden(memory[item.id]))) continue
     waiting.push({ item, reason: 'change', changes, summary })
   }
 
+  for (const item of unlisted) addDueReminder(item)
+
   return waiting
+}
+
+/**
+ * Rows with a reminder that could be due now and that `listed` does not
+ * include: due timed reminders, and every reminder that waits for a change.
+ * A timed reminder still to come needs no row until it comes due.
+ */
+export function unlistedReminderIds(
+  memory: Record<string, ItemMemory>,
+  listed: readonly SearchItem[],
+  now = Date.now(),
+): string[] {
+  const listedIds = new Set(listed.map((item) => item.id))
+  return Object.entries(memory)
+    .filter(([id, entry]) => {
+      const reminder = entry.reminder
+      if (!reminder || listedIds.has(id)) return false
+      return reminder.dueAt === null || reminder.dueAt <= now
+    })
+    .map(([id]) => id)
 }
 
 /** The same row can be on several cached pages; it is still one row. */

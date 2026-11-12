@@ -8,6 +8,7 @@ import {
   pendingNotifications,
   signatureOf,
   uniqueItems,
+  unlistedReminderIds,
   waitingItems,
   waitingStamp,
   type ItemMemory,
@@ -132,6 +133,56 @@ describe('what is waiting', () => {
     assert.equal(badgeText(-1), '')
     assert.equal(badgeText(7), '7')
     assert.equal(badgeText(120), '99+')
+  })
+})
+
+describe('reminders on rows the active query does not list', () => {
+  it('counts one that has come round, and nothing else about those rows', () => {
+    const memory = memoryOf(item('a'), item('b'))
+    memory.a.reminder = { dueAt: 500, signature: signatureOf(item('a')), setAt: 0 }
+
+    const waiting = waitingItems([], memory, {
+      now: 600,
+      unlisted: [item('a', { commentCount: 4 }), item('b', { commentCount: 9 })],
+    })
+
+    assert.deepEqual(
+      waiting.map((entry) => [entry.item.id, entry.reason, entry.summary]),
+      [['a', 'reminder', 'Reminder · 3 new comments']],
+    )
+  })
+
+  it('fires one waiting for a change when the row merges out of the list', () => {
+    const memory = memoryOf(item('a'))
+    memory.a.reminder = { dueAt: null, signature: signatureOf(item('a')), setAt: 0 }
+
+    const waiting = waitingItems([], memory, { unlisted: [item('a', { state: 'merged' })] })
+
+    assert.deepEqual(
+      waiting.map((entry) => [entry.reason, entry.summary]),
+      [['reminder', 'Reminder · Merged']],
+    )
+  })
+
+  it('says nothing about them while reminders are switched off', () => {
+    const memory = memoryOf(item('a'))
+    memory.a.reminder = { dueAt: 500, signature: signatureOf(item('a')), setAt: 0 }
+
+    assert.deepEqual(
+      waitingItems([], memory, { now: 600, reminders: false, unlisted: [item('a')] }),
+      [],
+    )
+  })
+
+  it('reads only rows whose reminder could be due now', () => {
+    const memory = memoryOf(item('due'), item('later'), item('change'), item('listed'), item('none'))
+    const signature = signatureOf(item('due'))
+    memory.due.reminder = { dueAt: 500, signature, setAt: 0 }
+    memory.later.reminder = { dueAt: 5000, signature, setAt: 0 }
+    memory.change.reminder = { dueAt: null, signature, setAt: 0 }
+    memory.listed.reminder = { dueAt: 500, signature, setAt: 0 }
+
+    assert.deepEqual(unlistedReminderIds(memory, [item('listed')], 600), ['due', 'change'])
   })
 })
 
