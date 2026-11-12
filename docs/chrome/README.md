@@ -64,6 +64,11 @@ documents, so it is the only one that plays the notification sound from a
 document of the extension's own, and the only one whose notifications carry
 buttons, a list, a dim third line, and the author's avatar.
 
+On macOS, Chrome shows only the first item of a list, so grouped notifications
+write their rows into the body instead. Chrome also adds a **Settings** action
+to every extension notification, which does nothing, so the one button sits
+with it under an **Options** menu.
+
 ## Troubleshooting
 
 | Symptom | Cause |

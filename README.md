@@ -553,7 +553,9 @@ and it stays until it is dealt with. A change was not, so it is quieter and
 ordinary. More than two at once stop being news and become a flood, so they
 arrive as one list — five rows named, the rest counted, clicking through to the
 search that produced them. Where there is no list type the same rows are written
-into the body, which says the same thing with less ceremony.
+into the body, which says the same thing with less ceremony. Chrome on macOS
+shows only the first item of a list, so there the rows go in the body too, each
+with what happened to it.
 
 A change is announced once. The row's signature is remembered per notification,
 along with why it was announced, so a row that changes again is announced
@@ -833,7 +835,7 @@ browser will let an extension do when the panel is *not* on screen.
 | Count on the toolbar icon | Yes | Yes | Yes |
 | Desktop notifications | Yes | Plain | Not offered |
 | Buttons on a notification | Yes | No | — |
-| Several at once as one grouped list | Yes | Written into the body | — |
+| Several at once as one grouped list | Yes (macOS: written into the body) | Written into the body | — |
 | The author's face as the icon | Yes | Extension icon only | — |
 | Notification sounds | The panel's own | The system's | Not offered |
 

@@ -225,6 +225,33 @@ describe('several at once', () => {
     assert.match(options.message ?? '', /acme\/app #0/)
   })
 
+  // Chrome on macOS shows only the first item of a list, in place of the
+  // message, so the rows go in the body there.
+  it('writes the rows into the body where only the first item of a list shows', () => {
+    const { options, target } = buildGroupNotification(many, ICON, {
+      queryName: 'Needs my review',
+      url: null,
+      listItems: false,
+    })
+
+    assert.equal(options.type, 'basic')
+    assert.equal(options.items, undefined)
+    assert.equal(
+      options.message,
+      [
+        'acme/app #0 · 0 new comments',
+        'acme/app #1 · 1 new comments',
+        'acme/app #2 · 2 new comments',
+        'acme/app #3 · 3 new comments',
+        'acme/app #4 · 4 new comments',
+        'and 2 more',
+      ].join('\n'),
+    )
+    assert.equal(options.contextMessage, 'Needs my review')
+    assert.deepEqual(options.buttons, [{ title: 'Mark all as seen' }])
+    assert.equal(target.action, 'seen')
+  })
+
   it('is as loud as the loudest reason in it', () => {
     const quiet = buildGroupNotification(many, ICON, { queryName: null, url: null }).options
     assert.equal(quiet.silent, true)

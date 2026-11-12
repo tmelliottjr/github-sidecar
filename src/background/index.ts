@@ -206,6 +206,7 @@ async function announce(waiting: readonly WaitingItem[]): Promise<void> {
           queryName: active?.name ?? null,
           url: active ? searchUrl(active.query) : null,
           ownSound: willPlay(notifications.sounds, loudest),
+          listItems: await showsListItems(),
         }),
         icon,
       )
@@ -263,6 +264,17 @@ function kindsIn(entries: readonly WaitingItem[]): Array<WaitingItem['reason']> 
  * certainly there.
  */
 let avatarsLoad = true
+
+/** Chrome on macOS shows only the first item of a list notification. */
+let listItemsShown: Promise<boolean> | null = null
+
+function showsListItems(): Promise<boolean> {
+  listItemsShown ??= browser.runtime.getPlatformInfo().then(
+    (platform) => platform.os !== 'mac',
+    () => true,
+  )
+  return listItemsShown
+}
 
 /** Whether the panel itself will make a noise for this kind of notification. */
 function willPlay(sounds: SoundSettings, kind: 'reminder' | 'change'): boolean {
