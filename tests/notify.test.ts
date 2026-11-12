@@ -77,6 +77,17 @@ describe('one notification', () => {
     )
   })
 
+  it('asks GitHub for a larger copy of the avatar than the list draws', () => {
+    const github = item({
+      authorAvatarUrl: 'https://avatars.githubusercontent.com/u/1?s=28&u=abc&v=4',
+    })
+
+    assert.equal(
+      buildNotification({ ...change, item: github }, ICON).options.iconUrl,
+      'https://avatars.githubusercontent.com/u/1?s=160&u=abc&v=4',
+    )
+  })
+
   it('lets a reminder interrupt, and leaves a change to be noticed', () => {
     const asked = buildNotification(reminder, ICON).options
     const unasked = buildNotification(change, ICON).options
@@ -134,8 +145,17 @@ describe('where the browser shows less', () => {
     assert.equal(options.contextMessage, undefined)
   })
 
-  it('wears the extension’s own icon, the only one that will load', () => {
-    assert.equal(buildNotification(change, ICON, { rich: false }).options.iconUrl, ICON)
+  it('wears the author’s face too, and the extension’s where there is none', () => {
+    assert.equal(
+      buildNotification(change, ICON, { rich: false }).options.iconUrl,
+      'https://avatars.example/u/1',
+    )
+    assert.equal(
+      buildNotification({ ...change, item: item({ authorAvatarUrl: null }) }, ICON, {
+        rich: false,
+      }).options.iconUrl,
+      ICON,
+    )
   })
 
   it('offers no button, and no action behind one that is not there', () => {

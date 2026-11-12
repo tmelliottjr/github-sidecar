@@ -94,14 +94,14 @@ settings page has no sounds to pick. The sound is changed or muted for Firefox
 in the system's notification settings.
 
 Notifications are plainer, because Firefox shows only a title, a body, and an
-icon that ships with the extension:
+icon:
 
 | | Chrome | Firefox |
 | --- | --- | --- |
 | Buttons (**Mark as seen**, **Remind me in an hour**) | Yes | No |
 | Several rows as one grouped list | Yes | Written into the body instead |
 | Dim third line (`acme/app #34 · by octocat`) | Yes | Folded into the body |
-| Author's avatar as the icon | Yes | Extension icon only |
+| Author's avatar as the icon | Yes | Yes |
 | Reminders that stay until dismissed | Yes | No |
 | Sound | Picked in settings | The system notification sound |
 

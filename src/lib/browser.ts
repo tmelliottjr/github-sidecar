@@ -46,9 +46,9 @@ export interface Capabilities {
   /** Desktop notifications through the extension API at all. */
   notifications: boolean
   /**
-   * Notifications beyond a title, a message and an icon that ships with the
-   * extension. Chrome takes buttons, a list, a dimmed third line, a timestamp
-   * and a remote icon; Firefox takes none of them.
+   * Notifications beyond a title, a message and an icon. Chrome takes
+   * buttons, a list, a dimmed third line and a timestamp; Firefox takes none
+   * of them.
    */
   richNotifications: boolean
 }

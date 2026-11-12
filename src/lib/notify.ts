@@ -12,9 +12,8 @@ import type { SearchItem } from './github/types'
  * title leads, what happened comes next, and where it lives goes in the dim
  * line underneath, which is the order the reader asks the questions in.
  *
- * Firefox gives a notification a title, a body, an icon that has to come from
- * the extension itself, and nothing else: no buttons, no list, no dim third
- * line, no say in how loud it is. What Chrome puts in the third line is folded
+ * Firefox gives a notification a title, a body, an icon, and nothing else: no
+ * buttons, no list, no dim third line, no say in how loud it is. What Chrome puts in the third line is folded
  * into the body there rather than dropped, because a notification naming a row
  * without saying which repository it is in is a notification that has to be
  * clicked to be understood.
@@ -46,6 +45,24 @@ const MAX_LISTED = 5
 /** Chrome's own priorities: 2 is as loud as an extension is allowed to be. */
 const PRIORITY_REMINDER = 2
 const PRIORITY_CHANGE = 0
+
+/**
+ * Rows carry the 28px avatar the list draws, which a notification would
+ * upscale. GitHub serves any size of the same avatar through `s`.
+ */
+const AVATAR_SIZE = 160
+
+function notificationAvatar(url: string | null): string | null {
+  if (!url) return null
+  try {
+    const avatar = new URL(url)
+    if (avatar.hostname !== 'avatars.githubusercontent.com') return url
+    avatar.searchParams.set('s', String(AVATAR_SIZE))
+    return avatar.toString()
+  } catch {
+    return url
+  }
+}
 
 /**
  * How much of a notification this browser will actually show. Defaults to the
@@ -83,6 +100,9 @@ export function buildNotification(
 ): Notification {
   const { item, reason } = entry
   const isReminder = reason === 'reminder'
+  // The author's face where there is one: a notification is recognised before
+  // it is read, and every row here would otherwise carry the same mark.
+  const avatar = notificationAvatar(item.authorAvatarUrl)
 
   const context = [
     `${item.repository} #${item.number}`,
@@ -95,9 +115,9 @@ export function buildNotification(
     return {
       options: {
         type: 'basic',
-        // Only an icon the extension ships with will load here, so the
-        // author's face is not on offer.
-        iconUrl: icon,
+        // An avatar that will not load leaves the notification without an
+        // icon here, rather than failing it.
+        iconUrl: avatar ?? icon,
         title: item.title,
         message: `${entry.summary}\n${context}`,
       },
@@ -114,11 +134,8 @@ export function buildNotification(
   return {
     options: {
       type: 'basic',
-      // The author's face where there is one: a notification is recognised
-      // before it is read, and every row here would otherwise carry the same
-      // mark. Callers fall back to the extension's own icon if it will not
-      // load.
-      iconUrl: item.authorAvatarUrl ?? icon,
+      // Callers fall back to the extension's own icon if this will not load.
+      iconUrl: avatar ?? icon,
       title: item.title,
       message: entry.summary,
       contextMessage: context,

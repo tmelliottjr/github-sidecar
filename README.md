@@ -533,7 +533,9 @@ already knows, since they are the one tracking it. So the item's own title
 leads, what happened comes next, and where it lives goes in the dim line
 underneath: **Cache the search results** / *Checks failed · 3 new comments* /
 `acme/app #34 · by octocat`. The author's face is the icon where the browser
-will fetch it, because a notification is recognised before it is read.
+will fetch it, because a notification is recognised before it is read. The rows
+in the list carry a 28px avatar, which a notification would upscale, so
+notifications ask GitHub for a 160px copy of the same avatar.
 
 Each one carries the answer the reader would otherwise give by hand: **Mark as
 seen** for a change, **Remind me in an hour** for a reminder. Both write to the
@@ -541,8 +543,7 @@ same record the panel reads, so the row and the count agree with the button
 without anything being adjusted twice. Clicking the notification itself opens
 the row.
 
-Firefox shows only a title, a body, and an icon that ships with the extension.
-There the third line is folded into the body rather than dropped — a
+Firefox shows only a title, a body, and an icon. There the third line is folded into the body rather than dropped — a
 notification naming a row without saying which repository it is in has to be
 clicked to be understood — and there are no buttons, so clicking the body to
 open the row is the whole of it. Safari has no notifications at all; see
@@ -836,14 +837,14 @@ browser will let an extension do when the panel is *not* on screen.
 | Desktop notifications | Yes | Plain | Not offered |
 | Buttons on a notification | Yes | No | — |
 | Several at once as one grouped list | Yes (macOS: written into the body) | Written into the body | — |
-| The author's face as the icon | Yes | Extension icon only | — |
+| The author's face as the icon | Yes | Yes | — |
 | Notification sounds | The panel's own | The system's | Not offered |
 
 Safari gives web extensions no notifications API at all, so the settings page
 says so where those switches would otherwise be rather than offering a switch
 that does nothing. Firefox has notifications but shows only a title, a body, and
-an icon that ships with the extension, so what Chrome puts in the dim third line
-is folded into the body instead of being dropped.
+an icon, so what Chrome puts in the dim third line is folded into the body
+instead of being dropped.
 
 Chrome notifications make no sound on macOS, so on Chrome the panel plays its
 own, from an offscreen document because Chrome's background is a service

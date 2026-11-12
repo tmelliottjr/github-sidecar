@@ -256,12 +256,10 @@ function kindsIn(entries: readonly WaitingItem[]): Array<WaitingItem['reason']> 
 }
 
 /**
- * Whether Chrome will fetch an avatar for us. Notifications are drawn by the
- * browser, not by a page, so the image is fetched with the extension's own
- * privileges — and github.com's avatar host is not one this extension asks for.
- * Where that is refused it is refused every time, so the first failure is
- * remembered and every notification after it goes straight to the icon that is
- * certainly there.
+ * Whether avatars load in notifications. Chrome fetches the image from the
+ * worker, and GitHub serves avatars to any origin, so a failure means the host
+ * cannot be reached at all. That rarely clears within a worker lifetime, so
+ * later notifications go straight to the extension icon.
  */
 let avatarsLoad = true
 
