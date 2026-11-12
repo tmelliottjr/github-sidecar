@@ -1,5 +1,5 @@
-import type { LayerReviewsResult, StacksResult } from '@/lib/github/api'
-import type { LayerReview, Stack, StackedRow } from '@/lib/github/types'
+import type { ItemsResult, LayerReviewsResult, StacksResult } from '@/lib/github/api'
+import type { FetchedItem, LayerReview, Stack, StackedRow } from '@/lib/github/types'
 import type {
   LayerReviewsAnswer,
   LayerReviewsUpdate,
@@ -7,7 +7,8 @@ import type {
   StacksUpdate,
 } from '@/lib/messages'
 import { agrees } from '../lib/github/stacks.ts'
-import type { KeyedStore, LayerReviewStore, StackStore } from './cache'
+import type { ItemStore, KeyedStore, LayerReviewStore, StackStore } from './cache'
+import { ENRICH_BATCH } from './search-service.ts'
 
 type Stamped = { id: string; fetchedAt: number }
 
@@ -197,3 +198,65 @@ export function createLayerReviewService({
     },
   }
 }
+
+export interface ItemServiceDeps {
+  store: ItemStore
+  fetchItems: (ids: readonly string[]) => Promise<ItemsResult>
+  onError?: (error: unknown) => void
+  now?: () => number
+}
+
+/**
+ * Answers rows by node id, reading those missing or older than `freshMs`.
+ * These are rows no tab lists, so nothing is sent to the tabs.
+ */
+export function createItemService({ store, fetchItems, onError, now = Date.now }: ItemServiceDeps) {
+  const loadOnce = createLoader<FetchedItem>({
+    name: 'rows',
+    store,
+    read: async (ids) => {
+      const records: FetchedItem[] = []
+      const failedIds: string[] = []
+      let error: string | null = null
+      // A few rows per request, as with enrichment: every field is asked for,
+      // and GitHub gives a request ten seconds.
+      for (let start = 0; start < ids.length; start += ENRICH_BATCH) {
+        const batch = ids.slice(start, start + ENRICH_BATCH)
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const result = await fetchItems(batch)
+          records.push(...result.items)
+          failedIds.push(...result.failedIds)
+          error ??= result.error
+        } catch (caught) {
+          onError?.(caught)
+          failedIds.push(...batch)
+        }
+      }
+      return { records, failedIds, error }
+    },
+    broadcast: () => undefined,
+    onError,
+  })
+
+  return {
+    async items({
+      ids,
+      freshMs,
+    }: {
+      ids: readonly string[]
+      freshMs: number
+    }): Promise<{ items: FetchedItem[]; failedIds: string[] }> {
+      const { records, failedIds } = await answer(
+        [...new Set(ids)],
+        store,
+        (item) => now() - item.fetchedAt < freshMs,
+        loadOnce,
+        onError,
+      )
+      return { items: records, failedIds }
+    },
+  }
+}
+
+export type ItemService = ReturnType<typeof createItemService>

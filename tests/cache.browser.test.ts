@@ -218,4 +218,22 @@ describe('indexedDb cache store', { concurrency: false, skip }, () => {
 
     assert.deepEqual(remaining, ['new'])
   })
+
+  it('keeps rows read by id in a store of their own', async () => {
+    const result = await page.evaluate(async () => {
+      const { indexedDbItemStore } = (globalThis as never as { CacheModule: any }).CacheModule
+      const row = (title: string, fetchedAt: number) => ({ id: 'PR_1', title, fetchedAt })
+
+      await indexedDbItemStore.write([row('newer', 200)])
+      const kept = await indexedDbItemStore.write([row('older', 100)])
+      const read = await indexedDbItemStore.read(['PR_1', 'missing'])
+
+      return {
+        kept: kept.map((copy: { title: string }) => copy.title),
+        read: read.map((copy: { title: string }) => copy.title),
+      }
+    })
+
+    assert.deepEqual(result, { kept: ['newer'], read: ['newer'] })
+  })
 })

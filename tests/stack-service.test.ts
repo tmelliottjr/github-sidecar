@@ -2,9 +2,13 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import type { KeyedStore } from '../src/background/cache.ts'
-import { createLayerReviewService, createStackService } from '../src/background/stack-service.ts'
-import type { LayerReviewsResult, StacksResult } from '../src/lib/github/api.ts'
-import type { LayerReview, Stack, StackedRow } from '../src/lib/github/types.ts'
+import {
+  createItemService,
+  createLayerReviewService,
+  createStackService,
+} from '../src/background/stack-service.ts'
+import type { ItemsResult, LayerReviewsResult, StacksResult } from '../src/lib/github/api.ts'
+import type { FetchedItem, LayerReview, Stack, StackedRow } from '../src/lib/github/types.ts'
 import type { LayerReviewsUpdate, StacksUpdate } from '../src/lib/messages.ts'
 
 function stack(overrides: Partial<Stack> = {}): Stack {
@@ -256,5 +260,65 @@ describe('layer review service', () => {
 
     assert.deepEqual(answer, { reviews: [], failedIds: ['PR_1'] })
     assert.equal(store.records.size, 0)
+  })
+})
+
+describe('item service', () => {
+  // The service reads nothing but the id and the time, so the rest of the row
+  // is left out.
+  const fetched = (id: string, fetchedAt: number) => ({ id, fetchedAt }) as FetchedItem
+
+  function createItemHarness(
+    seed: FetchedItem[] = [],
+    fetch: (ids: readonly string[]) => Promise<ItemsResult> = async (ids) => ({
+      items: ids.map((id) => fetched(id, 9000)),
+      failedIds: [],
+      error: null,
+    }),
+  ) {
+    const calls: string[][] = []
+    const errors: unknown[] = []
+    const store = createMemoryStore<FetchedItem>(seed)
+    const service = createItemService({
+      store,
+      fetchItems: async (ids) => {
+        calls.push([...ids])
+        return fetch(ids)
+      },
+      onError: (error) => errors.push(error),
+      now: () => 10_000,
+    })
+    return { service, store, calls, errors }
+  }
+
+  it('serves fresh rows from the store, and reads the rest five at a time', async () => {
+    const { service, store, calls } = createItemHarness([
+      fetched('PR_fresh', 9500),
+      fetched('PR_old', 10_000 - FRESH_MS),
+    ])
+    const ids = ['PR_fresh', 'PR_old', 'PR_1', 'PR_2', 'PR_3', 'PR_4', 'PR_5']
+
+    const answer = await service.items({ ids, freshMs: FRESH_MS })
+
+    assert.deepEqual(calls, [['PR_old', 'PR_1', 'PR_2', 'PR_3', 'PR_4'], ['PR_5']])
+    assert.deepEqual(answer.items.map((item) => item.id).toSorted(), ids.toSorted())
+    assert.deepEqual(answer.failedIds, [])
+    assert.equal(store.records.get('PR_old')?.fetchedAt, 9000)
+  })
+
+  it('keeps the batches that answered when another fails', async () => {
+    const { service, errors } = createItemHarness([], async (ids) => {
+      if (ids.includes('PR_1')) throw new Error('offline')
+      return { items: ids.map((id) => fetched(id, 9000)), failedIds: [], error: null }
+    })
+
+    const answer = await service.items({
+      ids: ['PR_1', 'PR_2', 'PR_3', 'PR_4', 'PR_5', 'PR_6'],
+      freshMs: FRESH_MS,
+    })
+
+    assert.deepEqual(answer.items.map((item) => item.id), ['PR_6'])
+    assert.deepEqual(answer.failedIds, ['PR_1', 'PR_2', 'PR_3', 'PR_4', 'PR_5'])
+    assert.equal((errors[0] as Error).message, 'offline')
   })
 })

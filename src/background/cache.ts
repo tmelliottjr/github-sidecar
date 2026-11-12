@@ -1,4 +1,4 @@
-import type { LayerReview, SearchItem, SearchPage, Stack } from '@/lib/github/types'
+import type { FetchedItem, LayerReview, SearchItem, SearchPage, Stack } from '@/lib/github/types'
 
 /**
  * Persistent search cache.
@@ -18,7 +18,7 @@ const DB_NAME = 'github-sidecar'
  * crash the list. Dropping the store on upgrade costs one refetch and is the
  * only version of this that cannot be got wrong.
  */
-const DB_VERSION = 7
+const DB_VERSION = 8
 const STORE = 'search-pages'
 const QUERY_INDEX = 'query'
 const UPDATED_INDEX = 'updatedAt'
@@ -26,6 +26,8 @@ const UPDATED_INDEX = 'updatedAt'
 const STACK_STORE = 'stacks'
 /** Review decisions of stack layers that are not loaded rows, keyed by pull request id. */
 const LAYER_REVIEW_STORE = 'layer-reviews'
+/** Rows read by node id, keyed by that id, for rows no cached query lists. */
+const ITEM_STORE = 'items'
 const FETCHED_INDEX = 'fetchedAt'
 
 export interface CacheEntry {
@@ -71,6 +73,7 @@ export interface KeyedStore<T extends { id: string; fetchedAt: number }> {
 
 export type StackStore = KeyedStore<Stack>
 export type LayerReviewStore = KeyedStore<LayerReview>
+export type ItemStore = KeyedStore<FetchedItem>
 
 /** Swaps a refreshed row into a page, or returns null if it is not in it. */
 export function replaceItem(page: SearchPage, item: SearchItem): SearchPage | null {
@@ -104,7 +107,7 @@ function openDatabase(): Promise<IDBDatabase> {
       store.createIndex(QUERY_INDEX, 'query', { unique: false })
       store.createIndex(UPDATED_INDEX, 'updatedAt', { unique: false })
 
-      for (const name of [STACK_STORE, LAYER_REVIEW_STORE]) {
+      for (const name of [STACK_STORE, LAYER_REVIEW_STORE, ITEM_STORE]) {
         if (database.objectStoreNames.contains(name)) database.deleteObjectStore(name)
         const records = database.createObjectStore(name, { keyPath: 'id' })
         records.createIndex(FETCHED_INDEX, 'fetchedAt', { unique: false })
@@ -287,3 +290,4 @@ function keyedStore<T extends { id: string; fetchedAt: number }>(name: string): 
 
 export const indexedDbStackStore: StackStore = keyedStore<Stack>(STACK_STORE)
 export const indexedDbLayerReviewStore: LayerReviewStore = keyedStore<LayerReview>(LAYER_REVIEW_STORE)
+export const indexedDbItemStore: ItemStore = keyedStore<FetchedItem>(ITEM_STORE)
