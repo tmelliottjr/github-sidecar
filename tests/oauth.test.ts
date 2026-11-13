@@ -120,6 +120,39 @@ describe('pollForToken', () => {
     assert.equal(await pollForToken('CLIENT', code, instantly().options), 'gho_token')
   })
 
+  it('asks again when the connection drops partway through an answer', async () => {
+    const answers = [
+      new Response(
+        new ReadableStream({ start: (stream) => stream.error(new TypeError('network error')) }),
+        { status: 200 },
+      ),
+      new Response(JSON.stringify({ access_token: 'gho_token' }), { status: 200 }),
+    ]
+    globalThis.fetch = (async () => answers.shift()) as unknown as typeof fetch
+
+    assert.equal(await pollForToken('CLIENT', code, instantly().options), 'gho_token')
+  })
+
+  it('drops a request that hangs, and asks again', { timeout: 5_000 }, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    let calls = 0
+    globalThis.fetch = ((_url: string, init: RequestInit) => {
+      calls += 1
+      if (calls > 1) {
+        return Promise.resolve(new Response(JSON.stringify({ access_token: 'gho_token' })))
+      }
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal!.reason))
+      })
+    }) as unknown as typeof fetch
+
+    const polling = pollForToken('CLIENT', code, instantly().options)
+    await new Promise((resolve) => setImmediate(resolve))
+    t.mock.timers.tick(30_000)
+
+    assert.equal(await polling, 'gho_token')
+  })
+
   it('stops when the reader cancels on GitHub', async () => {
     stubFetch([{ body: { error: 'access_denied' } }])
     await assert.rejects(

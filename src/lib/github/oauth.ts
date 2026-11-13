@@ -29,6 +29,9 @@ const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
 /** GitHub adds this much to the poll interval with every `slow_down`. */
 const SLOW_DOWN_MS = 5_000
 
+/** How long one request may hang before it is dropped and polling moves on. */
+const REQUEST_TIMEOUT_MS = 30_000
+
 export interface DeviceCode {
   deviceCode: string
   /** What the reader types at `verificationUri`, such as `WDJB-MJHT`. */
@@ -55,24 +58,47 @@ function describeError(error: unknown, status: number): string {
     : `GitHub responded with ${status}.`
 }
 
+/**
+ * Rejects with a network error when the connection drops or hangs, including
+ * partway through the body, and resolves with a null body when GitHub answers
+ * with something other than JSON.
+ */
 async function post(
   url: string,
   params: Record<string, string>,
   signal: AbortSignal | undefined,
 ): Promise<{ status: number; body: Record<string, unknown> | null }> {
-  const response = await fetch(url, {
-    method: 'POST',
-    // Form-encoded with this Accept header is a CORS simple request. GitHub
-    // answers no preflight on these endpoints.
-    headers: { Accept: 'application/json' },
-    body: new URLSearchParams(params),
-    credentials: 'omit',
-    signal,
-  })
-  const body: unknown = await response.json().catch(() => null)
-  return {
-    status: response.status,
-    body: body && typeof body === 'object' ? (body as Record<string, unknown>) : null,
+  // Joined by hand: `AbortSignal.any` needs Chrome 116, and the minimum is 114.
+  const request = new AbortController()
+  const forward = () => request.abort(signal?.reason)
+  if (signal?.aborted) forward()
+  signal?.addEventListener('abort', forward, { once: true })
+  const timer = setTimeout(
+    () => request.abort(new Error('GitHub did not answer in time. Try again.')),
+    REQUEST_TIMEOUT_MS,
+  )
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      // Form-encoded with this Accept header is a CORS simple request. GitHub
+      // answers no preflight on these endpoints.
+      headers: { Accept: 'application/json' },
+      body: new URLSearchParams(params),
+      credentials: 'omit',
+      signal: request.signal,
+    })
+    const body: unknown = await response.json().catch((error: unknown) => {
+      if (error instanceof SyntaxError) return null
+      throw error
+    })
+    return {
+      status: response.status,
+      body: body && typeof body === 'object' ? (body as Record<string, unknown>) : null,
+    }
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', forward)
   }
 }
 
@@ -154,7 +180,7 @@ export async function pollForToken(
       )
     } catch (error) {
       if (signal?.aborted) throw error
-      // A dropped connection leaves the code usable, so the next poll can still finish.
+      // A dropped or hung request leaves the code usable, so the next poll can still finish.
       continue
     }
 
