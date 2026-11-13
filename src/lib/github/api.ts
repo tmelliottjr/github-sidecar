@@ -2,6 +2,7 @@ import type {
   ApiErrorKind,
   CheckState,
   FailingCheck,
+  FetchedItem,
   ItemEnrichment,
   ItemState,
   Label,
@@ -203,8 +204,8 @@ const pullRequestCostlyFields = (withPreview: boolean) => /* GraphQL */ `
 `
 
 /**
- * Every field of a row in one go. Used where a single row is read on its own,
- * which is cheap however costly the fields are, and never for a page of them.
+ * Every field of a row in one go. Used where rows are read on their own, one
+ * or a few at a time, and never for a page of them.
  */
 const itemFields = (withPreview: boolean) => /* GraphQL */ `
   ${issueFields}
@@ -300,6 +301,24 @@ export const itemQuery = (withPreview = true) => /* GraphQL */ `
 `
 
 export const ITEM_QUERY = itemQuery()
+
+/**
+ * Re-reads rows by node id, whichever query listed them. Every field is asked
+ * for, so callers ask for a few rows at a time.
+ */
+export const itemsQuery = (withPreview = true) => /* GraphQL */ `
+  ${itemFields(withPreview)}
+
+  query SidebarItems($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ...IssueFields
+      ...PullRequestFields
+    }
+  }
+`
+
+export const ITEMS_QUERY = itemsQuery()
 
 /** How many layers one request reads. Deeper stacks page through the rest. */
 const STACK_PAGE = 100
@@ -456,6 +475,14 @@ export interface GraphQLError {
 interface ItemResponse {
   data?: {
     repository: { issueOrPullRequest: GraphQLNode | null } | null
+  } | null
+  errors?: GraphQLError[]
+}
+
+interface ItemsResponse {
+  data?: {
+    // Null for an id this token cannot read, or one that no longer exists.
+    nodes: Array<GraphQLNode | Record<string, never> | null> | null
   } | null
   errors?: GraphQLError[]
 }
@@ -857,7 +884,7 @@ export interface GraphQLPayload {
 }
 
 /** Which of the panel's questions a request was asking. */
-export type ApiOperation = 'search' | 'enrich' | 'item' | 'stacks' | 'layer-reviews'
+export type ApiOperation = 'search' | 'enrich' | 'item' | 'rows' | 'stacks' | 'layer-reviews'
 
 /**
  * One request, as it went.
@@ -1395,6 +1422,57 @@ export async function fetchItem(
   // One row is cheap however costly its fields are, so this reads all of them
   // and the row arrives whole.
   return normalise(node, false)
+}
+
+export interface ItemsResult {
+  items: FetchedItem[]
+  /** Rows GitHub did not answer for. */
+  failedIds: string[]
+  error: string | null
+}
+
+function isItemNode(node: GraphQLNode | Record<string, never> | null): node is GraphQLNode {
+  return (
+    node !== null &&
+    '__typename' in node &&
+    (node.__typename === 'Issue' || node.__typename === 'PullRequest')
+  )
+}
+
+/**
+ * Re-reads rows by node id, whole, in one request. Each row carries the time
+ * this call started. Throws only where the request itself failed. Rows GitHub
+ * did not answer for come back in `failedIds`.
+ */
+export async function fetchItems(token: string, ids: readonly string[]): Promise<ItemsResult> {
+  if (ids.length === 0) return { items: [], failedIds: [], error: null }
+
+  const fetchedAt = Date.now()
+  const body = await postWithPreviewFallback<ItemsResponse>(
+    token,
+    itemsQuery,
+    { ids: [...ids] },
+    { operation: 'rows', detail: `${ids.length} rows` },
+  )
+
+  const items: FetchedItem[] = []
+  for (const node of body.data?.nodes ?? []) {
+    if (isItemNode(node)) items.push({ ...normalise(node, false), fetchedAt })
+  }
+  const answered = new Set(items.map((item) => item.id))
+  const failedIds = ids.filter((id) => !answered.has(id))
+  const errors = body.errors ?? []
+
+  return {
+    items,
+    failedIds,
+    error:
+      errors.length > 0
+        ? describeGraphQLErrors(errors)
+        : failedIds.length > 0
+          ? 'GitHub did not answer for every row.'
+          : null,
+  }
 }
 
 /** Validates a token and returns the authenticated login. */

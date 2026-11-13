@@ -421,6 +421,17 @@ answers would go on saying "waiting" until the next poll. Change reminders need
 neither: they can only come due when new results arrive, which redraws the
 panel and wakes the worker anyway.
 
+A reminder belongs to the row, not to the query that listed it. Where the
+active query does not list a row with a due reminder, or one waiting for a
+change, the worker reads that row by id, so the reminder still counts and still
+notifies. A merged pull request leaves every `is:open` query in the same poll
+that makes its **When it changes** reminder due, and this is how it is heard
+from anyway. Rows read this way are refreshed no more often than the list, and a
+reminder set for later costs nothing until it comes due. A row whose read fails
+keeps its last copy, so a reminder that has come round stays counted and is not
+announced twice, and a read that failed on the network is tried again a minute
+later.
+
 </details>
 
 <details>
@@ -516,7 +527,8 @@ The count on the toolbar icon and the notification that something moved — or
 that a reminder has come round — are both worked out in the service worker, because both have to be right in a
 browser with no github.com tab open at all — which is exactly when the panel is
 not running. The worker reads the same cached pages the panel does and the same
-record of what the reader has seen.
+record of what the reader has seen, plus any row with a reminder that the
+active query does not list, read by id.
 
 A notification has three pieces of text of decreasing weight, and using them
 carelessly leads to a title reading `acme/app #34` — the one thing the reader
@@ -551,7 +563,9 @@ along with why it was announced, so a row that changes again is announced
 again, and a reminder coming round on a row that had already been announced for
 a change is announced in its own right — while a row that is merely still
 waiting stays quiet — otherwise every poll would repeat itself until the
-reader happened to read it.
+reader happened to read it. The signature is remembered only once the
+notification shows, so one the browser refused is sent again on the next pass,
+and the sound plays only for notifications that showed.
 
 Notifications need the browser's `notifications` permission, which the extension
 is not installed with. The switch on the settings page asks for it from the
@@ -576,20 +590,20 @@ it. One volume serves both, and is shown only while something would use it.
 
 ##### Making a noise
 
-A browser's `silent: false` is a request, not an instruction. Whether a
-notification makes a sound is a matter for the operating system — on macOS it
-is a per-application setting under **System Settings → Notifications**, off for
-many people and unreachable from an extension.
+Chrome sets no sound on the notifications it shows on macOS, whatever `silent`
+says, so the **Play sound for notification** setting for Chrome under **System
+Settings → Notifications** has nothing to play. On Chrome the sound is the
+panel's own. Chrome's background is a service worker, which cannot play audio at
+all, so the sound plays in an offscreen document borrowed for the purpose.
 
-So the sound is the panel's own, made by whichever route the browser leaves
-open. Chrome's background is a service worker, which cannot play audio at all,
-so the sound is played in an offscreen document borrowed for the purpose.
-Firefox's background is an event page with a DOM of its own, so it plays the
-sound directly. Safari has neither, and no notification to play a sound
-alongside.
+Firefox plays the system notification sound with every notification and gives
+extensions no way to turn it off, so the panel plays no sound of its own there:
+it would play on top of the system's. The settings page says so where the
+sounds would be, and the sound is changed or muted for Firefox in the system's
+notification settings. Safari has no notifications to play a sound alongside.
 
-Neither asks its audio context whether it may start before scheduling the
-notes. A context the browser will not let start does not refuse — it holds the
+The offscreen document does not ask its audio context whether it may start
+before scheduling the notes. A context the browser will not let start does not refuse — it holds the
 question open until a click that a background page will never see — so waiting
 for an answer would wait for ever and take the notification down with it. The
 notes are scheduled either way: where audio is allowed they play, and where the
@@ -818,7 +832,7 @@ browser will let an extension do when the panel is *not* on screen.
 | Buttons on a notification | Yes | No | — |
 | Several at once as one grouped list | Yes | Written into the body | — |
 | The author's face as the icon | Yes | Extension icon only | — |
-| Notification sounds | Yes | Yes | Not offered |
+| Notification sounds | The panel's own | The system's | Not offered |
 
 Safari gives web extensions no notifications API at all, so the settings page
 says so where those switches would otherwise be rather than offering a switch
@@ -826,10 +840,11 @@ that does nothing. Firefox has notifications but shows only a title, a body, and
 an icon that ships with the extension, so what Chrome puts in the dim third line
 is folded into the body instead of being dropped.
 
-The sound is made differently in each: Chrome's background is a service worker
-and cannot play audio, so it borrows an offscreen document; Firefox's background
-is an event page with a DOM of its own and needs nothing borrowed; Safari has
-neither, and no notification to play a sound alongside.
+Chrome notifications make no sound on macOS, so on Chrome the panel plays its
+own, from an offscreen document because Chrome's background is a service
+worker. Firefox plays the system notification sound with every notification, so
+the panel adds none there. Safari has no notifications to play a sound
+alongside.
 
 ## Usage
 
@@ -956,10 +971,10 @@ on purpose. Switched on, it gives each named reminder a length in seconds
 instead of a place on the clock, and the menu says so: **In an hour · 30s**. The
 choice that waits on the row is left alone, having no clock to override.
 
-It also sends a test notification, which answers the question that brings most
-people here — whether nothing appeared because nothing fired, or because the
-browser was never given permission to show it. On Safari there is nothing to
-test, so the button is not shown.
+It also sends a test notification, built like a real reminder, which answers
+the question that brings most people here — whether nothing appeared because
+nothing fired, or because the browser was never given permission to show it. On
+Safari there is nothing to test, so the button is not shown.
 
 Switched on, it adds a control to the sidebar's header that opens this section,
 and the section carries a log of every request the worker has made this browser

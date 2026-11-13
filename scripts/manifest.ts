@@ -111,9 +111,7 @@ export async function manifestFor(
     background:
       target === 'firefox'
         ? // Firefox MV3 has no extension service worker. Its background is a
-          // non-persistent event page, which is also why Firefox is the one
-          // browser that can play the notification sound without borrowing a
-          // document from somewhere else.
+          // non-persistent event page.
           { scripts: ['background.js'], type: 'module' }
         : { service_worker: 'background.js', type: 'module' },
     content_scripts: [

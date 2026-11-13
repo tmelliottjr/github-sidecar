@@ -1,5 +1,5 @@
-import type { LayerReviewsResult, StacksResult } from '@/lib/github/api'
-import type { LayerReview, Stack, StackedRow } from '@/lib/github/types'
+import type { ItemsResult, LayerReviewsResult, StacksResult } from '@/lib/github/api'
+import type { FetchedItem, LayerReview, Stack, StackedRow } from '@/lib/github/types'
 import type {
   LayerReviewsAnswer,
   LayerReviewsUpdate,
@@ -7,7 +7,8 @@ import type {
   StacksUpdate,
 } from '@/lib/messages'
 import { agrees } from '../lib/github/stacks.ts'
-import type { KeyedStore, LayerReviewStore, StackStore } from './cache'
+import type { ItemStore, KeyedStore, LayerReviewStore, StackStore } from './cache'
+import { ENRICH_BATCH } from './search-service.ts'
 
 type Stamped = { id: string; fetchedAt: number }
 
@@ -197,3 +198,116 @@ export function createLayerReviewService({
     },
   }
 }
+
+export interface ItemServiceDeps {
+  store: ItemStore
+  fetchItems: (ids: readonly string[]) => Promise<ItemsResult>
+  /** Called with the rows each read returned. No tab lists them, so none is told. */
+  onRead?: (items: FetchedItem[]) => void
+  onError?: (error: unknown) => void
+  now?: () => number
+}
+
+export interface ItemsAnswer {
+  /** Fresh rows, and the stored copy of any row whose read failed. */
+  items: FetchedItem[]
+  /** Rows with no copy at all. */
+  failedIds: string[]
+  /**
+   * The rows among `failedIds` whose read failed on an error that can clear by
+   * itself, such as the network, rather than a refused token, a rate limit, or
+   * GitHub's answer.
+   */
+  retryIds: string[]
+}
+
+/**
+ * Answers rows by node id, reading those missing or older than `freshMs`.
+ *
+ * A row whose read failed comes back as its stored copy, however old, so a
+ * reminder that was due stays due and keeps its announcement. Its read is not
+ * tried again until `freshMs` has passed.
+ */
+export function createItemService({
+  store,
+  fetchItems,
+  onRead,
+  onError,
+  now = Date.now,
+}: ItemServiceDeps) {
+  /** When each read last failed, and whether trying again unchanged could succeed. */
+  const failures = new Map<string, { at: number; retryable: boolean }>()
+
+  const loadOnce = createLoader<FetchedItem>({
+    name: 'rows',
+    store,
+    read: async (ids) => {
+      const records: FetchedItem[] = []
+      const failedIds: string[] = []
+      let error: string | null = null
+      // A few rows per request, as with enrichment: every field is asked for,
+      // and GitHub gives a request ten seconds.
+      for (let start = 0; start < ids.length; start += ENRICH_BATCH) {
+        const batch = ids.slice(start, start + ENRICH_BATCH)
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const result = await fetchItems(batch)
+          records.push(...result.items)
+          failedIds.push(...result.failedIds)
+          for (const id of result.failedIds) failures.set(id, { at: now(), retryable: false })
+          error ??= result.error
+        } catch (caught) {
+          onError?.(caught)
+          failedIds.push(...batch)
+          // GitHubApiError marks a refused token or a rate limit as not
+          // retryable. A network failure arrives as a plain TypeError.
+          const retryable = (caught as { retryable?: unknown } | null)?.retryable !== false
+          for (const id of batch) failures.set(id, { at: now(), retryable })
+        }
+      }
+      for (const record of records) failures.delete(record.id)
+      return { records, failedIds, error }
+    },
+    broadcast: (items) => onRead?.(items),
+    onError,
+  })
+
+  return {
+    async items({ ids, freshMs }: { ids: readonly string[]; freshMs: number }): Promise<ItemsAnswer> {
+      const wanted = [...new Set(ids)]
+      const skipped = new Set(
+        wanted.filter((id) => {
+          const failure = failures.get(id)
+          return failure !== undefined && now() - failure.at < freshMs
+        }),
+      )
+
+      const { records, failedIds } = await answer(
+        wanted.filter((id) => !skipped.has(id)),
+        store,
+        (item) => now() - item.fetchedAt < freshMs,
+        loadOnce,
+        onError,
+      )
+
+      const unread = [...failedIds, ...skipped]
+      const stale =
+        unread.length > 0
+          ? await store.read(unread).catch((error: unknown) => {
+              onError?.(error)
+              return []
+            })
+          : []
+      const kept = new Set(stale.map((item) => item.id))
+      const missing = unread.filter((id) => !kept.has(id))
+
+      return {
+        items: [...records, ...stale],
+        failedIds: missing,
+        retryIds: missing.filter((id) => failures.get(id)?.retryable === true),
+      }
+    },
+  }
+}
+
+export type ItemService = ReturnType<typeof createItemService>

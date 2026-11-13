@@ -91,6 +91,18 @@ describe('one notification', () => {
     assert.equal(unasked.silent, true)
   })
 
+  it('asks Chrome for silence when the panel plays its own sound', () => {
+    assert.equal(buildNotification(reminder, ICON, { ownSound: true }).options.silent, true)
+    assert.equal(
+      buildGroupNotification([change, change, reminder], ICON, {
+        queryName: null,
+        url: null,
+        ownSound: true,
+      }).options.silent,
+      true,
+    )
+  })
+
   it('offers the answer the reader would otherwise give by hand', () => {
     assert.deepEqual(buildNotification(change, ICON).options.buttons, [
       { title: 'Mark as seen' },
@@ -134,6 +146,25 @@ describe('where the browser shows less', () => {
     // Clicking the body still opens the row, which is the answer most wanted.
     assert.equal(target.url, 'https://github.com/acme/app/pull/34')
     assert.deepEqual(target.itemIds, ['PR_1'])
+  })
+
+  // Firefox rejects the whole notification over one option it does not know,
+  // such as `silent` or `requireInteraction`.
+  it('sends Firefox only a type, title, message, and icon', () => {
+    const shapes = [
+      buildNotification(change, ICON, { rich: false, ownSound: true }),
+      buildNotification(reminder, ICON, { rich: false, ownSound: true }),
+      buildGroupNotification([change, change, reminder], ICON, {
+        queryName: 'Needs my review',
+        url: null,
+        rich: false,
+        ownSound: true,
+      }),
+    ]
+
+    for (const { options } of shapes) {
+      assert.deepEqual(Object.keys(options).toSorted(), ['iconUrl', 'message', 'title', 'type'])
+    }
   })
 
   it('writes a group into the body, since there is no list to put it in', () => {

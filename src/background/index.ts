@@ -2,19 +2,23 @@ import {
   GitHubApiError,
   enrichItems,
   fetchItem,
+  fetchItems,
   fetchLayerReviews,
   fetchStacks,
   fetchViewer,
   observeApiCalls,
   searchIssues,
 } from '@/lib/github/api'
+import type { SearchItem } from '@/lib/github/types'
 import type { BroadcastMessage, RequestMessage, ResponseMessage } from '@/lib/messages'
 import {
   badgeText,
+  forgetAnnounced,
   nextReminderAt,
   pendingNotifications,
   signatureOf,
   uniqueItems,
+  unlistedReminderIds,
   waitingItems,
   type WaitingItem,
 } from '@/lib/attention'
@@ -24,6 +28,7 @@ import {
   searchUrl,
   MAX_INDIVIDUAL,
   type Notification,
+  type NotificationEntry,
   type NotificationTarget,
 } from '@/lib/notify'
 import { carryEnrichment, mergeEnrichments } from '@/lib/github/enrichment'
@@ -31,9 +36,14 @@ import { readStorage, writeStorage, type SoundSettings } from '@/lib/storage'
 import { browser, can, browserName } from '@/lib/browser'
 import { clearApiLog, readApiLog, recordApiCall } from './api-log'
 import { playNotificationSound } from './audio'
-import { indexedDbLayerReviewStore, indexedDbStackStore, indexedDbStore } from './cache'
+import {
+  indexedDbItemStore,
+  indexedDbLayerReviewStore,
+  indexedDbStackStore,
+  indexedDbStore,
+} from './cache'
 import { createSearchService, freshnessWindow, MAX_CACHE_AGE_MS } from './search-service'
-import { createLayerReviewService, createStackService } from './stack-service'
+import { createItemService, createLayerReviewService, createStackService } from './stack-service'
 import { startDevReload } from './dev-reload'
 
 const POPUP_WIDTH = 1100
@@ -122,14 +132,25 @@ const TARGET_PREFIX = 'notification:'
 /** How long a "remind me in an hour" from a notification button waits. */
 const LATER_MS = 60 * 60_000
 
+/** What **Send a test notification** shows: a reminder for a made-up row. */
+const TEST_REMINDER: NotificationEntry = {
+  item: {
+    id: 'sidecar-test',
+    title: 'Make the sidebar say what changed',
+    url: 'https://github.com/acme/app/pull/34',
+    repository: 'acme/app',
+    number: 34,
+    authorLogin: 'octocat',
+    authorAvatarUrl: null,
+  },
+  reason: 'reminder',
+  summary: 'Reminder · 3 new comments',
+}
+
 /**
- * Plays the panel's own notification sound.
- *
- * A browser's `silent: false` is a request, not an instruction: on macOS
- * whether a notification makes a noise is a system setting for the browser as
- * a whole, and an extension cannot reach it. A sound the reader asked this
- * panel for is therefore made by the panel, by whichever route the browser
- * leaves open — see `./audio`.
+ * Plays the panel's own notification sound. Chrome notifications make no
+ * sound on macOS, whatever `silent` says, so the panel plays the sound the
+ * reader picked itself; see `./audio`.
  */
 async function playSound(kind: 'reminder' | 'change'): Promise<void> {
   const { notifications } = await readStorage('settings')
@@ -148,6 +169,9 @@ const BADGE_BACKGROUND = '#2f81f7'
  */
 const REMINDER_ALARM = 'reminder-due'
 
+/** How soon a row read for a due reminder is tried again after a network failure. */
+const REMINDER_RETRY_MS = 60_000
+
 async function activeQueryText(): Promise<string | null> {
   const [settings, queries] = await Promise.all([
     readStorage('settings'),
@@ -162,17 +186,15 @@ async function announce(waiting: readonly WaitingItem[]): Promise<void> {
   const stored = await browser.storage.session.get(ANNOUNCED_KEY)
   const previous = (stored[ANNOUNCED_KEY] ?? {}) as Record<string, string>
   const { send, announced } = pendingNotifications(waiting, previous)
-  await browser.storage.session.set({ [ANNOUNCED_KEY]: announced })
-  if (send.length === 0) return
+  if (send.length === 0) {
+    await browser.storage.session.set({ [ANNOUNCED_KEY]: announced })
+    return
+  }
 
   const icon = browser.runtime.getURL('icon-128.png')
   const { notifications } = await readStorage('settings')
-  // Whoever makes the sound, only one of them does: Chrome's own is asked for
-  // only where the panel is not making its own. Each kind answers for itself,
-  // so a silent change and a chiming reminder are both possible.
-  const loudest = send.some((entry) => entry.reason === 'reminder') ? 'reminder' : 'change'
-  const ourSound = willPlay(notifications.sounds, loudest)
-  if (ourSound) void playSound(loudest)
+  const shown: WaitingItem[] = []
+  const failed: WaitingItem[] = []
 
   if (send.length > MAX_INDIVIDUAL) {
     const [settings, queries] = await Promise.all([
@@ -180,34 +202,60 @@ async function announce(waiting: readonly WaitingItem[]): Promise<void> {
       readStorage('savedQueries'),
     ])
     const active = queries.find((query) => query.id === settings.activeQueryId) ?? queries[0]
-    await show(
-      `${NOTIFICATION_PREFIX}group:${Date.now()}`,
-      hush(
+    const loudest = kindsIn(send)[0]
+    try {
+      await show(
+        `${NOTIFICATION_PREFIX}group:${Date.now()}`,
         buildGroupNotification(send, icon, {
           queryName: active?.name ?? null,
           url: active ? searchUrl(active.query) : null,
+          ownSound: willPlay(notifications.sounds, loudest),
         }),
-        ourSound,
-      ),
-      icon,
-    )
-    return
+        icon,
+      )
+      shown.push(...send)
+    } catch (error) {
+      console.warn('[github-sidecar] could not show a notification', error)
+      failed.push(...send)
+    }
+  } else {
+    for (const entry of send) {
+      try {
+        // Sequential rather than parallel: two notifications raised in the same
+        // instant arrive in whichever order Chrome feels like.
+        // eslint-disable-next-line no-await-in-loop
+        await show(
+          `${NOTIFICATION_PREFIX}${entry.item.id}`,
+          buildNotification(entry, icon, {
+            ownSound: willPlay(notifications.sounds, entry.reason),
+          }),
+          icon,
+        )
+        shown.push(entry)
+      } catch (error) {
+        console.warn('[github-sidecar] could not show a notification', error)
+        failed.push(entry)
+      }
+    }
   }
 
-  for (const entry of send) {
-    const kind = entry.reason === 'reminder' ? 'reminder' : 'change'
-    const ours = willPlay(notifications.sounds, kind)
-    if (ours && kind !== loudest) void playSound(kind)
+  // Saved after showing, so a notification the browser refused is sent again
+  // on the next pass instead of counting as announced.
+  await browser.storage.session.set({ [ANNOUNCED_KEY]: forgetAnnounced(announced, failed) })
 
-    // Sequential rather than parallel: two notifications raised in the same
-    // instant arrive in whichever order Chrome feels like.
-    // eslint-disable-next-line no-await-in-loop
-    await show(
-      `${NOTIFICATION_PREFIX}${entry.item.id}`,
-      hush(buildNotification(entry, icon), ours),
-      icon,
-    )
+  // A group plays one sound, for its loudest kind; single notifications play
+  // one for each kind shown. Chrome was asked for silence wherever these play.
+  const kinds = kindsIn(shown)
+  for (const kind of send.length > MAX_INDIVIDUAL ? kinds.slice(0, 1) : kinds) {
+    void playSound(kind)
   }
+}
+
+/** The kinds among these entries, loudest first: a reminder was asked for. */
+function kindsIn(entries: readonly WaitingItem[]): Array<WaitingItem['reason']> {
+  return (['reminder', 'change'] as const).filter((kind) =>
+    entries.some((entry) => entry.reason === kind),
+  )
 }
 
 /**
@@ -222,20 +270,14 @@ let avatarsLoad = true
 
 /** Whether the panel itself will make a noise for this kind of notification. */
 function willPlay(sounds: SoundSettings, kind: 'reminder' | 'change'): boolean {
-  return sounds[kind] !== 'none' && sounds.volume > 0
-}
-
-/** Silences Chrome's own sound when the panel is making one of its own. */
-function hush(notification: Notification, ourSound: boolean): Notification {
-  if (!ourSound) return notification
-  return { ...notification, options: { ...notification.options, silent: true } }
+  return !can.systemNotificationSound && sounds[kind] !== 'none' && sounds.volume > 0
 }
 
 /**
  * Raises one notification and remembers what it was about. An image that will
  * not load takes the whole notification down with it — Chrome refuses to show
- * one whose images it could not fetch — so a failure is retried rather than
- * lost.
+ * one whose images it could not fetch — so that failure is tried again with
+ * the extension icon. Anything that still fails is thrown.
  */
 async function show(id: string, notification: Notification, icon: string): Promise<void> {
   await browser.storage.session.set({ [`${TARGET_PREFIX}${id}`]: notification.target })
@@ -244,12 +286,10 @@ async function show(id: string, notification: Notification, icon: string): Promi
 
   try {
     await browser.notifications.create(id, options)
-  } catch {
-    if (options.iconUrl === icon) return
+  } catch (error) {
+    if (options.iconUrl === icon) throw error
     avatarsLoad = false
-    await browser.notifications
-      .create(id, { ...notification.options, iconUrl: icon })
-      .catch(() => undefined)
+    await browser.notifications.create(id, { ...notification.options, iconUrl: icon })
   }
 }
 
@@ -267,7 +307,12 @@ async function readTarget(id: string): Promise<NotificationTarget | null> {
 async function actOn(target: NotificationTarget): Promise<void> {
   if (!target.action) return
 
-  const items = await indexedDbStore.findItems(target.itemIds)
+  const listed = await indexedDbStore.findItems(target.itemIds)
+  const found = new Set(listed.map((item) => item.id))
+  const missing = target.itemIds.filter((id) => !found.has(id))
+  // A row read by id for its reminder can be in no cached page at all.
+  const items =
+    missing.length > 0 ? [...listed, ...(await indexedDbItemStore.read(missing))] : listed
   if (items.length === 0) return
 
   const memory = await readStorage('itemMemory')
@@ -317,13 +362,36 @@ async function refreshAttention(): Promise<void> {
     indexedDbStore.readQuery(query),
     readStorage('itemMemory'),
   ])
-  const waiting = waitingItems(
-    uniqueItems(entries.flatMap((entry) => entry.page.items)),
-    memory,
-    { reminders: features.reminders, hiding: features.hide },
-  )
+  const listed = uniqueItems(entries.flatMap((entry) => entry.page.items))
+  // Reminders belong to rows, not to the query that listed them. A merged pull
+  // request leaves every `is:open` query in the same poll that makes its "when
+  // it changes" reminder due, so rows the active query does not list are read
+  // by id.
+  const reminderIds = features.reminders ? unlistedReminderIds(memory, listed) : []
+  const unlisted: SearchItem[] = []
+  let retryAt: number | null = null
+  if (reminderIds.length > 0) {
+    const read = await itemService.items({
+      ids: reminderIds,
+      freshMs: freshnessWindow(settings.pollIntervalMs),
+    })
+    // A row never read by id can still sit in another query's cached pages.
+    const cached = read.failedIds.length > 0 ? await indexedDbStore.findItems(read.failedIds) : []
+    unlisted.push(...read.items, ...cached)
+    // With no row to show, a reminder that has come round waits for the next
+    // pass, and a timed one may have no other pass coming. A read that failed
+    // on the network is worth another try soon; a refused token, a rate limit,
+    // or a row GitHub would not return is not.
+    const shown = new Set(cached.map((item) => item.id))
+    if (read.retryIds.some((id) => !shown.has(id))) retryAt = Date.now() + REMINDER_RETRY_MS
+  }
+  const waiting = waitingItems(listed, memory, {
+    reminders: features.reminders,
+    hiding: features.hide,
+    unlisted,
+  })
 
-  await armReminderAlarm(features.reminders ? memory : {})
+  await armReminderAlarm(features.reminders ? memory : {}, retryAt)
 
   await browser.action.setBadgeText({
     text: features.badge ? badgeText(waiting.length) : '',
@@ -358,12 +426,17 @@ let counting: Promise<void> | null = null
 let recount = false
 
 /**
- * Sleeps until the next timed reminder, and stops waiting when there is none —
- * which includes the case where reminders have been switched off, since an
- * alarm that can only wake a feature nobody wants is worse than no alarm.
+ * Sleeps until the next timed reminder, or until `retryAt` where that is
+ * sooner, and stops waiting when there is neither — which includes the case
+ * where reminders have been switched off, since an alarm that can only wake a
+ * feature nobody wants is worse than no alarm.
  */
-async function armReminderAlarm(memory: Awaited<ReturnType<typeof readStorage<'itemMemory'>>>): Promise<void> {
-  const due = nextReminderAt(memory)
+async function armReminderAlarm(
+  memory: Awaited<ReturnType<typeof readStorage<'itemMemory'>>>,
+  retryAt: number | null = null,
+): Promise<void> {
+  const next = nextReminderAt(memory)
+  const due = next === null ? retryAt : retryAt === null ? next : Math.min(next, retryAt)
   if (due === null) {
     await browser.alarms.clear(REMINDER_ALARM)
     return
@@ -428,11 +501,28 @@ const layerReviewService = createLayerReviewService({
   onError: (error) => console.warn('[github-sidecar] could not read layer reviews', error),
 })
 
-/** Drops cached pages, stacks, and layer reviews older than a day. */
+const itemService = createItemService({
+  store: indexedDbItemStore,
+  fetchItems: async (ids) => fetchItems(await requireToken(), ids),
+  // A row read by id replaces its copies in cached pages, as a refreshed row
+  // does, so those queries and the notification buttons see it as it is now.
+  onRead: (items) => {
+    for (const { fetchedAt, ...item } of items) {
+      void fetchedAt
+      void indexedDbStore.updateItem(item).catch((error: unknown) => {
+        console.warn('[github-sidecar] could not cache a row read by id', error)
+      })
+    }
+  },
+  onError: (error) => console.warn('[github-sidecar] could not read rows with reminders', error),
+})
+
+/** Drops cached pages, stacks, layer reviews, and rows read by id older than a day. */
 function pruneCaches(): void {
   void indexedDbStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
   void indexedDbStackStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
   void indexedDbLayerReviewStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
+  void indexedDbItemStore.prune(MAX_CACHE_AGE_MS).catch(() => undefined)
 }
 
 async function openItem(url: string, target: 'window' | 'tab'): Promise<void> {
@@ -539,25 +629,14 @@ async function handle(
       }
       const { notifications: testNotifications } = await readStorage('settings')
       const testSound = willPlay(testNotifications.sounds, 'reminder')
-      if (testSound) await playSound('reminder')
       const testIcon = browser.runtime.getURL('icon-128.png')
-      await browser.notifications.create('sidecar-test', {
-        type: 'basic',
-        iconUrl: testIcon,
-        title: 'Make the sidebar say what changed',
-        // What the reader sees here is what they would see for a real row, so
-        // on a browser that shows only a title and a body, so does this.
-        ...(can.richNotifications
-          ? {
-              message: 'Reminder · 3 new comments',
-              contextMessage: 'acme/app #34 · by octocat',
-              eventTime: Date.now(),
-              priority: 2,
-              silent: testSound,
-              buttons: [{ title: 'Remind me in an hour' }],
-            }
-          : { message: 'Reminder · 3 new comments\nacme/app #34 · by octocat' }),
-      })
+      // Built like a real reminder, so the test takes the path reminders take.
+      await show(
+        'sidecar-test',
+        buildNotification(TEST_REMINDER, testIcon, { ownSound: testSound }),
+        testIcon,
+      )
+      if (testSound) await playSound('reminder')
       return undefined
     }
     case 'open-options': {
