@@ -12,9 +12,8 @@ import type { SearchItem } from './github/types'
  * title leads, what happened comes next, and where it lives goes in the dim
  * line underneath, which is the order the reader asks the questions in.
  *
- * Firefox gives a notification a title, a body, an icon that has to come from
- * the extension itself, and nothing else: no buttons, no list, no dim third
- * line, no say in how loud it is. What Chrome puts in the third line is folded
+ * Firefox gives a notification a title, a body, an icon, and nothing else: no
+ * buttons, no list, no dim third line, no say in how loud it is. What Chrome puts in the third line is folded
  * into the body there rather than dropped, because a notification naming a row
  * without saying which repository it is in is a notification that has to be
  * clicked to be understood.
@@ -48,6 +47,24 @@ const PRIORITY_REMINDER = 2
 const PRIORITY_CHANGE = 0
 
 /**
+ * Rows carry the 28px avatar the list draws, which a notification would
+ * upscale. GitHub serves any size of the same avatar through `s`.
+ */
+const AVATAR_SIZE = 160
+
+function notificationAvatar(url: string | null): string | null {
+  if (!url) return null
+  try {
+    const avatar = new URL(url)
+    if (avatar.hostname !== 'avatars.githubusercontent.com') return url
+    avatar.searchParams.set('s', String(AVATAR_SIZE))
+    return avatar.toString()
+  } catch {
+    return url
+  }
+}
+
+/**
  * How much of a notification this browser will actually show. Defaults to the
  * answer for the browser this was built for; named so the tests can ask for
  * either without a bundler.
@@ -60,6 +77,12 @@ export interface NotificationStyle {
    * anything about sound, so its shape never does.
    */
   ownSound?: boolean
+  /**
+   * Whether a list notification shows its items. Chrome on macOS shows only
+   * the first, in place of the message, so there a group lists its rows in the
+   * body instead.
+   */
+  listItems?: boolean
 }
 
 /** The parts of a waiting row that one notification shows. */
@@ -77,6 +100,9 @@ export function buildNotification(
 ): Notification {
   const { item, reason } = entry
   const isReminder = reason === 'reminder'
+  // The author's face where there is one: a notification is recognised before
+  // it is read, and every row here would otherwise carry the same mark.
+  const avatar = notificationAvatar(item.authorAvatarUrl)
 
   const context = [
     `${item.repository} #${item.number}`,
@@ -89,9 +115,9 @@ export function buildNotification(
     return {
       options: {
         type: 'basic',
-        // Only an icon the extension ships with will load here, so the
-        // author's face is not on offer.
-        iconUrl: icon,
+        // An avatar that will not load leaves the notification without an
+        // icon here, rather than failing it.
+        iconUrl: avatar ?? icon,
         title: item.title,
         message: `${entry.summary}\n${context}`,
       },
@@ -108,11 +134,8 @@ export function buildNotification(
   return {
     options: {
       type: 'basic',
-      // The author's face where there is one: a notification is recognised
-      // before it is read, and every row here would otherwise carry the same
-      // mark. Callers fall back to the extension's own icon if it will not
-      // load.
-      iconUrl: item.authorAvatarUrl ?? icon,
+      // Callers fall back to the extension's own icon if this will not load.
+      iconUrl: avatar ?? icon,
       title: item.title,
       message: entry.summary,
       contextMessage: context,
@@ -146,6 +169,7 @@ export function buildGroupNotification(
     url,
     rich = can.richNotifications,
     ownSound = false,
+    listItems = true,
   }: { queryName: string | null; url: string | null } & NotificationStyle,
 ): Notification {
   const listed = entries.slice(0, MAX_LISTED)
@@ -174,21 +198,35 @@ export function buildGroupNotification(
 
   return {
     options: {
-      type: 'list',
+      ...(listItems
+        ? {
+            type: 'list' as const,
+            // Repeated as the message because Chrome shows the list only where
+            // it has the room, and a notification that says nothing without it
+            // is a notification that sometimes says nothing.
+            message: listed
+              .map((entry) => `${entry.item.repository} #${entry.item.number}`)
+              .join(', '),
+            items: [
+              ...listed.map((entry) => ({
+                title: `${entry.item.repository} #${entry.item.number}`,
+                message: entry.summary,
+              })),
+              ...(rest > 0 ? [{ title: `and ${rest} more`, message: '' }] : []),
+            ],
+          }
+        : {
+            type: 'basic' as const,
+            message: [
+              ...listed.map(
+                (entry) => `${entry.item.repository} #${entry.item.number} · ${entry.summary}`,
+              ),
+              ...(rest > 0 ? [`and ${rest} more`] : []),
+            ].join('\n'),
+          }),
       iconUrl: icon,
       title,
-      // Repeated as the message because Chrome shows the list only where it
-      // has the room, and a notification that says nothing without it is a
-      // notification that sometimes says nothing.
-      message: listed.map((entry) => `${entry.item.repository} #${entry.item.number}`).join(', '),
       contextMessage: queryName ?? 'GitHub Sidecar',
-      items: [
-        ...listed.map((entry) => ({
-          title: `${entry.item.repository} #${entry.item.number}`,
-          message: entry.summary,
-        })),
-        ...(rest > 0 ? [{ title: `and ${rest} more`, message: '' }] : []),
-      ],
       eventTime: Date.now(),
       priority: entries.some((entry) => entry.reason === 'reminder')
         ? PRIORITY_REMINDER

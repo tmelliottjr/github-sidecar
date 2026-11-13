@@ -210,6 +210,7 @@ async function announce(waiting: readonly WaitingItem[]): Promise<void> {
           queryName: active?.name ?? null,
           url: active ? searchUrl(active.query) : null,
           ownSound: willPlay(notifications.sounds, loudest),
+          listItems: await showsListItems(),
         }),
         icon,
       )
@@ -259,14 +260,23 @@ function kindsIn(entries: readonly WaitingItem[]): Array<WaitingItem['reason']> 
 }
 
 /**
- * Whether Chrome will fetch an avatar for us. Notifications are drawn by the
- * browser, not by a page, so the image is fetched with the extension's own
- * privileges — and github.com's avatar host is not one this extension asks for.
- * Where that is refused it is refused every time, so the first failure is
- * remembered and every notification after it goes straight to the icon that is
- * certainly there.
+ * Whether avatars load in notifications. Chrome fetches the image from the
+ * worker, and GitHub serves avatars to any origin, so a failure means the host
+ * cannot be reached at all. That rarely clears within a worker lifetime, so
+ * later notifications go straight to the extension icon.
  */
 let avatarsLoad = true
+
+/** Chrome on macOS shows only the first item of a list notification. */
+let listItemsShown: Promise<boolean> | null = null
+
+function showsListItems(): Promise<boolean> {
+  listItemsShown ??= browser.runtime.getPlatformInfo().then(
+    (platform) => platform.os !== 'mac',
+    () => true,
+  )
+  return listItemsShown
+}
 
 /** Whether the panel itself will make a noise for this kind of notification. */
 function willPlay(sounds: SoundSettings, kind: 'reminder' | 'change'): boolean {

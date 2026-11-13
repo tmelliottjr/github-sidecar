@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 
 import puppeteer, { type Browser, type Page } from 'puppeteer-core'
 
+import { SOUNDS } from '../src/lib/sound.ts'
+
 const CHROME_PATHS = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/Applications/Chromium.app/Contents/MacOS/Chromium',
@@ -404,7 +406,7 @@ describe('choosing a sound', { concurrency: false, skip }, () => {
 
     const quiet = await heard()
     assert.ok(quiet.length > 0, 'expected the new volume to be played')
-    assert.ok(quiet.every((note) => note.peak <= 0.12 * 0.2 + 1e-9))
+    assert.ok(quiet.every((note) => note.peak <= SOUNDS.marimba.gain * 0.2 + 1e-9))
   })
 })
 

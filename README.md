@@ -536,7 +536,9 @@ already knows, since they are the one tracking it. So the item's own title
 leads, what happened comes next, and where it lives goes in the dim line
 underneath: **Cache the search results** / *Checks failed · 3 new comments* /
 `acme/app #34 · by octocat`. The author's face is the icon where the browser
-will fetch it, because a notification is recognised before it is read.
+will fetch it, because a notification is recognised before it is read. The rows
+in the list carry a 28px avatar, which a notification would upscale, so
+notifications ask GitHub for a 160px copy of the same avatar.
 
 Each one carries the answer the reader would otherwise give by hand: **Mark as
 seen** for a change, **Remind me in an hour** for a reminder. Both write to the
@@ -544,8 +546,7 @@ same record the panel reads, so the row and the count agree with the button
 without anything being adjusted twice. Clicking the notification itself opens
 the row.
 
-Firefox shows only a title, a body, and an icon that ships with the extension.
-There the third line is folded into the body rather than dropped — a
+Firefox shows only a title, a body, and an icon. There the third line is folded into the body rather than dropped — a
 notification naming a row without saying which repository it is in has to be
 clicked to be understood — and there are no buttons, so clicking the body to
 open the row is the whole of it. Safari has no notifications at all; see
@@ -556,7 +557,9 @@ and it stays until it is dealt with. A change was not, so it is quieter and
 ordinary. More than two at once stop being news and become a flood, so they
 arrive as one list — five rows named, the rest counted, clicking through to the
 search that produced them. Where there is no list type the same rows are written
-into the body, which says the same thing with less ceremony.
+into the body, which says the same thing with less ceremony. Chrome on macOS
+shows only the first item of a list, so there the rows go in the body too, each
+with what happened to it.
 
 A change is announced once. The row's signature is remembered per notification,
 along with why it was announced, so a row that changes again is announced
@@ -612,10 +615,16 @@ for. The notification arrives regardless.
 
 There are five of them — chime, ping, bell, knock, marimba — plus silence,
 chosen under the kind of notification they belong to: the default pair is a
-two-note chime for what was asked for and a softer single note for what merely
+two-note chime for what was asked for and a single short note for what merely
 happened. Volume is the reader's, and every control on the settings page plays
 what it is about the moment it is touched, because a list of names for noises is
 not a choice anyone can make by reading it.
+
+Every sound plays at the same loudness at full volume: -23 LUFS (maximum
+momentary loudness, ITU-R BS.1770), the middle of the macOS alert sounds in
+`/System/Library/Sounds`. So 100% is as loud as a system alert, the volume
+starts there, and the slider only turns it down. Each sound has its own gain
+for this, and `tests/sound.browser.test.ts` renders every sound to check it.
 
 Each sound is a handful of numbers — frequency, start, length — turned into
 sine or triangle notes with a short fade at both ends, since a square-edged
@@ -830,15 +839,15 @@ browser will let an extension do when the panel is *not* on screen.
 | Count on the toolbar icon | Yes | Yes | Yes |
 | Desktop notifications | Yes | Plain | Not offered |
 | Buttons on a notification | Yes | No | — |
-| Several at once as one grouped list | Yes | Written into the body | — |
-| The author's face as the icon | Yes | Extension icon only | — |
+| Several at once as one grouped list | Yes (macOS: written into the body) | Written into the body | — |
+| The author's face as the icon | Yes | Yes | — |
 | Notification sounds | The panel's own | The system's | Not offered |
 
 Safari gives web extensions no notifications API at all, so the settings page
 says so where those switches would otherwise be rather than offering a switch
 that does nothing. Firefox has notifications but shows only a title, a body, and
-an icon that ships with the extension, so what Chrome puts in the dim third line
-is folded into the body instead of being dropped.
+an icon, so what Chrome puts in the dim third line is folded into the body
+instead of being dropped.
 
 Chrome notifications make no sound on macOS, so on Chrome the panel plays its
 own, from an offscreen document because Chrome's background is a service

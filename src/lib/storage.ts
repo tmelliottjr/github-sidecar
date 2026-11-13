@@ -103,10 +103,8 @@ export interface NotificationSettings {
    * What each kind sounds like. `none` is how a kind is silenced — there is no
    * separate switch for sound, because "no sound" is one of the sounds.
    *
-   * The panel plays these itself: whether Chrome's own notification makes a
-   * noise is a matter for the operating system, and on macOS it is off unless
-   * the reader has said otherwise — not something an extension can ask for,
-   * but something it can do for itself.
+   * The panel plays these itself on Chrome, whose notifications make no sound
+   * on macOS. Firefox plays the system notification sound instead.
    */
   sounds: SoundSettings
 }
@@ -157,7 +155,7 @@ export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
   sounds: {
     reminder: 'chime',
     change: 'ping',
-    volume: 0.7,
+    volume: 1,
   },
 }
 
@@ -166,7 +164,7 @@ export const DEFAULT_SOUNDS: SoundSettings = {
   // its own is closer to punctuation.
   reminder: 'chime',
   change: 'ping',
-  volume: 0.7,
+  volume: 1,
 }
 
 export const DEFAULT_DEVELOPER: DeveloperSettings = {
