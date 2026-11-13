@@ -227,6 +227,8 @@ function AccountSection({
 }) {
   const [revealed, setRevealed] = useState(false)
   const [validation, setValidation] = useState<ValidationState>({ status: 'idle' })
+  // Remounting the sign-in drops one still running, so it cannot replace a token typed after it.
+  const [tokenEdits, setTokenEdits] = useState(0)
 
   const validate = async () => {
     setValidation({ status: 'checking' })
@@ -286,6 +288,7 @@ function AccountSection({
       {canSignIn && (
         <>
           <SignInWithGitHub
+            key={tokenEdits}
             onSignedIn={(token, login) => {
               onPatch({ token, signIn: { login } })
               setValidation({ status: 'idle' })
@@ -311,6 +314,7 @@ function AccountSection({
             onChange={(event) => {
               onPatch({ token: event.target.value.trim(), signIn: null })
               setValidation({ status: 'idle' })
+              setTokenEdits((count) => count + 1)
             }}
             className="pr-9 font-mono text-[12px]"
           />

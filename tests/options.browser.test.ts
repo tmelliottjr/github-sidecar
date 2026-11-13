@@ -310,6 +310,20 @@ describe('signing in with GitHub', {
     )
     assert.deepEqual(await stored(), { token: '', signIn: null })
   })
+
+  it('keeps a token typed in while signing in is still waiting', async () => {
+    approval = null
+    await signInPage.click('button ::-p-text(Sign in with GitHub)')
+    await signInPage.waitForSelector('[aria-label="Sign-in code"]')
+    await signInPage.type('input[type="password"]', 'pasted')
+
+    approval = { access_token: 'good' }
+    // Past the next poll, when a sign-in still running would have finished.
+    await signInPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 1_500)))
+
+    assert.deepEqual(await stored(), { token: 'pasted', signIn: null })
+    assert.equal(await signInPage.$('[aria-label="Sign-in code"]'), null)
+  })
 })
 
 /** Reads a feature switch by the title it sits beside. */
