@@ -821,10 +821,18 @@ Each browser gets its own unpacked extension under `dist/chrome/`,
 manifest. Neither `dist/` nor `node_modules/` is committed, so a fresh clone
 must be built before it can be loaded.
 
-Whichever browser you use, the settings page opens on first install — paste a
-GitHub personal access token and click **Verify**. A classic token needs `repo`
-and `read:org` scope to see private repositories. The token is stored in
+Whichever browser you use, the settings page opens on first install. Choose
+**Sign in with GitHub** and enter the code it shows on github.com, or paste a
+GitHub personal access token and click **Verify**. Either token is stored in
 extension storage and is only ever sent to `api.github.com`.
+
+- **Signing in** covers every organization where you have an active single
+  sign-on session at the time, so there is no per-token SSO step. An
+  organization that restricts OAuth apps needs an owner to approve GitHub
+  Sidecar first.
+- **A classic token** needs `repo` and `read:org` scope to see private
+  repositories, and needs **Configure SSO** on GitHub for each SSO
+  organization.
 
 ## Browser support
 
@@ -921,6 +929,12 @@ A few decisions worth knowing:
   Content-Security-Policy applies to `fetch` from a content script, so calls
   made there would be blocked. The worker also keeps the token out of page
   context.
+- **Signing in uses the OAuth device flow.** The web flow needs the client
+  secret to trade its code for a token, even with PKCE, and an extension cannot
+  keep a secret. The device flow needs no secret and no redirect, so it works
+  the same in every browser, including Safari, which has no `identity` API. The
+  settings page polls GitHub for the token itself, so closing it cancels
+  signing in.
 - **Two GraphQL requests per refresh, not one.** The REST search API returns no
   CI or review data, so the list is built from GraphQL. Asking for all of it at
   once does not work: GitHub allows a GraphQL request ten seconds, and
@@ -1019,6 +1033,11 @@ three do not accept the same one — most of all the `background` key, where
 Chrome and Safari run a service worker and Firefox runs an event page. Both Vite
 configs are given a `__BROWSER__` constant, so the branches meant for the other
 two browsers are dropped from the bundle rather than shipped and never taken.
+
+**Sign in with GitHub** appears only once `OAUTH_CLIENT_ID` in
+`src/lib/github/oauth.ts` holds the client ID of an OAuth app with **Enable
+Device Flow** checked. Client IDs are public, so it is committed. The client
+secret is never needed.
 
 `src/lib/browser.ts` is the single door onto the extension API. It takes
 `browser` where the browser provides it and `chrome` where it does not, so every
