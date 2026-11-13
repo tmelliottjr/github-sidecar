@@ -15,8 +15,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { ManagementPanel } from '@/options/management-panel'
+import { SignInWithGitHub } from '@/options/sign-in'
 import { useStorageValue } from '@/hooks/use-storage-value'
 import { browser, can, browserName } from '@/lib/browser'
+import { appSettingsUrl, canSignIn } from '@/lib/github/oauth'
 import { sendMessage, type ApiLogEntry } from '@/lib/messages'
 import { REMINDER_LABELS, type ReminderOverrides } from '@/lib/attention'
 import { playSound, SOUNDS, SOUND_NAMES, type SoundName } from '@/lib/sound'
@@ -105,8 +107,6 @@ type ValidationState =
 export function OptionsApp() {
   const [settings, setSettings] = useStorageValue('settings')
   const [savedQueries, setSavedQueries] = useStorageValue('savedQueries')
-  const [revealed, setRevealed] = useState(false)
-  const [validation, setValidation] = useState<ValidationState>({ status: 'idle' })
 
   if (!settings || !savedQueries) return null
 
@@ -119,22 +119,6 @@ export function OptionsApp() {
     }))
   }
 
-  const validate = async () => {
-    setValidation({ status: 'checking' })
-    try {
-      const { login } = await sendMessage({
-        type: 'validate-token',
-        token: settings.token,
-      })
-      setValidation({ status: 'valid', login })
-    } catch (error) {
-      setValidation({
-        status: 'invalid',
-        message: error instanceof Error ? error.message : 'Validation failed.',
-      })
-    }
-  }
-
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-5 px-6 py-10">
       <header className="space-y-1">
@@ -144,67 +128,7 @@ export function OptionsApp() {
         </p>
       </header>
 
-      <Section
-        title="Access token"
-        description="Stored locally in this browser and sent only to api.github.com. A classic token needs repo and read:org scope to see private repositories."
-      >
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <Input
-              type={revealed ? 'text' : 'password'}
-              value={settings.token}
-              placeholder="ghp_…"
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(event) => {
-                patch({ token: event.target.value.trim() })
-                setValidation({ status: 'idle' })
-              }}
-              className="pr-9 font-mono text-[12px]"
-            />
-            <button
-              type="button"
-              onClick={() => setRevealed((current) => !current)}
-              aria-label={revealed ? 'Hide token' : 'Show token'}
-              className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1.5 text-muted-foreground hover:text-foreground"
-            >
-              {revealed ? <EyeClosedIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
-            </button>
-          </div>
-
-          <Button
-            variant="outline"
-            onClick={() => void validate()}
-            disabled={!settings.token || validation.status === 'checking'}
-          >
-            {validation.status === 'checking' && <SyncIcon className="animate-spin" />}
-            Verify
-          </Button>
-        </div>
-
-        {validation.status === 'valid' && (
-          <p className="flex items-center gap-1.5 text-[12px] font-semibold text-open">
-            <CheckCircleFillIcon className="size-3.5" />
-            Connected as {validation.login}
-          </p>
-        )}
-        {validation.status === 'invalid' && (
-          <p className="flex items-center gap-1.5 text-[12px] font-semibold text-closed">
-            <XCircleFillIcon className="size-3.5" />
-            {validation.message}
-          </p>
-        )}
-
-        <a
-          href={TOKEN_SCOPES_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex w-fit items-center gap-1 text-[12px] font-semibold text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-        >
-          Create a token on GitHub
-          <LinkExternalIcon className="size-3" />
-        </a>
-      </Section>
+      <AccountSection settings={settings} onPatch={patch} />
 
       <Section
         title="Refresh"
@@ -286,6 +210,153 @@ export function OptionsApp() {
 
       <DeveloperSection settings={settings} onPatch={patch} />
     </main>
+  )
+}
+
+const STORED_LOCALLY = 'Stored locally in this browser and sent only to api.github.com.'
+const CLASSIC_SCOPES =
+  'A classic token needs repo and read:org scope to see private repositories.'
+
+/** Signing in with GitHub replaces a pasted token, and signing out clears it. */
+function AccountSection({
+  settings,
+  onPatch,
+}: {
+  settings: Settings
+  onPatch: (next: Partial<Settings>) => void
+}) {
+  const [revealed, setRevealed] = useState(false)
+  const [validation, setValidation] = useState<ValidationState>({ status: 'idle' })
+
+  const validate = async () => {
+    setValidation({ status: 'checking' })
+    try {
+      const { login } = await sendMessage({
+        type: 'validate-token',
+        token: settings.token,
+      })
+      setValidation({ status: 'valid', login })
+    } catch (error) {
+      setValidation({
+        status: 'invalid',
+        message: error instanceof Error ? error.message : 'Validation failed.',
+      })
+    }
+  }
+
+  if (settings.signIn && settings.token) {
+    return (
+      <Section title="GitHub account" description={STORED_LOCALLY}>
+        <div className="flex items-center justify-between gap-3">
+          <p className="flex items-center gap-1.5 text-[13px] font-semibold">
+            <CheckCircleFillIcon className="size-3.5 text-open" />
+            Signed in as {settings.signIn.login}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => onPatch({ token: '', signIn: null })}>
+            Sign out
+          </Button>
+        </div>
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
+          Organizations that use single sign-on are included if you had an active SSO session
+          when you signed in. To add one, sign in to it on github.com, then sign out here and
+          sign in again.
+        </p>
+        <a
+          href={appSettingsUrl()}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex w-fit items-center gap-1 text-[12px] font-semibold text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          Manage organization access on GitHub
+          <LinkExternalIcon className="size-3" />
+        </a>
+      </Section>
+    )
+  }
+
+  return (
+    <Section
+      title="GitHub account"
+      description={
+        canSignIn
+          ? `Sign in with GitHub, or use a personal access token. ${STORED_LOCALLY}`
+          : `${STORED_LOCALLY} ${CLASSIC_SCOPES}`
+      }
+    >
+      {canSignIn && (
+        <>
+          <SignInWithGitHub
+            onSignedIn={(token, login) => {
+              onPatch({ token, signIn: { login } })
+              setValidation({ status: 'idle' })
+            }}
+          />
+          <div className="mt-2 space-y-0.5 border-t border-border pt-4">
+            <h3 className="text-[13px] font-semibold">Personal access token</h3>
+            <p className="text-[12px] leading-relaxed text-muted-foreground">
+              {CLASSIC_SCOPES}
+            </p>
+          </div>
+        </>
+      )}
+
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Input
+            type={revealed ? 'text' : 'password'}
+            value={settings.token}
+            placeholder="ghp_…"
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => {
+              onPatch({ token: event.target.value.trim(), signIn: null })
+              setValidation({ status: 'idle' })
+            }}
+            className="pr-9 font-mono text-[12px]"
+          />
+          <button
+            type="button"
+            onClick={() => setRevealed((current) => !current)}
+            aria-label={revealed ? 'Hide token' : 'Show token'}
+            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1.5 text-muted-foreground hover:text-foreground"
+          >
+            {revealed ? <EyeClosedIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+          </button>
+        </div>
+
+        <Button
+          variant="outline"
+          onClick={() => void validate()}
+          disabled={!settings.token || validation.status === 'checking'}
+        >
+          {validation.status === 'checking' && <SyncIcon className="animate-spin" />}
+          Verify
+        </Button>
+      </div>
+
+      {validation.status === 'valid' && (
+        <p className="flex items-center gap-1.5 text-[12px] font-semibold text-open">
+          <CheckCircleFillIcon className="size-3.5" />
+          Connected as {validation.login}
+        </p>
+      )}
+      {validation.status === 'invalid' && (
+        <p className="flex items-center gap-1.5 text-[12px] font-semibold text-closed">
+          <XCircleFillIcon className="size-3.5" />
+          {validation.message}
+        </p>
+      )}
+
+      <a
+        href={TOKEN_SCOPES_URL}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex w-fit items-center gap-1 text-[12px] font-semibold text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+      >
+        Create a token on GitHub
+        <LinkExternalIcon className="size-3" />
+      </a>
+    </Section>
   )
 }
 

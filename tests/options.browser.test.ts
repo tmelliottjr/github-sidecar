@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 import puppeteer, { type Browser, type Page } from 'puppeteer-core'
 
+import { canSignIn } from '../src/lib/github/oauth.ts'
 import { SOUNDS } from '../src/lib/sound.ts'
 
 const CHROME_PATHS = [
@@ -144,7 +145,7 @@ describe('options page', { concurrency: false, skip }, () => {
       nodes.map((node) => node.textContent),
     )
     assert.deepEqual(headings, [
-      'Access token',
+      'GitHub account',
       'Refresh',
       'Opening items',
       'Features',
@@ -208,6 +209,106 @@ describe('options page', { concurrency: false, skip }, () => {
 
   it('reports no console errors', () => {
     assert.deepEqual(consoleErrors, [])
+  })
+})
+
+describe('signing in with GitHub', {
+  concurrency: false,
+  skip: skip || (canSignIn ? false : 'no OAuth client ID'),
+}, () => {
+  let signInServer: Server
+  let signInBrowser: Browser
+  let signInPage: Page
+  /** What the next poll answers once the reader has acted on GitHub. */
+  let approval: Record<string, string> | null = null
+
+  before(async () => {
+    const served = await serveDist()
+    signInServer = served.server
+
+    signInBrowser = await puppeteer.launch({ executablePath, headless: true })
+    signInPage = await signInBrowser.newPage()
+    await signInPage.setRequestInterception(true)
+    signInPage.on('request', (request) => {
+      const json = (body: unknown) =>
+        request.respond({
+          status: 200,
+          contentType: 'application/json',
+          headers: { 'Access-Control-Allow-Origin': '*' },
+          body: JSON.stringify(body),
+        })
+      if (request.url() === 'https://github.com/login/device/code') {
+        return json({
+          device_code: 'DEVICE',
+          user_code: 'WDJB-MJHT',
+          verification_uri: 'https://github.com/login/device',
+          expires_in: 900,
+          interval: 1,
+        })
+      }
+      if (request.url() === 'https://github.com/login/oauth/access_token') {
+        return json(approval ?? { error: 'authorization_pending' })
+      }
+      return request.continue()
+    })
+
+    await signInPage.evaluateOnNewDocument(CHROME_STUB)
+    await signInPage.goto(`${served.origin}/options.html`, { waitUntil: 'networkidle0' })
+    await signInPage.waitForSelector('main')
+  })
+
+  after(async () => {
+    await signInBrowser?.close()
+    signInServer?.close()
+  })
+
+  const stored = () =>
+    signInPage.evaluate(async () => {
+      const { settings } = await chrome.storage.local.get('settings')
+      const { token, signIn } = settings as { token: string; signIn?: unknown }
+      // Settings written before signing in existed have no `signIn` at all.
+      return { token, signIn: signIn ?? null }
+    })
+
+  it('shows a code to enter on GitHub, and waits for it', async () => {
+    approval = null
+    await signInPage.click('button ::-p-text(Sign in with GitHub)')
+    await signInPage.waitForSelector('[aria-label="Sign-in code"]')
+
+    const shown = await signInPage.evaluate(() => ({
+      code: document.querySelector('[aria-label="Sign-in code"]')?.textContent,
+      link: document.querySelector<HTMLAnchorElement>('a[href="https://github.com/login/device"]')
+        ?.textContent,
+    }))
+    assert.deepEqual(shown, { code: 'WDJB-MJHT', link: 'Copy code and open GitHub' })
+    assert.deepEqual(await stored(), { token: '', signIn: null })
+  })
+
+  it('signs in once the code is approved, as the account GitHub names', async () => {
+    approval = { access_token: 'good', token_type: 'bearer', scope: 'repo,read:org' }
+    await signInPage.waitForFunction(() =>
+      document.body.textContent?.includes('Signed in as octocat'),
+    )
+
+    assert.deepEqual(await stored(), { token: 'good', signIn: { login: 'octocat' } })
+    assert.equal(await signInPage.$('input[type="password"]'), null)
+  })
+
+  it('signs out, and offers both ways in again', async () => {
+    await signInPage.click('button ::-p-text(Sign out)')
+    await signInPage.waitForSelector('input[type="password"]')
+
+    assert.deepEqual(await stored(), { token: '', signIn: null })
+    assert.ok(await signInPage.$('button ::-p-text(Sign in with GitHub)'))
+  })
+
+  it('says so when the code is declined on GitHub', async () => {
+    approval = { error: 'access_denied' }
+    await signInPage.click('button ::-p-text(Sign in with GitHub)')
+    await signInPage.waitForFunction(() =>
+      document.body.textContent?.includes('Sign-in was canceled on GitHub.'),
+    )
+    assert.deepEqual(await stored(), { token: '', signIn: null })
   })
 })
 

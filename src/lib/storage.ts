@@ -111,6 +111,8 @@ export interface NotificationSettings {
 
 export interface Settings {
   token: string
+  /** Set when `token` came from signing in with GitHub. Null for a pasted token. */
+  signIn: { login: string } | null
   /** Polling cadence in milliseconds; 0 disables background refresh. */
   pollIntervalMs: number
   openIn: 'window' | 'tab'
@@ -175,6 +177,7 @@ export const DEFAULT_DEVELOPER: DeveloperSettings = {
 
 export const DEFAULT_SETTINGS: Settings = {
   token: '',
+  signIn: null,
   pollIntervalMs: 60_000,
   openIn: 'tab',
   activeQueryId: 'review-requested',
