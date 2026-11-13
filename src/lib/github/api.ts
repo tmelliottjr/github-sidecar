@@ -790,7 +790,12 @@ const AUTH_PATTERNS: Array<{ test: RegExp; message: string }> = [
       "Your token was refused by an organisation's IP allow list. Connect from an allowed address, or add this token to the list.",
   },
   {
-    test: /\b(scopes?|oauth app access)\b/i,
+    test: /\boauth app access restrictions\b/i,
+    message:
+      'An organization this query covers has not approved this OAuth app. Ask an organization owner to approve it, or use a personal access token instead.',
+  },
+  {
+    test: /\bscopes?\b/i,
     message:
       'Your token is missing a permission this query needs. Re-create it with repository and organisation read access.',
   },
