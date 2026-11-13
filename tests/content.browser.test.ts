@@ -2597,6 +2597,75 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
   })
 })
 
+describe('a tab left behind by a reloaded extension', { concurrency: false, skip }, () => {
+  let staleBrowser: Browser
+  let stalePage: Page
+
+  before(async () => {
+    staleBrowser = await puppeteer.launch({ executablePath, headless: true })
+    stalePage = await staleBrowser.newPage()
+    // Narrow enough that the open panel moves the page across.
+    await stalePage.setViewport({ width: 1100, height: 900 })
+    await stalePage.setContent(GITHUB_PAGE)
+    // The dead panel the earlier copy leaves behind in Firefox.
+    await stalePage.evaluate((id) => {
+      const leftover = document.createElement('div')
+      leftover.id = id
+      leftover.dataset.leftover = ''
+      document.documentElement.appendChild(leftover)
+    }, 'github-sidecar-root')
+    await stalePage.evaluate(CHROME_STUB)
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await stalePage.evaluate(bundle)
+    await stalePage.waitForFunction(
+      () => document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector('[data-docked]'),
+    )
+    await settleMorph(stalePage)
+  })
+
+  after(async () => {
+    await staleBrowser?.close()
+  })
+
+  it('replaces a panel an earlier copy left in the page', async () => {
+    const hosts = await stalePage.evaluate(() =>
+      [...document.querySelectorAll('#github-sidecar-root')].map((host) =>
+        host.hasAttribute('data-leftover'),
+      ),
+    )
+    assert.deepEqual(hosts, [false])
+  })
+
+  it('removes the panel and gives the page its space back once the extension is gone', async () => {
+    assert.ok(
+      await stalePage.evaluate(() => parseFloat(getComputedStyle(document.body).paddingLeft) > 0),
+      'expected the open panel to need the page moved',
+    )
+
+    // What Chrome does to a content script whose extension was reloaded.
+    await stalePage.evaluate(() => {
+      delete (window as unknown as { chrome: { runtime: { id?: string } } }).chrome.runtime.id
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    const state = await stalePage.evaluate(() => ({
+      hosts: document.querySelectorAll('#github-sidecar-root').length,
+      padding: document.body.style.getPropertyValue('padding-left'),
+      fullBleed: document.querySelectorAll('[data-github-sidecar-full-bleed]').length,
+    }))
+    assert.deepEqual(state, { hosts: 0, padding: '', fullBleed: 0 })
+  })
+
+  it('stays gone after a navigation', async () => {
+    await stalePage.evaluate(() => document.dispatchEvent(new Event('turbo:load')))
+    assert.equal(
+      await stalePage.evaluate(() => document.querySelectorAll('#github-sidecar-root').length),
+      0,
+    )
+  })
+})
+
 describe('a github.com tab that was never asked', { concurrency: false, skip }, () => {
   let closedBrowser: Browser
   let closedPage: Page
