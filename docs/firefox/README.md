@@ -30,11 +30,11 @@ Works in every edition of Firefox. The add-on is removed when Firefox quits.
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Choose **Load Temporary Add-on…**.
 3. Select `dist/firefox/manifest.json`.
-4. The settings page opens on first install. Paste a GitHub personal access
-   token and click **Verify**.
+4. The settings page opens on first install. Choose **Sign in with GitHub**,
+   or paste a GitHub personal access token and click **Verify**.
 
 A classic token needs `repo` and `read:org` scope to see private repositories.
-The token is stored in extension storage and is only ever sent to
+Either token is stored in extension storage and is only ever sent to
 `api.github.com`. Settings survive a reload but not a reinstall.
 
 ## Load, permanently

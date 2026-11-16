@@ -63,11 +63,11 @@ The converter prints where it wrote the project and opens it in Xcode.
 4. Safari → Settings → **Extensions** → enable **GitHub Sidecar**.
 5. Beside the extension, set permission for `github.com` to **Allow** (or
    **Always Allow on Every Website**). Nothing appears until this is granted.
-6. Open the settings page from the extension's toolbar icon, paste a GitHub
-   personal access token, and click **Verify**.
+6. Open the settings page from the extension's toolbar icon. Choose **Sign in
+   with GitHub**, or paste a GitHub personal access token and click **Verify**.
 
 A classic token needs `repo` and `read:org` scope to see private repositories.
-The token is stored in extension storage and is only ever sent to
+Either token is stored in extension storage and is only ever sent to
 `api.github.com`.
 
 ## Update

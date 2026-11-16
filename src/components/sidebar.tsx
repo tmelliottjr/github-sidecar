@@ -32,6 +32,7 @@ import { useStorageValue } from '@/hooks/use-storage-value'
 import { useTabOpen } from '@/hooks/use-tab-open'
 import { changesSince, isHidden, isWhole, nextReminderAt } from '@/lib/attention'
 import { browser } from '@/lib/browser'
+import { canSignIn } from '@/lib/github/oauth'
 import type { ReviewDecision, SearchItem, StackedRow } from '@/lib/github/types'
 import {
   FACETS,
@@ -834,8 +835,8 @@ function TokenPrompt() {
         </Button>
       }
     >
-      Add a personal access token to start tracking the issues and pull requests you care
-      about.
+      {canSignIn ? 'Sign in with GitHub or add a personal access token' : 'Add a personal access token'}{' '}
+      to start tracking the issues and pull requests you care about.
     </StatePanel>
   )
 }

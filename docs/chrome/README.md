@@ -29,11 +29,11 @@ loaded.
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Choose **Load unpacked** and select the `dist/chrome` directory.
-4. The settings page opens on first install. Paste a GitHub personal access
-   token and click **Verify**.
+4. The settings page opens on first install. Choose **Sign in with GitHub**,
+   or paste a GitHub personal access token and click **Verify**.
 
 A classic token needs `repo` and `read:org` scope to see private repositories.
-The token is stored in extension storage and is only ever sent to
+Either token is stored in extension storage and is only ever sent to
 `api.github.com`.
 
 ## Update

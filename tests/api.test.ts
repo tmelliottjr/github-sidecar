@@ -1095,6 +1095,27 @@ describe('error classification', () => {
     )
   })
 
+  it('asks for an owner to approve the app where an organization restricts OAuth apps', async () => {
+    stubFetch({
+      errors: [
+        {
+          type: 'FORBIDDEN',
+          message:
+            'Although you appear to have the correct authorization credentials, the `acme` organization has enabled OAuth App access restrictions, meaning that data access to third-parties is limited.',
+        },
+      ],
+    })
+
+    await assert.rejects(
+      () => searchIssues('token', { q: 'org:acme', first: 30 }),
+      (error: GitHubApiError) => {
+        assert.equal(error.kind, 'auth')
+        assert.match(error.message, /Ask an organization owner to approve it/)
+        return true
+      },
+    )
+  })
+
   it('keeps the raw GraphQL errors for matching that must not read prose', async () => {
     stubFetch({ errors: [{ type: 'FORBIDDEN', message: 'SAML enforcement' }] })
 
