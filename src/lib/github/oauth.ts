@@ -10,7 +10,7 @@
  * Client ID of the GitHub Sidecar OAuth app, which needs device flow enabled in
  * its settings. Client IDs are public. Signing in is hidden while this is empty.
  */
-export const OAUTH_CLIENT_ID = ''
+export const OAUTH_CLIENT_ID: string = 'Ov23ctkSfEkxb5m8Wp9E'
 
 export const canSignIn = OAUTH_CLIENT_ID !== ''
 
