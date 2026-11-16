@@ -1,8 +1,9 @@
 import { StrictMode, useEffect, useState } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createRoot, type Root as ReactRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import { Sidebar } from '@/components/sidebar'
+import { browser } from '@/lib/browser'
 import { PortalContainerProvider } from '@/components/ui/portal-container'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { watchColorScheme } from '@/content/color-scheme'
@@ -41,8 +42,14 @@ function Root({ container }: { container: HTMLElement }) {
   )
 }
 
+let mounted: { host: HTMLElement; root: ReactRoot } | null = null
+
 function mount(): void {
-  if (document.getElementById(HOST_ID)) return
+  if (mounted?.host.isConnected) return
+  unmount()
+  // Firefox injects this script into open tabs when the extension is installed
+  // or updated, and the copy it replaces leaves a dead panel in the page.
+  document.getElementById(HOST_ID)?.remove()
 
   const host = document.createElement('div')
   host.id = HOST_ID
@@ -65,19 +72,60 @@ function mount(): void {
   container.style.setProperty('--font-sans', resolveFontStack())
   shadow.appendChild(container)
 
-  createRoot(container).render(
+  const root = createRoot(container)
+  root.render(
     <StrictMode>
       <Root container={container} />
     </StrictMode>,
   )
+  mounted = { host, root }
+}
+
+/** Unmounting runs the panel cleanup, which gives the page its space back. */
+function unmount(): void {
+  if (!mounted) return
+  mounted.root.unmount()
+  mounted.host.remove()
+  mounted = null
 }
 
 // GitHub uses Turbo navigation, which can replace large parts of the DOM.
 // Remounting on navigation keeps the sidebar present.
+const NAVIGATION_EVENTS = ['turbo:load', 'pjax:end']
+
+/** When the reader comes back to the tab or reaches for the panel. */
+const ORPHAN_CHECKS: Array<[EventTarget, string]> = [
+  [document, 'visibilitychange'],
+  [window, 'focus'],
+  [document, 'pointerdown'],
+  [document, 'keydown'],
+]
+
+function onNavigation(): void {
+  if (!removeIfOrphaned()) mount()
+}
+
+/**
+ * Chrome keeps this script running after the extension is reloaded, updated,
+ * or removed, but clears `runtime.id` and fails every extension call, so the
+ * panel stays on screen with buttons that do nothing.
+ */
+function removeIfOrphaned(): boolean {
+  if (browser.runtime?.id) return false
+  for (const type of NAVIGATION_EVENTS) document.removeEventListener(type, onNavigation)
+  for (const [target, type] of ORPHAN_CHECKS) {
+    target.removeEventListener(type, removeIfOrphaned, { capture: true })
+  }
+  unmount()
+  return true
+}
+
 function keepMounted(): void {
   mount()
-  document.addEventListener('turbo:load', mount)
-  document.addEventListener('pjax:end', mount)
+  for (const type of NAVIGATION_EVENTS) document.addEventListener(type, onNavigation)
+  for (const [target, type] of ORPHAN_CHECKS) {
+    target.addEventListener(type, removeIfOrphaned, { capture: true })
+  }
 }
 
 if (document.readyState === 'loading') {
