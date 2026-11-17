@@ -148,6 +148,7 @@ describe('options page', { concurrency: false, skip }, () => {
       'GitHub account',
       'Refresh',
       'Opening items',
+      'Tabs',
       'Features',
       'Notifications',
       'Saved queries',
@@ -392,6 +393,24 @@ describe('feature switches', { concurrency: false, skip }, () => {
     assert.equal(stored.keyboard, false)
     // Switching one off leaves the rest exactly as they were.
     assert.equal(stored.changes, true)
+  })
+
+  it('starts with each tab keeping its own panel, and writes the switch to storage', async () => {
+    const control = await switchFor(featurePage, 'Same panel in every tab')
+    assert.equal(await control!.evaluate((node) => node.getAttribute('aria-checked')), 'false')
+
+    await control!.click()
+    await featurePage.waitForFunction(
+      () =>
+        document
+          .querySelector('[aria-label="Same panel in every tab"]')
+          ?.getAttribute('aria-checked') === 'true',
+    )
+
+    const stored = await featurePage.evaluate(async () =>
+      (await chrome.storage.local.get('settings')).settings,
+    )
+    assert.equal(stored.syncTabs, true)
   })
 
 })
