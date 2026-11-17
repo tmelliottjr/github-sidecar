@@ -48,6 +48,23 @@ IndexedDB cache and only refreshes if what it has has aged out.
 Everything else about the panel (its width and whether it is collapsed) stays
 shared, because those are preferences rather than per-tab facts.
 
+#### Same panel in every tab
+
+**Same panel in every tab**, under Tabs in settings, makes the panel one thing
+across tabs instead. Opening or hiding it, the search box, the filters, and the
+order are then shared by every github.com tab, and new tabs start the same way.
+It is off by default, so a new tab starts closed.
+
+The shared copy is `panelView` in `storage.local`, and every tab follows it
+through `storage.onChanged`. With the setting off, each change still writes the
+whole view of that tab there, so switching it on shows the tab changed last
+rather than closing the panel. While it is on, each tab also keeps its own flag
+in step, so switching it off leaves every tab as it is.
+
+The search box writes once typing pauses, and at once when the tab is hidden.
+Every write redraws the panel in every tab, and a write per keystroke would let
+the echo of an earlier write replace text typed since.
+
 </details>
 
 <details>
@@ -493,7 +510,8 @@ result set looking for matches nobody asked it to fetch. The order can be change
 a review queue loses first, or sorted by author or by repository. The rows can also be
 broken into sections by status, author, assignee, or repository. A grouping is remembered
 with the query it was chosen on, so each saved query keeps its own way of being
-read while sharing the one filter box.
+read while sharing the one filter box. The search text, filters, and order belong
+to the tab unless **Same panel in every tab** is on in settings.
 
 The search box sits above the list whenever **Filter and reorder** is on in
 settings; switching it off gives that height back to the rows. The funnel

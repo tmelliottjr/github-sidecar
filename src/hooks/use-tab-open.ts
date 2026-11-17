@@ -3,7 +3,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { sendMessage } from '@/lib/messages'
 
 /**
- * Whether the panel is showing in *this* tab.
+ * Whether the panel is showing in *this* tab, for when tabs do not share one
+ * panel. See `usePanelView`.
  *
  * A new tab starts closed and stays silent — no query runs until it is opened,
  * so a tab the user never asks about costs nothing. The flag is held by the

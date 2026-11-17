@@ -166,6 +166,19 @@ export function OptionsApp() {
         </div>
       </Section>
 
+      <Section title="Tabs">
+        <SettingRow
+          title="Same panel in every tab"
+          description="Opening or hiding the panel, the search box, the filters, and the order are shared by every github.com tab, and new tabs start the same way. When off, each tab keeps its own and starts closed."
+        >
+          <Switch
+            label="Same panel in every tab"
+            checked={settings.syncTabs}
+            onChange={(next) => patch({ syncTabs: next })}
+          />
+        </SettingRow>
+      </Section>
+
       <Section
         title="Features"
         description="Each of these can be switched off. The list reads the same without any of them."

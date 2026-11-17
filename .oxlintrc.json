@@ -38,6 +38,8 @@
           "__searchPages",
           "__searchWarning",
           "__tabOpen",
+          "__panelViewWrites",
+          "__otherTab",
           "__BROWSER__",
           "__DEV_RELOAD_ORIGIN__"
         ]
