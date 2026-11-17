@@ -2597,6 +2597,260 @@ describe('a tab that was never asked', { concurrency: false, skip }, () => {
   })
 })
 
+describe('every tab sharing one panel', { concurrency: false, skip }, () => {
+  let sharedBrowser: Browser
+  let sharedPage: Page
+
+  before(async () => {
+    sharedBrowser = await puppeteer.launch({ executablePath, headless: true })
+    sharedPage = await sharedBrowser.newPage()
+    await sharedPage.setViewport({ width: 1280, height: 800 })
+    await sharedPage.setContent(
+      '<!doctype html><html data-color-mode="light"><body></body></html>',
+    )
+    await sharedPage.evaluate(CHROME_STUB)
+
+    // Storage that reports every write to its listeners as Chrome does, a tick
+    // later and as a copy, so a write from "another tab" can be played in.
+    await sharedPage.evaluate(async () => {
+      const scope = window as unknown as {
+        __tabOpen: boolean
+        __panelViewWrites: unknown[]
+        __otherTab: (patch: Record<string, unknown>) => Promise<void>
+      }
+      // The worker has no record of this tab being opened.
+      scope.__tabOpen = false
+      scope.__panelViewWrites = []
+
+      const local = chrome.storage.local as unknown as {
+        get: (key: string) => Promise<Record<string, unknown>>
+        set: (patch: Record<string, unknown>) => Promise<void>
+      }
+      const { get, set } = local
+      const listeners = new Set<(changes: unknown, area: string) => void>()
+      const copy = (value: unknown) => JSON.parse(JSON.stringify(value))
+      const write = async (patch: Record<string, unknown>) => {
+        const keys = Object.keys(patch)
+        const previous = await Promise.all(keys.map(async (key) => (await get(key))[key]))
+        const changes = Object.fromEntries(
+          keys.map((key, index) => [key, { oldValue: previous[index], newValue: copy(patch[key]) }]),
+        )
+        await set(copy(patch))
+        setTimeout(() => listeners.forEach((listener) => listener(changes, 'local')), 0)
+      }
+
+      local.set = async (patch) => {
+        if ('panelView' in patch) scope.__panelViewWrites.push(copy(patch.panelView))
+        await write(patch)
+      }
+      scope.__otherTab = write
+      ;(chrome.storage as unknown as { onChanged: unknown }).onChanged = {
+        addListener: (listener: (changes: unknown, area: string) => void) =>
+          listeners.add(listener),
+        removeListener: (listener: (changes: unknown, area: string) => void) =>
+          listeners.delete(listener),
+      }
+
+      const { settings } = await get('settings')
+      await set({
+        settings: { ...(settings as object), syncTabs: true },
+        panelView: { open: true, filterText: 'regression', quickFilter: {}, sortOrder: 'stalest' },
+      })
+    })
+
+    const bundle = await readFile(fileURLToPath(new URL('content.js', distRoot)), 'utf8')
+    await sharedPage.evaluate(bundle)
+    await sharedPage.waitForSelector('#github-sidecar-root')
+  })
+
+  after(async () => {
+    await sharedBrowser?.close()
+  })
+
+  const searchBox = () =>
+    sharedPage.evaluate(
+      () =>
+        document
+          .getElementById('github-sidecar-root')
+          ?.shadowRoot?.querySelector<HTMLInputElement>(
+            'input[aria-label="Filter the rows already loaded"]',
+          )?.value ?? null,
+    )
+
+  const isPanelOpen = async () => {
+    await settleMorph(sharedPage)
+    return sharedPage.evaluate(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')!
+          .shadowRoot!.querySelector('[role="complementary"]'),
+      ),
+    )
+  }
+
+  const stored = () =>
+    sharedPage.evaluate(
+      async () => (await chrome.storage.local.get('panelView')).panelView as Record<string, unknown>,
+    )
+
+  const writes = () =>
+    sharedPage.evaluate(
+      () =>
+        (window as unknown as { __panelViewWrites: Array<Record<string, unknown>> })
+          .__panelViewWrites,
+    )
+
+  const fromOtherTab = (patch: Record<string, unknown>) =>
+    sharedPage.evaluate(
+      (fields) =>
+        (
+          window as unknown as {
+            __otherTab: (patch: Record<string, unknown>) => Promise<void>
+          }
+        ).__otherTab(fields),
+      patch,
+    )
+
+  it('opens with the search the other tabs left, though this tab was never opened', async () => {
+    await sharedPage.waitForFunction(() => {
+      const shadow = document.getElementById('github-sidecar-root')?.shadowRoot
+      const rows = [...(shadow?.querySelectorAll('[data-index]') ?? [])].filter(
+        (row) => !row.textContent?.includes('Loading more'),
+      )
+      return rows.length > 0 && rows.every((row) => row.textContent?.includes('Item number 1 '))
+    })
+
+    assert.equal(await isPanelOpen(), true)
+    assert.equal(await searchBox(), 'regression')
+  })
+
+  it('writes the search text once typing pauses, not on every key', async () => {
+    const earlier = (await writes()).length
+    await sharedPage.evaluate(() => {
+      const shadow = document.getElementById('github-sidecar-root')!.shadowRoot!
+      const input = shadow.querySelector<HTMLInputElement>(
+        'input[aria-label="Filter the rows already loaded"]',
+      )!
+      input.focus()
+      input.select()
+    })
+    await sharedPage.keyboard.type('Item number 2')
+    assert.equal(await searchBox(), 'Item number 2')
+
+    await sharedPage.waitForFunction(
+      () =>
+        (
+          window as unknown as { __panelViewWrites: Array<{ filterText?: string }> }
+        ).__panelViewWrites.at(-1)?.filterText === 'Item number 2',
+    )
+    const typed = (await writes()).slice(earlier)
+    assert.deepEqual(
+      typed.map((view) => view.filterText),
+      ['Item number 2'],
+    )
+    // The rest of the view is written as it was.
+    assert.equal(typed[0].sortOrder, 'stalest')
+    assert.equal(typed[0].open, true)
+  })
+
+  it('writes text typed just before the tab is hidden at once', async () => {
+    await sharedPage.keyboard.press('Backspace')
+    await sharedPage.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    try {
+      // Well inside the pause the box waits for, so only leaving the tab wrote it.
+      await sharedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)))
+      assert.equal((await stored()).filterText, 'Item number ')
+    } finally {
+      await sharedPage.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+    }
+  })
+
+  it('follows another tab that hides the panel or changes the search', async () => {
+    const view = await stored()
+    await fromOtherTab({ panelView: { ...view, open: false } })
+    await sharedPage.waitForFunction(() =>
+      Boolean(
+        document
+          .getElementById('github-sidecar-root')
+          ?.shadowRoot?.querySelector('[aria-label="Open GitHub Sidecar"]'),
+      ),
+    )
+    assert.equal(await isPanelOpen(), false)
+    // This tab keeps its own flag in step, ready for the setting being switched off.
+    const sent = await sharedPage.evaluate(
+      () =>
+        (window as unknown as { __sentMessages: Array<{ type?: string }> }).__sentMessages,
+    )
+    assert.deepEqual(sent.findLast((message) => message.type === 'set-tab-open'), {
+      type: 'set-tab-open',
+      open: false,
+    })
+
+    await fromOtherTab({ panelView: { ...view, open: true, filterText: 'Item number 3' } })
+    await sharedPage.waitForFunction(() =>
+      Boolean(
+        document.getElementById('github-sidecar-root')?.shadowRoot?.querySelector('[role="complementary"]'),
+      ),
+    )
+    assert.equal(await isPanelOpen(), true)
+    await sharedPage.waitForFunction(
+      () =>
+        document
+          .getElementById('github-sidecar-root')
+          ?.shadowRoot?.querySelector<HTMLInputElement>(
+            'input[aria-label="Filter the rows already loaded"]',
+          )?.value === 'Item number 3',
+    )
+  })
+
+  it('leaves this tab as it is once the setting is switched off, and stops following', async () => {
+    const { settings } = await sharedPage.evaluate(() => chrome.storage.local.get('settings'))
+    await fromOtherTab({ settings: { ...settings, syncTabs: false } })
+    await sharedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
+
+    assert.equal(await isPanelOpen(), true)
+    assert.equal(await searchBox(), 'Item number 3')
+
+    await fromOtherTab({ panelView: { ...(await stored()), open: false, filterText: 'elsewhere' } })
+    await sharedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
+    assert.equal(await isPanelOpen(), true)
+    assert.equal(await searchBox(), 'Item number 3')
+  })
+
+  it('writes its whole view while unsynced, so switching back on keeps one tab and not a mix', async () => {
+    await sharedPage.evaluate(() => {
+      const input = document
+        .getElementById('github-sidecar-root')!
+        .shadowRoot!.querySelector<HTMLInputElement>(
+          'input[aria-label="Filter the rows already loaded"]',
+        )!
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    })
+    await sharedPage.keyboard.type('0')
+    await sharedPage.waitForFunction(
+      () =>
+        (
+          window as unknown as { __panelViewWrites: Array<{ filterText?: string }> }
+        ).__panelViewWrites.at(-1)?.filterText === 'Item number 30',
+    )
+    // Still open here, whatever the other tab last wrote.
+    assert.equal((await stored()).open, true)
+
+    const { settings } = await sharedPage.evaluate(() => chrome.storage.local.get('settings'))
+    await fromOtherTab({ settings: { ...settings, syncTabs: true } })
+    await sharedPage.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)))
+    assert.equal(await isPanelOpen(), true)
+    assert.equal(await searchBox(), 'Item number 30')
+  })
+})
+
 describe('a tab left behind by a reloaded extension', { concurrency: false, skip }, () => {
   let staleBrowser: Browser
   let stalePage: Page

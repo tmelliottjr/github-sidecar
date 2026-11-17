@@ -1,6 +1,6 @@
 import type { ItemMemory } from './attention'
 import { browser } from './browser.ts'
-import type { GroupBy } from './list-view'
+import type { GroupBy, QuickFilter, SortOrder } from './list-view'
 import type { SoundName } from './sound'
 
 export interface SavedQuery {
@@ -18,8 +18,8 @@ export interface SavedQuery {
 
 /**
  * Shape of the panel, shared by every tab. Whether the panel is *showing* is
- * deliberately not part of this: that is per tab, and lives in the worker's
- * session storage instead. See `useTabOpen`.
+ * not part of this: it is per tab unless `Settings.syncTabs` is on. See
+ * `usePanelView`.
  *
  * Older storage also holds `x`, `y`, `width`, `height`, `locked`, `docked`,
  * and `launcherCompact` from earlier layouts. Nothing reads them, but `width`
@@ -30,6 +30,19 @@ export interface WindowState {
   collapsed: boolean
   /** Width of the docked panel. */
   dockWidth: number
+}
+
+/**
+ * Whether the panel is showing, and how its rows are narrowed and ordered.
+ * Every tab follows this while `Settings.syncTabs` is on. With it off, each tab
+ * keeps its own, and this holds the view of the tab changed last, so switching
+ * it on shows that view in every tab.
+ */
+export interface PanelView {
+  open: boolean
+  filterText: string
+  quickFilter: QuickFilter
+  sortOrder: SortOrder
 }
 
 /**
@@ -116,6 +129,8 @@ export interface Settings {
   /** Polling cadence in milliseconds; 0 disables background refresh. */
   pollIntervalMs: number
   openIn: 'window' | 'tab'
+  /** Whether every tab shares one `PanelView`, rather than each keeping its own. */
+  syncTabs: boolean
   activeQueryId: string | null
   features: FeatureFlags
   notifications: NotificationSettings
@@ -126,6 +141,7 @@ export interface StorageShape {
   settings: Settings
   savedQueries: SavedQuery[]
   windowState: WindowState
+  panelView: PanelView
   /**
    * Node ids of items pinned to the top of the list, most recently pinned
    * first. Pins are kept apart from the queries that surface them so a pinned
@@ -180,6 +196,7 @@ export const DEFAULT_SETTINGS: Settings = {
   signIn: null,
   pollIntervalMs: 60_000,
   openIn: 'tab',
+  syncTabs: false,
   activeQueryId: 'review-requested',
   features: DEFAULT_FEATURES,
   notifications: DEFAULT_NOTIFICATIONS,
@@ -209,10 +226,18 @@ export const DEFAULT_WINDOW_STATE: WindowState = {
   dockWidth: 380,
 }
 
+export const DEFAULT_PANEL_VIEW: PanelView = {
+  open: false,
+  filterText: '',
+  quickFilter: {},
+  sortOrder: 'default',
+}
+
 export const DEFAULTS: StorageShape = {
   settings: DEFAULT_SETTINGS,
   savedQueries: DEFAULT_QUERIES,
   windowState: DEFAULT_WINDOW_STATE,
+  panelView: DEFAULT_PANEL_VIEW,
   pinnedIds: [],
   itemMemory: {},
 }

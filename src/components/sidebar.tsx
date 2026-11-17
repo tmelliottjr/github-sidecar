@@ -25,11 +25,11 @@ import { useCurrentPageItem } from '@/hooks/use-current-page-item'
 import { useDocumentVisible } from '@/hooks/use-document-visible'
 import { useItemMemory } from '@/hooks/use-item-memory'
 import { useIssueSearch } from '@/hooks/use-issue-search'
+import { usePanelView } from '@/hooks/use-panel-view'
 import { useRefreshActivity } from '@/hooks/use-refresh-activity'
 import { useSearchUpdates } from '@/hooks/use-search-updates'
 import { useLayerReviews, useLoadLayerReviews, useLoadStack } from '@/hooks/use-stacks'
 import { useStorageValue } from '@/hooks/use-storage-value'
-import { useTabOpen } from '@/hooks/use-tab-open'
 import { changesSince, isHidden, isWhole, nextReminderAt } from '@/lib/attention'
 import { browser } from '@/lib/browser'
 import { canSignIn } from '@/lib/github/oauth'
@@ -55,7 +55,7 @@ export function Sidebar() {
   const [savedQueries, setSavedQueries] = useStorageValue('savedQueries')
   const [windowState, setWindowState] = useStorageValue('windowState')
   const [pinnedIds, setPinnedIds] = useStorageValue('pinnedIds')
-  const [isOpen, setOpen] = useTabOpen()
+  const [panelView, patchView] = usePanelView(settings ? settings.syncTabs : null)
   const [editing, setEditing] = useState(false)
   const isTabVisible = useDocumentVisible()
   const pageItem = useCurrentPageItem()
@@ -66,9 +66,20 @@ export function Sidebar() {
   const { memory, markSeen, remind, clearReminder, hide, unhide } =
     useItemMemory(reminderOverrides)
   const filterInputRef = useRef<HTMLInputElement>(null)
-  const [filterText, setFilterText] = useState('')
-  const [quickFilter, setQuickFilter] = useState<QuickFilter>({})
-  const [sortOrder, setSortOrder] = useState<SortOrder>('default')
+  const isOpen = panelView ? panelView.open : null
+  const filterText = panelView?.filterText ?? ''
+  const quickFilter = panelView?.quickFilter ?? NO_QUICK_FILTER
+  const sortOrder = panelView?.sortOrder ?? 'default'
+  const setOpen = useCallback((open: boolean) => patchView({ open }), [patchView])
+  const setFilterText = useCallback(
+    (text: string) => patchView({ filterText: text }),
+    [patchView],
+  )
+  const setQuickFilter = useCallback(
+    (filter: QuickFilter) => patchView({ quickFilter: filter }),
+    [patchView],
+  )
+  const setSortOrder = useCallback((order: SortOrder) => patchView({ sortOrder: order }), [patchView])
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set())
   const [showHidden, setShowHidden] = useState(false)
 
@@ -120,7 +131,7 @@ export function Sidebar() {
     if (isCollapsed) patchWindow({ collapsed: false })
   }, [isCollapsed, patchWindow, setOpen])
 
-  // The toolbar button opens the panel in the tab it was clicked on, or hides it there.
+  // The toolbar button opens or hides the panel from the tab it was clicked on.
   useEffect(() => {
     const listener = (message: { type?: string }) => {
       if (message?.type !== 'toggle-sidebar') return
@@ -689,8 +700,7 @@ export function Sidebar() {
         ) : visibleItems.length === 0 ? (
           <FilteredOutState
             onClear={() => {
-              setFilterText('')
-              setQuickFilter({})
+              patchView({ filterText: '', quickFilter: NO_QUICK_FILTER })
               setShowHidden(true)
             }}
           />

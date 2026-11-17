@@ -50,7 +50,8 @@ const POPUP_WIDTH = 1100
 const POPUP_HEIGHT = 900
 
 /**
- * Whether the panel is showing is per tab, not per user.
+ * Whether the panel is showing is per tab, not per user, unless
+ * `settings.syncTabs` is on.
  *
  * A new tab should start out of the way and cost nothing until it is asked
  * for, which rules out `browser.storage.local`: that is shared, so opening the
@@ -58,6 +59,9 @@ const POPUP_HEIGHT = 900
  * tab id gives each tab its own answer, survives reloads and navigation within
  * that tab, and is gone when the browser is. It lives in the worker rather
  * than the page so nothing is written to github.com's own storage.
+ *
+ * With `syncTabs` on, tabs follow `panelView` in `storage.local` instead, and
+ * keep this flag in step so switching it off leaves each tab as it is.
  */
 const OPEN_KEY_PREFIX = 'tab-open:'
 
